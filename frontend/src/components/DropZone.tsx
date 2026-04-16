@@ -31,7 +31,7 @@ export function DropZone({ onFiles, disabled }: Props) {
 
   return (
     <label
-      className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-colors cursor-pointer select-none p-10
+      className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-colors cursor-pointer select-none p-10 min-h-[360px]
         ${dragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'}
         ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
       onDragOver={e => { e.preventDefault(); setDragging(true) }}

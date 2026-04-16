@@ -49,15 +49,29 @@ async def list_cards(
 
     rows = (await db.execute(stmt)).scalars().all()
 
-    items = []
-    for card in rows:
-        # Get primary name for list display
-        name = await db.scalar(
+    async def _get_name(person_id: int, lang: Optional[str]) -> Optional[str]:
+        base = (PersonName.person_id == person_id, PersonName.is_current == True)  # noqa: E712
+        if lang:
+            # Prefer the per-card language (prefix match: "zh" matches "zh-TW" etc.)
+            preferred = await db.scalar(
+                select(PersonName.full_name)
+                .where(*base, PersonName.language.like(f"{lang}%"))
+                .order_by(PersonName.id.asc())
+                .limit(1)
+            )
+            if preferred:
+                return preferred
+        # Fallback: first available current name
+        return await db.scalar(
             select(PersonName.full_name)
-            .where(PersonName.person_id == card.person_id, PersonName.is_current == True)  # noqa: E712
+            .where(*base)
             .order_by(PersonName.id.asc())
             .limit(1)
         )
+
+    items = []
+    for card in rows:
+        name = await _get_name(card.person_id, card.display_name_language)
         front = next((s.image_path for s in sorted(card.sides, key=lambda s: s.side_order)), None)
         items.append(CardListItem(
             id=card.id,
@@ -105,6 +119,9 @@ async def update_card(
         card.received_date = date_type.fromisoformat(val) if val else None
     if "notes" in body:
         card.notes = body["notes"]
+    if "display_name_language" in body:
+        val = body["display_name_language"]
+        card.display_name_language = val if val else None
     await db.flush()
     person_ext_id = await db.scalar(select(Person.external_id).where(Person.id == card.person_id))
     out = CardOut.model_validate(card)
@@ -145,6 +162,39 @@ async def add_card_side(
     await db.flush()
     await db.refresh(side)
     return side
+
+
+@router.post("/{card_ext_id}/sides/{side_order}/promote", status_code=204)
+async def promote_card_side_to_front(
+    card_ext_id: str,
+    side_order: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Promote a side to side_order 0 (Front). Sides that were before it shift right by 1."""
+    if side_order == 0:
+        return  # already front
+    card = await _load_card(db, card_ext_id)
+    sides = (await db.execute(
+        select(CardSide).where(CardSide.card_id == card.id)
+    )).scalars().all()
+    target = next((s for s in sides if s.side_order == side_order), None)
+    if not target:
+        raise HTTPException(404, "Side not found")
+    # Move all to negative temps to avoid unique constraint during reassignment
+    original_orders = {s.id: s.side_order for s in sides}
+    for s in sides:
+        s.side_order = -(s.side_order + 1)
+    await db.flush()
+    # Assign final values: promoted → 0, those before it shift +1, those after unchanged
+    for s in sides:
+        orig = original_orders[s.id]
+        if orig == side_order:
+            s.side_order = 0
+        elif orig < side_order:
+            s.side_order = orig + 1
+        else:
+            s.side_order = orig
+    await db.flush()
 
 
 @router.delete("/{card_ext_id}/sides/{side_order}", status_code=204)

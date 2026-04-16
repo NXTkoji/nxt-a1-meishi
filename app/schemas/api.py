@@ -114,6 +114,7 @@ class CardOut(BaseModel):
     received_date: Optional[date]
     received_location: Optional[str]
     notes: Optional[str]
+    display_name_language: Optional[str] = None
     sync_status: str
     created_at: datetime
     sides: List[CardSideOut] = Field(default_factory=list)

@@ -118,6 +118,7 @@ export interface Card {
   occasion_id?: number
   received_date?: string
   notes?: string
+  display_name_language?: string
   sync_status: string
   created_at: string
   sides: CardSide[]

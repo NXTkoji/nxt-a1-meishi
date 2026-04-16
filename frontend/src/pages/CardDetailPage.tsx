@@ -12,6 +12,7 @@ import {
   getPerson,
   addCardSide,
   deleteCardSide,
+  promoteCardSideToFront,
 } from '../api'
 import { LightboxImage } from '../components/ImageLightbox'
 import { PersonEditor } from '../components/PersonEditor'
@@ -60,6 +61,12 @@ export function CardDetailPage() {
     onError: () => showToast(t.saveError, 'error'),
   })
 
+  const promoteMutation = useMutation({
+    mutationFn: (sideOrder: number) => promoteCardSideToFront(extId, sideOrder),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['card', extId] }),
+    onError: () => showToast(t.saveError, 'error'),
+  })
+
   if (cardLoading || personLoading) {
     return <div className="max-w-4xl mx-auto py-12 text-center text-gray-400">{t.loading}</div>
   }
@@ -94,9 +101,17 @@ export function CardDetailPage() {
                 alt={`side ${side.side_order}`}
                 className="h-40 w-auto max-w-xs rounded-lg border border-gray-200 object-contain bg-gray-50 shadow-sm"
               />
-              <p className="text-xs text-gray-400 mt-1">
-                {side.side_order === 0 ? t.sideLabels[0] : side.side_order === 1 ? t.sideLabels[1] : t.sideN(side.side_order)}
-              </p>
+              {side.side_order === 0 ? (
+                <p className="text-xs text-gray-400 mt-1">{t.sideLabels[0]}</p>
+              ) : (
+                <button
+                  className="text-xs text-blue-500 hover:text-blue-700 mt-1 hover:underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => promoteMutation.mutate(side.side_order)}
+                  disabled={promoteMutation.isPending}
+                >
+                  {t.swapSidesLabel}
+                </button>
+              )}
               {canDeleteSide && (
                 <button
                   className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center shadow"
@@ -141,6 +156,32 @@ export function CardDetailPage() {
 
       {/* Metadata */}
       <section className="border-t border-gray-100 pt-4 flex items-center gap-4 flex-wrap">
+        {person && (() => {
+          const langs = [...new Set(
+            person.names.filter(n => n.is_current).map(n => n.language)
+          )]
+          if (langs.length < 2) return null
+          return (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">{t.thumbnailNameLabel}</span>
+              <select
+                value={card.display_name_language ?? ''}
+                onChange={async e => {
+                  await updateCard(card.external_id, { display_name_language: e.target.value || null })
+                  qc.invalidateQueries({ queryKey: ['card', extId] })
+                  qc.invalidateQueries({ queryKey: ['cards'] })
+                }}
+                className="text-xs border border-gray-200 rounded px-2 py-0.5 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                <option value="">{t.thumbnailNameAuto}</option>
+                {langs.map(lang => {
+                  const name = person.names.find(n => n.is_current && n.language === lang)
+                  return <option key={lang} value={lang}>{name?.full_name} ({lang})</option>
+                })}
+              </select>
+            </div>
+          )
+        })()}
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-400">{t.receivedDateLabel}</span>
           <input

@@ -11,6 +11,7 @@ const LAUNCHER = 'http://127.0.0.1:8001'
 const HEALTH = '/api/v1/health'
 const POLL_INTERVAL = 1500  // ms between health checks
 const POLL_TIMEOUT = 30_000 // ms before giving up
+const SESSION_KEY = 'nxt_backend_ready'
 
 async function startBackend(): Promise<void> {
   try {
@@ -25,7 +26,10 @@ async function waitForBackend(): Promise<boolean> {
   while (Date.now() < deadline) {
     try {
       const res = await fetch(HEALTH)
-      if (res.ok) return true
+      if (res.ok) {
+        sessionStorage.setItem(SESSION_KEY, '1')
+        return true
+      }
     } catch { /* not yet */ }
     await new Promise(r => setTimeout(r, POLL_INTERVAL))
   }
@@ -45,18 +49,29 @@ function Shell() {
   const route = useRoute()
   const { t, lang, setLang } = useLang()
 
+  useEffect(() => {
+    const titles: Record<string, string> = {
+      collection: `${t.navCollection} — ${t.appName}`,
+      scan: `${t.navScan} — ${t.appName}`,
+      settings: `${t.navSettings} — ${t.appName}`,
+      'card-detail': `${t.appName}`,
+      'person-detail': `${t.appName}`,
+    }
+    document.title = titles[route] ?? t.appName
+  }, [route, t])
+
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="border-b border-gray-200 bg-white sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 flex items-center gap-6 h-12">
-          <span className="font-semibold text-gray-900 text-sm">🪪 {t.appName}</span>
-          <a href="/collection" className={`text-sm ${route === 'collection' || route === 'card-detail' || route === 'person-detail' ? 'text-blue-600 font-medium' : 'text-gray-600 hover:text-gray-900'}`}>
+          <span className="font-semibold text-gray-900 text-sm">{t.appName}</span>
+          <a href="/collection" className={`text-sm pb-px ${route === 'collection' || route === 'card-detail' || route === 'person-detail' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
             {t.navCollection}
           </a>
-          <a href="/scan" className={`text-sm ${route === 'scan' ? 'text-blue-600 font-medium' : 'text-gray-600 hover:text-gray-900'}`}>
+          <a href="/scan" className={`text-sm pb-px ${route === 'scan' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
             {t.navScan}
           </a>
-          <a href="/settings" className={`text-sm ${route === 'settings' ? 'text-blue-600 font-medium' : 'text-gray-600 hover:text-gray-900'}`}>
+          <a href="/settings" className={`text-sm pb-px ${route === 'settings' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
             {t.navSettings}
           </a>
           <div className="ml-auto">
@@ -82,10 +97,12 @@ function Shell() {
 }
 
 function BackendGate({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false)
+  // If backend was already confirmed up in this browser session, skip the gate entirely
+  const [ready, setReady] = useState(() => !!sessionStorage.getItem(SESSION_KEY))
   const [timedOut, setTimedOut] = useState(false)
 
   useEffect(() => {
+    if (ready) return  // already confirmed — no need to poll again
     // Tell launcher to start Docker, then poll until the API responds
     startBackend().then(() => waitForBackend()).then(ok => {
       if (ok) setReady(true)

@@ -89,6 +89,7 @@ const translations = {
     fieldDept: (lang: string) => `部署 (${lang})`,
     emptyField: '空白',
     addImageLabel: '画像追加',
+    swapSidesLabel: '表面に設定',
     notesLabel: 'メモ',
     notesPlaceholder: 'メモを追加…',
     addPhotoLabel: '写真追加',
@@ -130,6 +131,9 @@ const translations = {
     deletePersonBtn: '人物を削除',
     confirmDeletePerson: 'この人物とそのデータをすべて削除しますか？\n\n※ 関連する名刺には影響しません。',
     personDeleted: '人物を削除しました',
+
+    thumbnailNameLabel: 'サムネイル表示名',
+    thumbnailNameAuto: '自動',
 
     // Feedback toasts
     savedChanges: '保存しました',
@@ -233,6 +237,7 @@ const translations = {
     fieldDept: (lang: string) => `Dept (${lang})`,
     emptyField: 'empty',
     addImageLabel: 'Add Image',
+    swapSidesLabel: 'Promote to Front',
     notesLabel: 'Notes',
     notesPlaceholder: 'Add a note...',
     addPhotoLabel: 'Add Photo',
@@ -274,6 +279,9 @@ const translations = {
     deletePersonBtn: 'Delete person',
     confirmDeletePerson: 'Delete this person and all their data?\n\nNote: their business cards will not be deleted.',
     personDeleted: 'Person deleted',
+
+    thumbnailNameLabel: 'Thumbnail name',
+    thumbnailNameAuto: 'Auto',
 
     // Feedback toasts
     savedChanges: 'Saved',

@@ -796,11 +796,25 @@ function StageIndicator({ stage }: { stage: Stage }) {
   ]
   const idx = steps.findIndex(([s]) => s === stage)
   return (
-    <div className="flex items-center gap-1 text-xs">
+    <div className="flex items-center text-xs">
       {steps.map(([s, label], i) => (
-        <span key={s} className={`px-2 py-0.5 rounded-full ${i === idx ? 'bg-blue-600 text-white' : i < idx ? 'text-green-600' : 'text-gray-400'}`}>
-          {label}
-        </span>
+        <div key={s} className="flex items-center">
+          <div className="flex items-center gap-1">
+            <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-medium shrink-0 ${
+              i === idx ? 'bg-blue-600 text-white' :
+              i < idx ? 'bg-green-500 text-white' :
+              'bg-gray-200 text-gray-400'
+            }`}>
+              {i < idx ? '✓' : i + 1}
+            </span>
+            <span className={`${i === idx ? 'text-blue-600 font-medium' : i < idx ? 'text-green-600' : 'text-gray-400'}`}>
+              {label}
+            </span>
+          </div>
+          {i < steps.length - 1 && (
+            <span className={`mx-1.5 ${i < idx ? 'text-green-400' : 'text-gray-300'}`}>›</span>
+          )}
+        </div>
       ))}
     </div>
   )

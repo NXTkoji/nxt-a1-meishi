@@ -319,6 +319,9 @@ class Card(Base):
     sync_status: Mapped[str] = mapped_column(String(16), default="pending")
     google_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     odoo_sync_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Preferred language for the person name shown on the collection thumbnail (en, ja, zh…)
+    # None = auto (first available name)
+    display_name_language: Mapped[Optional[str]] = mapped_column(String(16))
     # Soft delete
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

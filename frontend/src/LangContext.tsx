@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { translations } from './i18n'
 import type { Lang, Translations } from './i18n'
@@ -20,6 +20,10 @@ export function LangProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem('lang')
     return (stored === 'en' || stored === 'ja') ? stored : 'en'
   })
+
+  useEffect(() => {
+    document.documentElement.lang = lang
+  }, [lang])
 
   const handleSetLang = (l: Lang) => {
     localStorage.setItem('lang', l)

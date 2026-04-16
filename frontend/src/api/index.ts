@@ -20,7 +20,7 @@ export const listCards = (params?: { person_id?: number; offset?: number; limit?
 
 export const getCard = (id: string) => get<Card>(`/api/v2/cards/${id}`)
 
-export const updateCard = (id: string, body: { received_date?: string | null; notes?: string }) =>
+export const updateCard = (id: string, body: { received_date?: string | null; notes?: string; display_name_language?: string | null }) =>
   patch<import('../types').Card>(`/api/v2/cards/${id}`, body)
 
 export const deleteCard = (id: string) => del(`/api/v2/cards/${id}`)
@@ -33,6 +33,9 @@ export const addCardSide = (cardExtId: string, file: File): Promise<import('../t
 
 export const deleteCardSide = (cardExtId: string, sideOrder: number) =>
   del(`/api/v2/cards/${cardExtId}/sides/${sideOrder}`)
+
+export const promoteCardSideToFront = (cardExtId: string, sideOrder: number) =>
+  post<void>(`/api/v2/cards/${cardExtId}/sides/${sideOrder}/promote`, {})
 
 // Persons
 export const listPersons = (q?: string) =>

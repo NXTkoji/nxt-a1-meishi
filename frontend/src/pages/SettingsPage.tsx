@@ -8,6 +8,7 @@ import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
 import type { MyCompany, Occasion } from '../types'
 
+
 // ─── Company row ──────────────────────────────────────────────────────────────
 
 function CompanyRow({ company }: { company: MyCompany }) {
