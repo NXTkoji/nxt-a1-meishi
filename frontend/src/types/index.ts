@@ -48,6 +48,7 @@ export interface ParsedCard {
 export interface MatchResult {
   is_existing: boolean
   person_id?: number
+  person_external_id?: string   // add this line
   match_confidence: number
   match_method?: string
   matched_name?: string

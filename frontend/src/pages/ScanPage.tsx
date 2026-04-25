@@ -52,6 +52,7 @@ interface CardGroup {
   // set after analysis
   parsed?: ParsedCard
   matchPersonId?: number
+  matchPersonExtId?: string     // person's external UUID for duplicate check panel
   matchName?: string
   matchConfidence?: number
   // user selections
@@ -75,7 +76,7 @@ function newGroup(tempCardId: string): CardGroup {
 
 type SavedGroupState = Pick<
   CardGroup,
-  'tempCardId' | 'parsed' | 'status' | 'matchPersonId' | 'matchName' | 'matchConfidence' |
+  'tempCardId' | 'parsed' | 'status' | 'matchPersonId' | 'matchPersonExtId' | 'matchName' | 'matchConfidence' |
   'myCompanyIds' | 'occasionId' | 'receivedDate' | 'notes' | 'error'
 >
 
@@ -87,6 +88,7 @@ function saveGroupsState(sessionExtId: string, groups: CardGroup[]) {
       parsed: g.parsed,
       status: g.status,
       matchPersonId: g.matchPersonId,
+      matchPersonExtId: g.matchPersonExtId,
       matchName: g.matchName,
       matchConfidence: g.matchConfidence,
       myCompanyIds: g.myCompanyIds,
@@ -487,6 +489,7 @@ export function ScanPage() {
                     status: 'done' as const,
                     parsed: event.parsed,
                     matchPersonId: event.match?.person_id,
+                    matchPersonExtId: event.match?.person_external_id,
                     matchName: event.match?.matched_name,
                     matchConfidence: event.match?.match_confidence,
                     progress: undefined,
