@@ -132,6 +132,8 @@ class CardListItem(BaseModel):
     # Denormalized for list view
     person_name: Optional[str] = None
     front_image_path: Optional[str] = None
+    # Destinations that have a successful sync record (most recent per destination)
+    synced_destinations: List[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -315,3 +317,23 @@ class MyCompanyCreate(BaseModel):
 class MyCompanyUpdate(BaseModel):
     name: Optional[str] = None
     notes: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
+
+class ExportRequest(BaseModel):
+    card_external_ids: List[str]
+    destinations: List[str]  # e.g. ["odoo", "google_contacts"]
+
+
+class ExportResultItem(BaseModel):
+    card_external_id: str
+    destination: str
+    result: str          # created, updated, error
+    error_message: Optional[str] = None
+
+
+class ExportResponse(BaseModel):
+    results: List[ExportResultItem]
