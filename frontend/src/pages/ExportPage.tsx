@@ -21,7 +21,7 @@ const DEST_BADGE_LABELS: Record<string, string> = {
 }
 
 export function ExportPage() {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const [step, setStep] = useState<Step>('select')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
@@ -33,7 +33,7 @@ export function ExportPage() {
   const [occasionFilter, setOccasionFilter] = useState<number | undefined>()
   const [notExported, setNotExported] = useState(false)
 
-  const queryParams = {
+  const queryParams = useMemo(() => ({
     q: q || undefined,
     year: yearFilter,
     month: monthFilter,
@@ -41,7 +41,7 @@ export function ExportPage() {
     occasion_id: occasionFilter,
     not_exported: notExported || undefined,
     limit: 500,
-  }
+  }), [q, yearFilter, monthFilter, dateFilter, occasionFilter, notExported])
 
   const { data: cards = [], isLoading } = useQuery<CardListItem[]>({
     queryKey: ['export-cards', queryParams],
@@ -66,7 +66,7 @@ export function ExportPage() {
     }
     if (notExported) out.push({ label: t.exportFilterNotExported, clear: () => setNotExported(false) })
     return out
-  }, [yearFilter, monthFilter, dateFilter, occasionFilter, notExported, occasions, t])
+  }, [yearFilter, monthFilter, dateFilter, occasionFilter, notExported, occasions, lang])
 
   const toggleCard = (extId: string) =>
     setSelectedIds(prev => {
@@ -159,9 +159,9 @@ export function ExportPage() {
       {/* Active filter chips */}
       {chips.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {chips.map((chip, i) => (
+          {chips.map((chip) => (
             <span
-              key={i}
+              key={chip.label}
               className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full"
             >
               {chip.label}

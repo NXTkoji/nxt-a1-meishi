@@ -144,7 +144,7 @@ export function ExportDestinationSelector({
 
       {exportMutation.isError && (
         <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-          Export failed: {(exportMutation.error as Error).message}
+          Export failed: {exportMutation.error instanceof Error ? exportMutation.error.message : 'Unknown error'}
         </div>
       )}
     </div>
