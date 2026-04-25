@@ -27,6 +27,7 @@ import {
   uploadImage,
 } from '../api'
 import { DropZone } from '../components/DropZone'
+import { DuplicateFieldEditor } from '../components/DuplicateFieldEditor'
 import { ParsedCardEditor } from '../components/ParsedCardEditor'
 import { ConfidenceBadge } from '../components/ConfidenceBadge'
 import { LightboxImage } from '../components/ImageLightbox'
@@ -52,8 +53,11 @@ interface CardGroup {
   // set after analysis
   parsed?: ParsedCard
   matchPersonId?: number
+  matchPersonExtId?: string     // person's external UUID for duplicate check panel
   matchName?: string
   matchConfidence?: number
+  dupDismissed?: boolean   // user clicked "Not a duplicate"
+  discarded?: boolean      // user clicked "Discard new card"
   // user selections
   myCompanyIds: number[]
   occasionId?: number
@@ -75,7 +79,8 @@ function newGroup(tempCardId: string): CardGroup {
 
 type SavedGroupState = Pick<
   CardGroup,
-  'tempCardId' | 'parsed' | 'status' | 'matchPersonId' | 'matchName' | 'matchConfidence' |
+  'tempCardId' | 'parsed' | 'status' | 'matchPersonId' | 'matchPersonExtId' | 'matchName' | 'matchConfidence' |
+  'dupDismissed' | 'discarded' |
   'myCompanyIds' | 'occasionId' | 'receivedDate' | 'notes' | 'error'
 >
 
@@ -87,8 +92,11 @@ function saveGroupsState(sessionExtId: string, groups: CardGroup[]) {
       parsed: g.parsed,
       status: g.status,
       matchPersonId: g.matchPersonId,
+      matchPersonExtId: g.matchPersonExtId,
       matchName: g.matchName,
       matchConfidence: g.matchConfidence,
+      dupDismissed: g.dupDismissed,
+      discarded: g.discarded,
       myCompanyIds: g.myCompanyIds,
       occasionId: g.occasionId,
       receivedDate: g.receivedDate,
@@ -487,6 +495,7 @@ export function ScanPage() {
                     status: 'done' as const,
                     parsed: event.parsed,
                     matchPersonId: event.match?.person_id,
+                    matchPersonExtId: event.match?.person_external_id,
                     matchName: event.match?.matched_name,
                     matchConfidence: event.match?.match_confidence,
                     progress: undefined,
@@ -517,7 +526,7 @@ export function ScanPage() {
     setStage('confirming')
     setConfirmError(null)
     const cards: CardDraft[] = groups
-      .filter(g => g.parsed)
+      .filter(g => g.parsed && !g.discarded)
       .map(g => ({
         temp_card_id: g.tempCardId,
         parsed: g.parsed!,
@@ -718,6 +727,27 @@ export function ScanPage() {
               onAddImage={handleAddImage}
               onMoveImage={moveImageBetweenGroups}
               onSwapImages={() => swapImagesInGroup(group.tempCardId)}
+              onDupNotDuplicate={groupId =>
+                setGroups(prev =>
+                  prev.map(g => g.tempCardId === groupId
+                    ? { ...g, dupDismissed: true, matchPersonId: undefined, matchPersonExtId: undefined }
+                    : g
+                  )
+                )
+              }
+              onDupDiscard={groupId =>
+                setGroups(prev =>
+                  prev.map(g => g.tempCardId === groupId ? { ...g, discarded: true } : g)
+                )
+              }
+              onDupMerge={(groupId, mergedCard) =>
+                setGroups(prev =>
+                  prev.map(g => g.tempCardId === groupId
+                    ? { ...g, parsed: mergedCard, dupDismissed: true }
+                    : g
+                  )
+                )
+              }
             />
           ))}
         </section>
@@ -768,7 +798,7 @@ export function ScanPage() {
                 onClick={handleConfirm}
                 className="btn-primary shadow-lg px-6 py-3 text-base"
               >
-                {t.saveN(groups.filter(g => g.parsed).length)}
+                {t.saveN(groups.filter(g => g.parsed && !g.discarded).length)}
               </button>
             )}
           </div>
@@ -910,6 +940,7 @@ function OccasionPicker({
 function CardGroupCard({
   group, index, sessionId, companies, occasions, stage,
   splittingIds, splitFeedback, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onSwapImages,
+  onDupNotDuplicate, onDupDiscard, onDupMerge,
 }: {
   group: CardGroup
   index: number
@@ -926,6 +957,9 @@ function CardGroupCard({
   onAddImage: (groupId: string, file: File) => Promise<void>
   onMoveImage: (imgId: number, fromGroupId: string, toGroupId: string) => void
   onSwapImages: () => void
+  onDupNotDuplicate: (groupId: string) => void
+  onDupDiscard: (groupId: string) => void
+  onDupMerge: (groupId: string, mergedCard: ParsedCard) => void
 }) {
   const { t } = useLang()
   const [cropImg, setCropImg] = useState<SessionImage | null>(null)
@@ -1074,6 +1108,24 @@ function CardGroupCard({
           )}
           {group.parsed && stage === 'review' && (
             <ParsedCardEditor parsed={group.parsed} onChange={onParsedChange} onCorrection={onCorrection} />
+          )}
+          {/* Duplicate check panel — shown when confident match exists and not dismissed */}
+          {group.parsed && stage === 'review' &&
+           group.matchPersonExtId &&
+           (group.matchConfidence ?? 0) >= 0.55 &&
+           !group.dupDismissed &&
+           !group.discarded && (
+            <div className="mt-3">
+              <DuplicateFieldEditor
+                personExtId={group.matchPersonExtId}
+                newCard={group.parsed}
+                matchName={group.matchName}
+                matchConfidence={group.matchConfidence}
+                onNotDuplicate={() => onDupNotDuplicate(group.tempCardId)}
+                onDiscard={() => onDupDiscard(group.tempCardId)}
+                onMerge={merged => onDupMerge(group.tempCardId, merged)}
+              />
+            </div>
           )}
           {group.parsed && stage !== 'review' && (
             <div className="text-sm text-gray-700 space-y-1">

@@ -337,6 +337,11 @@ class Card(Base):
     my_company_links: Mapped[List["CardMyCompany"]] = relationship(
         back_populates="card", cascade="all, delete-orphan"
     )
+    sync_history: Mapped[List["CardSyncHistory"]] = relationship(
+        back_populates="card",
+        cascade="all, delete-orphan",
+        order_by="CardSyncHistory.synced_at.desc()",
+    )
 
 
 class CardSide(Base):
@@ -478,3 +483,25 @@ class FieldCorrection(Base):
     # SHA-256 of card front image — prevents duplicate corrections for same card
     card_image_hash: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ---------------------------------------------------------------------------
+# Card Sync History  (one row per export event per card per destination)
+# ---------------------------------------------------------------------------
+
+class CardSyncHistory(Base):
+    """
+    Records every manual export event.
+    destination values: odoo, google_contacts, onedrive
+    result values: created, updated, error
+    """
+    __tablename__ = "card_sync_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    card_id: Mapped[int] = mapped_column(ForeignKey("cards.id"), nullable=False)
+    destination: Mapped[str] = mapped_column(String(32), nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    result: Mapped[str] = mapped_column(String(16), nullable=False)  # created, updated, error
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    card: Mapped["Card"] = relationship(back_populates="sync_history")

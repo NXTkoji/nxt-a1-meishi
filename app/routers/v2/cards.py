@@ -30,10 +30,23 @@ router = APIRouter(
 async def list_cards(
     person_id: Optional[int] = Query(None),
     occasion_id: Optional[int] = Query(None),
-    limit: int = Query(50, le=200),
+    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
+    year: Optional[int] = Query(None),
+    month: Optional[str] = Query(None, description="YYYY-MM"),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
+    limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
+    from datetime import date as date_type
+    from sqlalchemy import exists, or_, and_, extract
+    from app.db.models import (
+        ContactDetail, Organization, OrganizationName,
+        PersonName as PersonNameModel, Position, PositionDetail,
+        CardSyncHistory,
+    )
+
     stmt = (
         select(Card)
         .where(Card.deleted_at.is_(None))
@@ -42,17 +55,128 @@ async def list_cards(
         .offset(offset)
         .options(selectinload(Card.sides))
     )
+
     if person_id:
         stmt = stmt.where(Card.person_id == person_id)
     if occasion_id:
         stmt = stmt.where(Card.occasion_id == occasion_id)
 
+    # Date filters (prefer received_date, fall back to created_at)
+    if date:
+        d = date_type.fromisoformat(date)
+        stmt = stmt.where(
+            or_(
+                func.date(Card.received_date) == d,
+                and_(Card.received_date.is_(None), func.date(Card.created_at) == d),
+            )
+        )
+    elif month:
+        y, m = int(month[:4]), int(month[5:7])
+        stmt = stmt.where(
+            or_(
+                and_(
+                    extract('year', Card.received_date) == y,
+                    extract('month', Card.received_date) == m,
+                ),
+                and_(
+                    Card.received_date.is_(None),
+                    extract('year', Card.created_at) == y,
+                    extract('month', Card.created_at) == m,
+                ),
+            )
+        )
+    elif year:
+        stmt = stmt.where(
+            or_(
+                extract('year', Card.received_date) == year,
+                and_(Card.received_date.is_(None), extract('year', Card.created_at) == year),
+            )
+        )
+
+    # not_exported: no successful sync history to odoo or google_contacts
+    if not_exported:
+        exported_subq = (
+            select(CardSyncHistory.card_id)
+            .where(
+                CardSyncHistory.card_id == Card.id,
+                CardSyncHistory.destination.in_(["odoo", "google_contacts"]),
+                CardSyncHistory.result.in_(["created", "updated"]),
+            )
+        )
+        stmt = stmt.where(~exists(exported_subq))
+
+    # Full-text search across person data
+    if q:
+        like = f"%{q}%"
+        text_subq = (
+            select(PersonNameModel.person_id)
+            .where(
+                PersonNameModel.person_id == Card.person_id,
+                PersonNameModel.is_current == True,  # noqa: E712
+                PersonNameModel.full_name.ilike(like),
+            )
+        )
+        contact_subq = (
+            select(ContactDetail.person_id)
+            .where(
+                ContactDetail.person_id == Card.person_id,
+                ContactDetail.value.ilike(like),
+            )
+        )
+        pos_subq = (
+            select(PositionDetail.position_id)
+            .join(Position, PositionDetail.position_id == Position.id)
+            .where(
+                Position.person_id == Card.person_id,
+                or_(
+                    PositionDetail.title.ilike(like),
+                    PositionDetail.department.ilike(like),
+                ),
+            )
+        )
+        org_subq = (
+            select(OrganizationName.org_id)
+            .join(Organization, OrganizationName.org_id == Organization.id)
+            .join(Position, Position.org_id == Organization.id)
+            .where(
+                Position.person_id == Card.person_id,
+                OrganizationName.is_current == True,  # noqa: E712
+                OrganizationName.name.ilike(like),
+            )
+        )
+        stmt = stmt.where(
+            or_(
+                exists(text_subq),
+                exists(contact_subq),
+                exists(pos_subq),
+                exists(org_subq),
+            )
+        )
+
     rows = (await db.execute(stmt)).scalars().all()
 
-    async def _get_name(person_id: int, lang: Optional[str]) -> Optional[str]:
-        base = (PersonName.person_id == person_id, PersonName.is_current == True)  # noqa: E712
+    # Fetch sync history for all returned cards in one query
+    card_ids = [c.id for c in rows]
+    sync_rows: list = []
+    if card_ids:
+        sh_stmt = (
+            select(CardSyncHistory)
+            .where(
+                CardSyncHistory.card_id.in_(card_ids),
+                CardSyncHistory.result.in_(["created", "updated"]),
+            )
+            .order_by(CardSyncHistory.synced_at.desc())
+        )
+        sync_rows = (await db.execute(sh_stmt)).scalars().all()
+
+    # Build map: card_id → set of destinations with successful sync
+    synced_map: dict[int, set[str]] = {}
+    for sh in sync_rows:
+        synced_map.setdefault(sh.card_id, set()).add(sh.destination)
+
+    async def _get_name(pid: int, lang: Optional[str]) -> Optional[str]:
+        base = (PersonName.person_id == pid, PersonName.is_current == True)  # noqa: E712
         if lang:
-            # Prefer the per-card language (prefix match: "zh" matches "zh-TW" etc.)
             preferred = await db.scalar(
                 select(PersonName.full_name)
                 .where(*base, PersonName.language.like(f"{lang}%"))
@@ -61,7 +185,6 @@ async def list_cards(
             )
             if preferred:
                 return preferred
-        # Fallback: first available current name
         return await db.scalar(
             select(PersonName.full_name)
             .where(*base)
@@ -72,7 +195,9 @@ async def list_cards(
     items = []
     for card in rows:
         name = await _get_name(card.person_id, card.display_name_language)
-        front = next((s.image_path for s in sorted(card.sides, key=lambda s: s.side_order)), None)
+        front = next(
+            (s.image_path for s in sorted(card.sides, key=lambda s: s.side_order)), None
+        )
         items.append(CardListItem(
             id=card.id,
             external_id=card.external_id,
@@ -82,6 +207,7 @@ async def list_cards(
             created_at=card.created_at,
             person_name=name,
             front_image_path=front,
+            synced_destinations=sorted(synced_map.get(card.id, set())),
         ))
     return items
 

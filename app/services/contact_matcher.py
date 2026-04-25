@@ -172,6 +172,12 @@ async def _display_name(db: AsyncSession, person_id: int) -> str:
     return name or f"person:{person_id}"
 
 
+async def _external_id(db: AsyncSession, person_id: int) -> Optional[str]:
+    from sqlalchemy import select as _select
+    from app.db.models import Person as _Person
+    return await db.scalar(_select(_Person.external_id).where(_Person.id == person_id))
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -200,10 +206,12 @@ async def find_match(db: AsyncSession, card: ParsedCard) -> MatchResult:
     if hit:
         person_id, matched = hit
         display = await _display_name(db, person_id)
+        ext_id = await _external_id(db, person_id)
         logger.info("Email match: %s → person %d", matched, person_id)
         return MatchResult(
             is_existing=True,
             person_id=person_id,
+            person_external_id=ext_id,
             match_confidence=THRESH_EMAIL,
             match_method="email",
             matched_name=display,
@@ -214,10 +222,12 @@ async def find_match(db: AsyncSession, card: ParsedCard) -> MatchResult:
     if hit:
         person_id, matched = hit
         display = await _display_name(db, person_id)
+        ext_id = await _external_id(db, person_id)
         logger.info("Phone match: %s → person %d", matched, person_id)
         return MatchResult(
             is_existing=True,
             person_id=person_id,
+            person_external_id=ext_id,
             match_confidence=THRESH_PHONE,
             match_method="phone",
             matched_name=display,
@@ -229,6 +239,7 @@ async def find_match(db: AsyncSession, card: ParsedCard) -> MatchResult:
         person_id, matched, conf = hit
         if conf >= REPORT_MINIMUM:
             display = await _display_name(db, person_id)
+            ext_id = await _external_id(db, person_id)
             method = "name_exact" if conf >= THRESH_NAME_EX else "name_fuzzy"
             logger.info(
                 "Name match: '%s' → person %d (%.0f%%, %s)",
@@ -237,6 +248,7 @@ async def find_match(db: AsyncSession, card: ParsedCard) -> MatchResult:
             return MatchResult(
                 is_existing=True,
                 person_id=person_id,
+                person_external_id=ext_id,
                 match_confidence=conf,
                 match_method=method,
                 matched_name=display,

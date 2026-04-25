@@ -99,7 +99,8 @@ class ParsedCard(BaseModel):
 
 class MatchResult(BaseModel):
     is_existing: bool = False
-    person_id: Optional[int] = None       # local DB persons.id
+    person_id: Optional[int] = None           # local DB persons.id (internal)
+    person_external_id: Optional[str] = None  # local DB persons.external_id (UUID)
     match_confidence: float = 0.0
     match_method: Optional[str] = None    # email, phone, name_exact, name_fuzzy
     matched_name: Optional[str] = None

@@ -48,6 +48,7 @@ export interface ParsedCard {
 export interface MatchResult {
   is_existing: boolean
   person_id?: number
+  person_external_id?: string   // add this line
   match_confidence: number
   match_method?: string
   matched_name?: string
@@ -133,6 +134,7 @@ export interface CardListItem {
   created_at: string
   person_name?: string
   front_image_path?: string
+  synced_destinations: string[]
 }
 
 // Persons
@@ -213,6 +215,21 @@ export interface MyCompany {
   name: string
   google_label?: string
   notes?: string
+}
+
+export interface CardSyncBadge {
+  destination: string   // "odoo" | "google_contacts"
+}
+
+export interface ExportResultItem {
+  card_external_id: string
+  destination: string
+  result: 'created' | 'updated' | 'error'
+  error_message?: string
+}
+
+export interface ExportResponse {
+  results: ExportResultItem[]
 }
 
 export interface RelationshipType {

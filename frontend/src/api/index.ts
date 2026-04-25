@@ -10,9 +10,25 @@ import type {
 } from '../types'
 
 // Cards
-export const listCards = (params?: { person_id?: number; offset?: number; limit?: number }) => {
+export const listCards = (params?: {
+  person_id?: number
+  occasion_id?: number
+  q?: string
+  year?: number
+  month?: string        // "YYYY-MM"
+  date?: string         // "YYYY-MM-DD"
+  not_exported?: boolean
+  offset?: number
+  limit?: number
+}) => {
   const qs = new URLSearchParams()
   if (params?.person_id) qs.set('person_id', String(params.person_id))
+  if (params?.occasion_id) qs.set('occasion_id', String(params.occasion_id))
+  if (params?.q) qs.set('q', params.q)
+  if (params?.year) qs.set('year', String(params.year))
+  if (params?.month) qs.set('month', params.month)
+  if (params?.date) qs.set('date', params.date)
+  if (params?.not_exported) qs.set('not_exported', 'true')
   if (params?.offset) qs.set('offset', String(params.offset))
   if (params?.limit) qs.set('limit', String(params.limit))
   return get<CardListItem[]>(`/api/v2/cards?${qs}`)
@@ -88,6 +104,11 @@ export const deleteMyCompany = (id: number) =>
 
 export const listRelationshipTypes = () =>
   get<RelationshipType[]>('/api/v2/settings/relationship-types')
+
+export const runExport = (body: {
+  card_external_ids: string[]
+  destinations: string[]
+}) => post<import('../types').ExportResponse>('/api/v2/export', body)
 
 // Re-export sessions API
 export * from './sessions'
