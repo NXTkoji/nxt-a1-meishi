@@ -79,6 +79,7 @@ const translations = {
     addFieldLabel: '＋ フィールド追加',
     addOrgLabel: '＋ 組織追加',
     addNameLabel: '＋ 個人追加',
+    addTitleLabel: '＋ 役職追加',
     removeLabel: '削除',
     fieldFullName: 'フルネーム',
     fieldFamilyName: '姓',
@@ -182,6 +183,11 @@ const translations = {
     dupNotDuplicate: '別人として保存 →',
     dupDiscard: '新しい名刺を破棄',
     dupConfirmMerge: 'マージして保存',
+
+    // ScanPage — move/delete card group
+    moveToCard: (n: number) => `→ #${n}`,
+    deleteGroupLabel: 'カードを削除',
+    deleteGroupDisabledHint: '画像をすべて移動してから削除できます',
   },
 
   en: {
@@ -262,6 +268,7 @@ const translations = {
     addFieldLabel: '+ Add Field',
     addOrgLabel: '+ Add Organization',
     addNameLabel: '+ Add Personal',
+    addTitleLabel: '+ Add Title',
     removeLabel: 'Remove',
     fieldFullName: 'Full Name',
     fieldFamilyName: 'Family Name',
@@ -365,6 +372,11 @@ const translations = {
     dupNotDuplicate: 'Not a duplicate →',
     dupDiscard: 'Discard new card',
     dupConfirmMerge: 'Confirm merge',
+
+    // ScanPage — move/delete card group
+    moveToCard: (n: number) => `→ #${n}`,
+    deleteGroupLabel: 'Delete Card',
+    deleteGroupDisabledHint: 'Move all images out first to delete',
   },
 } as const
 

@@ -134,7 +134,7 @@ function FieldRow({
           </button>
           {onDelete && (
             <button
-              className="opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600 shrink-0 ml-1"
+              className="text-xs text-red-300 hover:text-red-600 shrink-0 ml-1"
               onClick={onDelete}
               title={t.removeLabel}
             >✕</button>
@@ -445,6 +445,33 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
       }),
     })
 
+  const deleteDetailField = (pi: number, di: number, field: 'title' | 'department') =>
+    onChange({
+      ...parsed,
+      positions: parsed.positions.map((p, pidx) => {
+        if (pidx !== pi) return p
+        const updated = p.details.map((d, didx) => {
+          if (didx !== di) return d
+          const next = { ...d, [field]: undefined }
+          return next
+        })
+        // Remove detail entries that have neither title nor department
+        return { ...p, details: updated.filter(d => d.title || d.department) }
+      }),
+    })
+
+  const addDetail = (pi: number) =>
+    onChange({
+      ...parsed,
+      positions: parsed.positions.map((p, pidx) => {
+        if (pidx !== pi) return p
+        return {
+          ...p,
+          details: [...p.details, { language: 'en', title: { value: '', confidence: 1.0 } }],
+        }
+      }),
+    })
+
   const deleteOrg = (pi: number) =>
     onChange({ ...parsed, positions: parsed.positions.filter((_, idx) => idx !== pi) })
 
@@ -557,6 +584,7 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
                     value={d.title.value}
                     confidence={d.title.confidence}
                     onEdit={v => setDetail(pi, di, 'title', v)}
+                    onDelete={() => deleteDetailField(pi, di, 'title')}
                     onCommit={(old, nv) => onCorrection?.({ field_path: `positions[${pi}].details[${di}].title`, claude_value: old, user_value: nv, correction_type: 'field_value' })}
                   />
                 )}
@@ -566,11 +594,15 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
                     value={d.department.value}
                     confidence={d.department.confidence}
                     onEdit={v => setDetail(pi, di, 'department', v)}
+                    onDelete={() => deleteDetailField(pi, di, 'department')}
                     onCommit={(old, nv) => onCorrection?.({ field_path: `positions[${pi}].details[${di}].department`, claude_value: old, user_value: nv, correction_type: 'field_value' })}
                   />
                 )}
               </span>
             ))}
+            <button className="text-xs text-blue-500 hover:text-blue-700 py-1" onClick={() => addDetail(pi)}>
+              {t.addTitleLabel}
+            </button>
 
             {/* Work contacts — one section per org */}
             <ContactSubSection

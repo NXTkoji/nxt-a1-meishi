@@ -140,14 +140,32 @@ def _build_user_content(
 # JSON → ParsedCard
 # ---------------------------------------------------------------------------
 
-def _cf(raw: Optional[dict]) -> Optional[CF]:
+def _normalize_caps(value: str) -> str:
+    """Title-case a string that is entirely uppercase Latin text.
+
+    Leaves CJK/mixed strings untouched; only fires when every ASCII
+    alphabetic character in the string is uppercase (e.g. "YUICHI FUKUHARA"
+    → "Yuichi Fukuhara").
+    """
+    has_latin = any(c.isascii() and c.isalpha() for c in value)
+    all_upper = all(not (c.isascii() and c.isalpha()) or c.isupper() for c in value)
+    return value.title() if has_latin and all_upper else value
+
+
+def _cf(raw: Optional[dict], normalize: bool = False) -> Optional[CF]:
     if not raw or not raw.get("value"):
         return None
-    return CF(value=raw["value"], confidence=float(raw.get("confidence", 1.0)))
+    value = raw["value"]
+    if normalize:
+        value = _normalize_caps(value)
+    return CF(value=value, confidence=float(raw.get("confidence", 1.0)))
 
 
-def _cf_required(raw: dict) -> CF:
-    return CF(value=raw.get("value", ""), confidence=float(raw.get("confidence", 1.0)))
+def _cf_required(raw: dict, normalize: bool = False) -> CF:
+    value = raw.get("value", "")
+    if normalize:
+        value = _normalize_caps(value)
+    return CF(value=value, confidence=float(raw.get("confidence", 1.0)))
 
 
 def _build_parsed_card(data: dict) -> ParsedCard:
@@ -155,9 +173,9 @@ def _build_parsed_card(data: dict) -> ParsedCard:
         ParsedName(
             language=n["language"],
             name_type=n.get("name_type", "primary"),
-            family_name=_cf(n.get("family_name")),
-            given_name=_cf(n.get("given_name")),
-            full_name=_cf_required(n.get("full_name", {"value": ""})),
+            family_name=_cf(n.get("family_name"), normalize=True),
+            given_name=_cf(n.get("given_name"), normalize=True),
+            full_name=_cf_required(n.get("full_name", {"value": ""}), normalize=True),
         )
         for n in data.get("names", [])
         if n.get("full_name", {}).get("value")

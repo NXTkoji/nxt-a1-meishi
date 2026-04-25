@@ -438,6 +438,10 @@ export function ScanPage() {
     [session, groups],
   )
 
+  const deleteGroup = useCallback((groupId: string) => {
+    setGroups(prev => prev.filter(g => g.tempCardId !== groupId))
+  }, [])
+
   const swapImagesInGroup = useCallback(
     async (groupId: string) => {
       if (!session) return
@@ -634,7 +638,16 @@ export function ScanPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {ungrouped.map(img => (
-              <div key={img.id} className="relative">
+              <div
+                key={img.id}
+                className="relative cursor-grab active:cursor-grabbing"
+                draggable
+                onDragStart={e => {
+                  e.dataTransfer.setData('imgId', String(img.id))
+                  e.dataTransfer.setData('fromGroupId', '__ungrouped__')
+                  e.dataTransfer.effectAllowed = 'move'
+                }}
+              >
                 <LightboxImage
                   src={`/api/v2/sessions/${session?.external_id}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
                   alt={img.image_filename}
@@ -642,16 +655,6 @@ export function ScanPage() {
                 />
                 {/* Action buttons always visible below the image */}
                 <div className="flex flex-wrap gap-0.5 mt-1 max-w-[96px]">
-                  {groups.map((g, gi) => (
-                    <button
-                      key={g.tempCardId}
-                      className="bg-blue-100 text-xs px-1.5 py-0.5 rounded text-blue-700 hover:bg-blue-600 hover:text-white"
-                      onClick={() => assignToGroup(img, g.tempCardId, g.images.length)}
-                      title={`${t.cardN(gi + 1)}`}
-                    >
-                      #{gi + 1}
-                    </button>
-                  ))}
                   <button
                     className="bg-yellow-100 text-xs px-1.5 py-0.5 rounded text-yellow-700 hover:bg-yellow-400 hover:text-gray-900 disabled:opacity-50"
                     disabled={splittingIds.has(img.id)}
@@ -726,7 +729,12 @@ export function ScanPage() {
               }}
               onAddImage={handleAddImage}
               onMoveImage={moveImageBetweenGroups}
+              onAssignUngrouped={(imgId, toGroupId) => {
+                const img = ungrouped.find(i => i.id === imgId)
+                if (img) assignToGroup(img, toGroupId, groups.find(g => g.tempCardId === toGroupId)?.images.length ?? 0)
+              }}
               onSwapImages={() => swapImagesInGroup(group.tempCardId)}
+              onDeleteGroup={deleteGroup}
               onDupNotDuplicate={groupId =>
                 setGroups(prev =>
                   prev.map(g => g.tempCardId === groupId
@@ -939,7 +947,7 @@ function OccasionPicker({
 
 function CardGroupCard({
   group, index, sessionId, companies, occasions, stage,
-  splittingIds, splitFeedback, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onSwapImages,
+  splittingIds, splitFeedback, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
   onDupNotDuplicate, onDupDiscard, onDupMerge,
 }: {
   group: CardGroup
@@ -956,7 +964,9 @@ function CardGroupCard({
   onCorrection: (c: import('../components/ParsedCardEditor').CorrectionPayload) => void
   onAddImage: (groupId: string, file: File) => Promise<void>
   onMoveImage: (imgId: number, fromGroupId: string, toGroupId: string) => void
+  onAssignUngrouped: (imgId: number, toGroupId: string) => void
   onSwapImages: () => void
+  onDeleteGroup: (groupId: string) => void
   onDupNotDuplicate: (groupId: string) => void
   onDupDiscard: (groupId: string) => void
   onDupMerge: (groupId: string, mergedCard: ParsedCard) => void
@@ -992,6 +1002,16 @@ function CardGroupCard({
         {group.status === 'error' && (
           <span className="text-xs text-red-600">{group.error}</span>
         )}
+        {(stage === 'grouping' || stage === 'review') && (
+          <button
+            className="ml-auto text-xs text-red-400 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed px-1.5 py-0.5 rounded"
+            disabled={group.images.length > 0}
+            title={group.images.length > 0 ? t.deleteGroupDisabledHint : t.deleteGroupLabel}
+            onClick={() => onDeleteGroup(group.tempCardId)}
+          >
+            🗑 {t.deleteGroupLabel}
+          </button>
+        )}
       </div>
 
       <div className="p-4 flex gap-4">
@@ -1008,7 +1028,10 @@ function CardGroupCard({
             setIsDragOver(false)
             const imgId = parseInt(e.dataTransfer.getData('imgId'))
             const fromGroupId = e.dataTransfer.getData('fromGroupId')
-            if (fromGroupId && fromGroupId !== group.tempCardId && !isNaN(imgId)) {
+            if (isNaN(imgId) || !fromGroupId) return
+            if (fromGroupId === '__ungrouped__') {
+              onAssignUngrouped(imgId, group.tempCardId)
+            } else if (fromGroupId !== group.tempCardId) {
               onMoveImage(imgId, fromGroupId, group.tempCardId)
             }
           } : undefined}
