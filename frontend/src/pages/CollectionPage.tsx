@@ -114,6 +114,12 @@ export function CollectionPage() {
           onChange={e => setQ(e.target.value)}
           className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+        <a
+          href="/export"
+          className="text-sm px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+        >
+          {t.exportBtn}
+        </a>
       </div>
 
       {/* Cards grouped by year/month */}

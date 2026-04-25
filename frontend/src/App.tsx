@@ -6,6 +6,7 @@ import { CollectionPage } from './pages/CollectionPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { CardDetailPage } from './pages/CardDetailPage'
 import { PersonDetailPage } from './pages/PersonDetailPage'
+import { ExportPage } from './pages/ExportPage'
 
 const LAUNCHER = 'http://127.0.0.1:8001'
 const HEALTH = '/api/v1/health'
@@ -42,6 +43,7 @@ function useRoute() {
   if (path.startsWith('/settings')) return 'settings'
   if (path.startsWith('/cards/')) return 'card-detail'
   if (path.startsWith('/persons/')) return 'person-detail'
+  if (path.startsWith('/export')) return 'export'
   return 'collection'
 }
 
@@ -56,6 +58,7 @@ function Shell() {
       settings: `${t.navSettings} — ${t.appName}`,
       'card-detail': `${t.appName}`,
       'person-detail': `${t.appName}`,
+      export: `${t.navExport} — ${t.appName}`,
     }
     document.title = titles[route] ?? t.appName
   }, [route, t])
@@ -74,6 +77,9 @@ function Shell() {
           <a href="/settings" className={`text-sm pb-px ${route === 'settings' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
             {t.navSettings}
           </a>
+          <a href="/export" className={`text-sm pb-px ${route === 'export' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
+            {t.navExport}
+          </a>
           <div className="ml-auto">
             <button
               onClick={() => setLang(lang === 'ja' ? 'en' : 'ja')}
@@ -88,6 +94,7 @@ function Shell() {
       <main>
         {route === 'scan' ? <ScanPage />
           : route === 'settings' ? <SettingsPage />
+          : route === 'export' ? <ExportPage />
           : route === 'card-detail' ? <CardDetailPage />
           : route === 'person-detail' ? <PersonDetailPage />
           : <CollectionPage />}
