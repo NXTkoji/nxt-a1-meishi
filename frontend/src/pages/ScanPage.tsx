@@ -132,6 +132,8 @@ export function ScanPage() {
   const [imgCacheBust, setImgCacheBust] = useState<Record<number, number>>({})
   const abortRef = useRef<AbortController | null>(null)
 
+  const isManual = new URLSearchParams(window.location.search).get('manual') === '1'
+
   const { data: companies = [] } = useQuery<MyCompany[]>({
     queryKey: ['my-companies'],
     queryFn: listMyCompanies,
@@ -181,6 +183,29 @@ export function ScanPage() {
             setStage('uploading')
           })
         })
+    } else if (isManual) {
+      createSession().then(s => {
+        sessionStorage.setItem('scan_session_id', s.external_id)
+        setSession(s)
+        const blankId = crypto.randomUUID()
+        setGroups([{
+          tempCardId: blankId,
+          images: [],
+          myCompanyIds: [],
+          occasionId: undefined,
+          receivedDate: new Date().toISOString().slice(0, 10),
+          notes: undefined,
+          status: 'done',
+          parsed: {
+            names: [],
+            positions: [],
+            contact_details: [],
+            languages_detected: [],
+            overall_confidence: 0,
+          },
+        }])
+        setStage('review')
+      })
     } else {
       createSession().then(s => {
         sessionStorage.setItem('scan_session_id', s.external_id)
@@ -595,7 +620,9 @@ export function ScanPage() {
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-semibold text-gray-900">{t.scanTitle}</h1>
+          <h1 className="text-lg font-semibold text-gray-900">
+            {isManual ? t.manualEntryTitle : t.scanTitle}
+          </h1>
           {stage !== 'uploading' && stage !== 'idle' && stage !== 'done' && (
             <button
               onClick={resetToNew}
@@ -605,7 +632,7 @@ export function ScanPage() {
             </button>
           )}
         </div>
-        <StageIndicator stage={stage} />
+        <StageIndicator stage={stage} isManual={isManual} />
       </div>
 
       {/* Upload */}
@@ -711,6 +738,7 @@ export function ScanPage() {
               companies={companies}
               occasions={occasions}
               stage={stage}
+              isManual={isManual}
               splittingIds={splittingIds}
               splitFeedback={splitFeedback}
               onSplitImage={handleSplitGrouped}
@@ -783,15 +811,17 @@ export function ScanPage() {
       {/* Review confirm bar */}
       {stage === 'review' && (
         <div className="sticky bottom-4 flex justify-between gap-3">
-          <button
-            onClick={() => {
-              setGroups(prev => prev.map(g => ({ ...g, parsed: undefined, status: 'pending' as const, progress: undefined, error: undefined })))
-              setStage('grouping')
-            }}
-            className="btn-secondary shadow-lg px-5 py-3 text-base"
-          >
-            {t.backToGrouping}
-          </button>
+          {!isManual && (
+            <button
+              onClick={() => {
+                setGroups(prev => prev.map(g => ({ ...g, parsed: undefined, status: 'pending' as const, progress: undefined, error: undefined })))
+                setStage('grouping')
+              }}
+              className="btn-secondary shadow-lg px-5 py-3 text-base"
+            >
+              {t.backToGrouping}
+            </button>
+          )}
           <div className="flex gap-3">
             {groups.some(g => g.status === 'error') && (
               <button
@@ -823,15 +853,18 @@ export function ScanPage() {
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-function StageIndicator({ stage }: { stage: Stage }) {
+function StageIndicator({ stage, isManual }: { stage: Stage; isManual?: boolean }) {
   const { t } = useLang()
-  const steps: [Stage, string][] = [
+  const allSteps: [Stage, string][] = [
     ['uploading', t.stageUpload],
     ['grouping', t.stageGroup],
     ['analyzing', t.stageAnalyze],
     ['review', t.stageReview],
     ['done', t.stageDone],
   ]
+  const steps = isManual
+    ? allSteps.filter(([s]) => s === 'review' || s === 'done')
+    : allSteps
   const idx = steps.findIndex(([s]) => s === stage)
   return (
     <div className="flex items-center text-xs">
@@ -948,7 +981,7 @@ function OccasionPicker({
 function CardGroupCard({
   group, index, sessionId, companies, occasions, stage,
   splittingIds, splitFeedback, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
-  onDupNotDuplicate, onDupDiscard, onDupMerge,
+  onDupNotDuplicate, onDupDiscard, onDupMerge, isManual,
 }: {
   group: CardGroup
   index: number
@@ -970,6 +1003,7 @@ function CardGroupCard({
   onDupNotDuplicate: (groupId: string) => void
   onDupDiscard: (groupId: string) => void
   onDupMerge: (groupId: string, mergedCard: ParsedCard) => void
+  isManual?: boolean
 }) {
   const { t } = useLang()
   const [cropImg, setCropImg] = useState<SessionImage | null>(null)
@@ -991,7 +1025,7 @@ function CardGroupCard({
         {group.status === 'analyzing' && (
           <span className="text-xs text-blue-600 animate-pulse">{group.progress ?? t.analyzing}</span>
         )}
-        {group.status === 'done' && group.parsed && (
+        {group.status === 'done' && group.parsed && !isManual && (
           <ConfidenceBadge confidence={group.parsed.overall_confidence} />
         )}
         {group.matchName && (
@@ -1036,6 +1070,8 @@ function CardGroupCard({
             }
           } : undefined}
         >
+          {!isManual && (
+            <>
           {group.images
             .slice()
             .sort((a, b) => (a.side_order ?? 0) - (b.side_order ?? 0))
@@ -1120,11 +1156,13 @@ function CardGroupCard({
               </label>
             </>
           )}
+            </>
+          )}
         </div>
 
         {/* Parsed data */}
         <div className="flex-1 min-w-0">
-          {group.parsed && stage === 'review' && group.parsed.names.length === 0 && group.parsed.positions.length === 0 && (
+          {group.parsed && stage === 'review' && !isManual && group.parsed.names.length === 0 && group.parsed.positions.length === 0 && (
             <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 mb-2">
               {t.noCardDataHint}
             </div>
@@ -1158,7 +1196,7 @@ function CardGroupCard({
           )}
           {stage === 'review' && group.parsed && (
             <div className="mt-3 grid grid-cols-2 gap-2 text-xs border-t border-gray-100 pt-3">
-              {/* My companies */}
+              {/* Received As */}
               <div>
                 <label className="text-gray-500 block mb-1">{t.myCompanyLabel}</label>
                 <div className="flex flex-wrap gap-1">

@@ -586,6 +586,7 @@ async def _upsert_contact_details(
                 detail_type=cd.detail_type,
                 value=val,
                 label=cd.label,
+                country_code=cd.country_code if cd.detail_type.startswith("address_") else None,
             ))
 
 
@@ -711,8 +712,8 @@ async def confirm_session(
     db: AsyncSession = Depends(get_db),
 ):
     session = await _get_session(db, sid)
-    if session.status not in ("analyzing", "review"):
-        raise HTTPException(400, "Session must be in analyzing or review state to confirm")
+    if session.status not in ("uploading", "grouping", "analyzing", "review"):
+        raise HTTPException(400, "Session is not in a confirmable state")
 
     confirmed = []
     for draft in body.cards:

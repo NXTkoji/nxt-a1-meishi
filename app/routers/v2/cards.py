@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import verify_api_key
-from app.db.models import Card, CardSide, Person, PersonName
+from app.db.models import Card, CardMyCompany, CardSide, Person, PersonName
 from app.db.session import get_db
 from app.schemas.api import CardListItem, CardOut, CardSideOut
 from app.services import image_store
@@ -30,6 +30,7 @@ router = APIRouter(
 async def list_cards(
     person_id: Optional[int] = Query(None),
     occasion_id: Optional[int] = Query(None),
+    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
     q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
     year: Optional[int] = Query(None),
     month: Optional[str] = Query(None, description="YYYY-MM"),
@@ -42,7 +43,7 @@ async def list_cards(
     from datetime import date as date_type
     from sqlalchemy import exists, or_, and_, extract
     from app.db.models import (
-        ContactDetail, Organization, OrganizationName,
+        CardMyCompany, ContactDetail, Organization, OrganizationName,
         PersonName as PersonNameModel, Position, PositionDetail,
         CardSyncHistory,
     )
@@ -60,6 +61,9 @@ async def list_cards(
         stmt = stmt.where(Card.person_id == person_id)
     if occasion_id:
         stmt = stmt.where(Card.occasion_id == occasion_id)
+    if my_company_id:
+        mc_subq = select(CardMyCompany.card_id).where(CardMyCompany.my_company_id == my_company_id)
+        stmt = stmt.where(Card.id.in_(mc_subq))
 
     # Date filters (prefer received_date, fall back to created_at)
     if date:
@@ -216,7 +220,7 @@ async def _load_card(db: AsyncSession, card_ext_id: str) -> Card:
     card = await db.scalar(
         select(Card)
         .where(Card.external_id == card_ext_id, Card.deleted_at.is_(None))
-        .options(selectinload(Card.sides))
+        .options(selectinload(Card.sides), selectinload(Card.my_company_links))
     )
     if not card:
         raise HTTPException(404, "Card not found")
@@ -229,6 +233,7 @@ async def get_card(card_ext_id: str, db: AsyncSession = Depends(get_db)):
     person_ext_id = await db.scalar(select(Person.external_id).where(Person.id == card.person_id))
     out = CardOut.model_validate(card)
     out.person_external_id = person_ext_id
+    out.my_company_ids = [link.my_company_id for link in card.my_company_links]
     return out
 
 
@@ -248,10 +253,21 @@ async def update_card(
     if "display_name_language" in body:
         val = body["display_name_language"]
         card.display_name_language = val if val else None
+    if "occasion_id" in body:
+        card.occasion_id = body["occasion_id"] or None
+    if "my_company_ids" in body:
+        from sqlalchemy import delete as sa_delete
+        await db.execute(sa_delete(CardMyCompany).where(CardMyCompany.card_id == card.id))
+        for mc_id in body["my_company_ids"]:
+            db.add(CardMyCompany(card_id=card.id, my_company_id=mc_id))
     await db.flush()
     person_ext_id = await db.scalar(select(Person.external_id).where(Person.id == card.person_id))
+    mc_ids = (await db.execute(
+        select(CardMyCompany.my_company_id).where(CardMyCompany.card_id == card.id)
+    )).scalars().all()
     out = CardOut.model_validate(card)
     out.person_external_id = person_ext_id
+    out.my_company_ids = list(mc_ids)
     return out
 
 

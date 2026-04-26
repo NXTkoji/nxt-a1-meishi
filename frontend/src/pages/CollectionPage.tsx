@@ -1,8 +1,17 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { listCards, listPersons } from '../api'
+import { listCards, listPersons, listCountries } from '../api'
 import { useLang } from '../LangContext'
-import type { CardListItem, PersonListItem } from '../types'
+import type { CardListItem, Country, PersonListItem } from '../types'
+
+const _intlNames = new Intl.DisplayNames(['ja', 'en'], { type: 'region' })
+
+function countryLabel(code: string | undefined, countries: Country[]): string {
+  if (!code) return '—'
+  const registered = countries.find(c => c.code === code)
+  if (registered) return registered.name
+  try { return _intlNames.of(code) ?? code } catch { return code }
+}
 
 export function CollectionPage() {
   const { t } = useLang()
@@ -10,6 +19,7 @@ export function CollectionPage() {
   const [view, setView] = useState<'cards' | 'persons'>('cards')
   const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set())
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set())
+  const [collapsedCountries, setCollapsedCountries] = useState<Set<string>>(new Set())
 
   const { data: cards = [], isLoading: cardsLoading } = useQuery<CardListItem[]>({
     queryKey: ['cards'],
@@ -20,6 +30,12 @@ export function CollectionPage() {
   const { data: persons = [], isLoading: personsLoading } = useQuery<PersonListItem[]>({
     queryKey: ['persons', q],
     queryFn: () => listPersons(q || undefined),
+    enabled: view === 'persons',
+  })
+
+  const { data: countries = [] } = useQuery<Country[]>({
+    queryKey: ['countries'],
+    queryFn: listCountries,
     enabled: view === 'persons',
   })
 
@@ -70,6 +86,28 @@ export function CollectionPage() {
       }))
   }, [filteredCards])
 
+  // Group persons by country_code (home first, then work), sorted by family name within
+  const personsByCountry = useMemo(() => {
+    const sorted = [...persons].sort((a, b) => {
+      const fa = (a.family_name ?? a.primary_name ?? '').toLowerCase()
+      const fb = (b.family_name ?? b.primary_name ?? '').toLowerCase()
+      return fa.localeCompare(fb)
+    })
+    const countryMap = new Map<string, PersonListItem[]>()
+    for (const p of sorted) {
+      const key = p.country_code ?? ''
+      if (!countryMap.has(key)) countryMap.set(key, [])
+      countryMap.get(key)!.push(p)
+    }
+    return [...countryMap.entries()]
+      .sort(([a], [b]) => {
+        if (!a) return 1   // unknown last
+        if (!b) return -1
+        return a.localeCompare(b)
+      })
+      .map(([code, persons]) => ({ code, persons }))
+  }, [persons])
+
   const toggleYear = (year: number) =>
     setCollapsedYears(prev => {
       const next = new Set(prev)
@@ -84,10 +122,18 @@ export function CollectionPage() {
       return next
     })
 
+  const toggleCountry = (key: string) =>
+    setCollapsedCountries(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+
   return (
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-4">
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold text-gray-900 flex-1">{t.collectionTitle}</h1>
+        <a href="/scan?manual=1" className="btn-secondary text-sm">{t.enterManuallyBtn}</a>
         <a href="/scan" className="btn-primary text-sm">{t.newScanBtn}</a>
       </div>
 
@@ -173,29 +219,49 @@ export function CollectionPage() {
         )
       )}
 
-      {/* Persons list */}
+      {/* Persons grouped by country */}
       {view === 'persons' && (
         personsLoading ? (
           <div className="text-center text-gray-400 py-12">{t.loading}</div>
         ) : persons.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
-            {persons.map(p => (
-              <a
-                key={p.id}
-                href={`/persons/${p.external_id}`}
-                className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
-              >
-                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
-                  {(p.primary_name ?? '?').charAt(0)}
+          <div className="space-y-2">
+            {personsByCountry.map(({ code, persons: group }) => {
+              const collapsed = collapsedCountries.has(code)
+              const label = code ? countryLabel(code, countries) : t.unknownCountry ?? 'Unknown'
+              return (
+                <div key={code || '__none__'}>
+                  <button
+                    className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 py-1 hover:text-blue-600 text-left"
+                    onClick={() => toggleCountry(code)}
+                  >
+                    <span className="text-xs text-gray-400">{collapsed ? '▶' : '▼'}</span>
+                    <span>{label}</span>
+                    <span className="text-xs text-gray-400 font-normal">({group.length})</span>
+                  </button>
+                  {!collapsed && (
+                    <div className="ml-4 divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
+                      {group.map(p => (
+                        <a
+                          key={p.id}
+                          href={`/persons/${p.external_id}`}
+                          className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
+                        >
+                          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
+                            {(p.primary_name ?? '?').charAt(0)}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
+                            <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
-                  <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
-                </div>
-              </a>
-            ))}
+              )
+            })}
           </div>
         )
       )}

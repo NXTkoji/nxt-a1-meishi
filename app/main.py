@@ -16,6 +16,7 @@ from app.routers.v2 import (
     persons as v2_persons,
     organizations as v2_organizations,
     occasions as v2_occasions,
+    countries as v2_countries,
     corrections as v2_corrections,
     settings as v2_settings,
     export as v2_export,
@@ -57,6 +58,7 @@ app.include_router(v2_cards.router)
 app.include_router(v2_persons.router)
 app.include_router(v2_organizations.router)
 app.include_router(v2_occasions.router)
+app.include_router(v2_countries.router)
 app.include_router(v2_corrections.router)
 app.include_router(v2_settings.router)
 app.include_router(v2_export.router)

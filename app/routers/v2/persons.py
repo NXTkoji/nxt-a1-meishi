@@ -49,6 +49,7 @@ class ContactDetailUpdate(BaseModel):
     value: Optional[str] = None
     label: Optional[str] = None
     detail_type: Optional[str] = None
+    country_code: Optional[str] = None
 
 
 class OrgNameUpdate(BaseModel):
@@ -148,13 +149,40 @@ async def list_persons(
 
     items = []
     for p in persons:
-        primary_name = await db.scalar(
-            select(PersonName.full_name)
+        name_row = (await db.execute(
+            select(PersonName.full_name, PersonName.family_name)
             .where(PersonName.person_id == p.id, PersonName.is_current == True)  # noqa: E712
             .order_by(PersonName.id.asc())
             .limit(1)
-        )
-        items.append(PersonListItem(id=p.id, external_id=p.external_id, primary_name=primary_name, created_at=p.created_at))
+        )).first()
+        primary_name = name_row[0] if name_row else None
+        family_name = name_row[1] if name_row else None
+
+        # Country: home address first, then work address
+        country_row = (await db.execute(
+            select(ContactDetail.country_code)
+            .where(
+                ContactDetail.person_id == p.id,
+                ContactDetail.detail_type.in_(["address_home", "address_work"]),
+                ContactDetail.country_code.isnot(None),
+            )
+            .order_by(
+                # address_home sorts before address_work
+                ContactDetail.detail_type.asc(),
+                ContactDetail.id.asc(),
+            )
+            .limit(1)
+        )).first()
+        country_code = country_row[0] if country_row else None
+
+        items.append(PersonListItem(
+            id=p.id,
+            external_id=p.external_id,
+            primary_name=primary_name,
+            family_name=family_name,
+            country_code=country_code,
+            created_at=p.created_at,
+        ))
     return items
 
 

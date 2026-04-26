@@ -6,12 +6,12 @@
  *
  * This is a full page — not a modal. Route: /export
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { listCards, listOccasions } from '../api'
+import { listCards, listMyCompanies, listOccasions } from '../api'
 import { useLang } from '../LangContext'
 import { ExportDestinationSelector } from '../components/ExportDestinationSelector'
-import type { CardListItem, Occasion } from '../types'
+import type { CardListItem, MyCompany, Occasion } from '../types'
 
 type Step = 'select' | 'destinations'
 
@@ -31,7 +31,9 @@ export function ExportPage() {
   const [monthFilter, setMonthFilter] = useState<string | undefined>()
   const [dateFilter, setDateFilter] = useState<string | undefined>()
   const [occasionFilter, setOccasionFilter] = useState<number | undefined>()
+  const [myCompanyFilter, setMyCompanyFilter] = useState<number | undefined>()
   const [notExported, setNotExported] = useState(false)
+  const autoSelectPending = useRef(false)
 
   const queryParams = useMemo(() => ({
     q: q || undefined,
@@ -39,18 +41,42 @@ export function ExportPage() {
     month: monthFilter,
     date: dateFilter,
     occasion_id: occasionFilter,
+    my_company_id: myCompanyFilter,
     not_exported: notExported || undefined,
     limit: 500,
-  }), [q, yearFilter, monthFilter, dateFilter, occasionFilter, notExported])
+  }), [q, yearFilter, monthFilter, dateFilter, occasionFilter, myCompanyFilter, notExported])
+
+  // Filter change → auto-select if any filter is active, otherwise clear selection
+  useEffect(() => {
+    const hasFilter = !!(queryParams.q || queryParams.year || queryParams.month ||
+                         queryParams.date || queryParams.occasion_id || queryParams.my_company_id || queryParams.not_exported)
+    if (hasFilter) {
+      autoSelectPending.current = true
+    } else {
+      setSelectedIds(new Set())
+    }
+  }, [queryParams])
 
   const { data: cards = [], isLoading } = useQuery<CardListItem[]>({
     queryKey: ['export-cards', queryParams],
     queryFn: () => listCards(queryParams),
   })
 
+  useEffect(() => {
+    if (autoSelectPending.current && !isLoading) {
+      setSelectedIds(new Set(cards.map(c => c.external_id)))
+      autoSelectPending.current = false
+    }
+  }, [cards, isLoading])
+
   const { data: occasions = [] } = useQuery<Occasion[]>({
     queryKey: ['occasions'],
     queryFn: listOccasions,
+  })
+
+  const { data: myCompanies = [] } = useQuery<MyCompany[]>({
+    queryKey: ['my-companies'],
+    queryFn: listMyCompanies,
   })
 
   // Active filter chips
@@ -64,9 +90,13 @@ export function ExportPage() {
       const occ = occasions.find(o => o.id === occasionFilter)
       out.push({ label: occ?.name ?? `Occasion #${occasionFilter}`, clear: () => setOccasionFilter(undefined) })
     }
+    if (myCompanyFilter) {
+      const mc = myCompanies.find(m => m.id === myCompanyFilter)
+      out.push({ label: `${t.exportFilterMetAs}: ${mc?.name ?? myCompanyFilter}`, clear: () => setMyCompanyFilter(undefined) })
+    }
     if (notExported) out.push({ label: t.exportFilterNotExported, clear: () => setNotExported(false) })
     return out
-  }, [yearFilter, monthFilter, dateFilter, occasionFilter, notExported, occasions, lang])
+  }, [yearFilter, monthFilter, dateFilter, occasionFilter, myCompanyFilter, notExported, occasions, myCompanies, lang])
 
   const toggleCard = (extId: string) =>
     setSelectedIds(prev => {
@@ -78,13 +108,19 @@ export function ExportPage() {
   const selectAll = () => setSelectedIds(new Set(cards.map(c => c.external_id)))
   const deselectAll = () => setSelectedIds(new Set())
 
+  // Only count/export cards that are both selected and currently visible
+  const visibleSelectedIds = useMemo(
+    () => cards.filter(c => selectedIds.has(c.external_id)).map(c => c.external_id),
+    [cards, selectedIds],
+  )
+
   const currentYear = new Date().getFullYear()
   const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - i)
 
   if (step === 'destinations') {
     return (
       <ExportDestinationSelector
-        cardExternalIds={[...selectedIds]}
+        cardExternalIds={visibleSelectedIds}
         onBack={() => setStep('select')}
         onDone={() => { window.location.href = '/collection' }}
       />
@@ -143,6 +179,18 @@ export function ExportPage() {
           <option value="">{t.exportFilterOccasion}</option>
           {occasions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
+
+        {/* Met As picker */}
+        {myCompanies.length > 0 && (
+          <select
+            value={myCompanyFilter ?? ''}
+            onChange={e => setMyCompanyFilter(e.target.value ? Number(e.target.value) : undefined)}
+            className="border border-gray-300 rounded px-2 py-1 text-xs"
+          >
+            <option value="">{t.exportFilterMetAs}</option>
+            {myCompanies.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        )}
 
         {/* Not-exported toggle */}
         <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
@@ -235,11 +283,11 @@ export function ExportPage() {
       {/* Footer */}
       <div className="sticky bottom-4">
         <button
-          disabled={selectedIds.size === 0}
+          disabled={visibleSelectedIds.length === 0}
           onClick={() => setStep('destinations')}
           className="btn-primary w-full py-3 text-sm shadow-lg disabled:opacity-40"
         >
-          {t.exportNextBtn(selectedIds.size)}
+          {t.exportNextBtn(visibleSelectedIds.length)}
         </button>
       </div>
     </div>

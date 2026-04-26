@@ -2,6 +2,7 @@ import { get, post, patch, del, uploadFile } from './client'
 import type {
   Card,
   CardListItem,
+  Country,
   MyCompany,
   Occasion,
   Person,
@@ -13,6 +14,7 @@ import type {
 export const listCards = (params?: {
   person_id?: number
   occasion_id?: number
+  my_company_id?: number
   q?: string
   year?: number
   month?: string        // "YYYY-MM"
@@ -24,6 +26,7 @@ export const listCards = (params?: {
   const qs = new URLSearchParams()
   if (params?.person_id) qs.set('person_id', String(params.person_id))
   if (params?.occasion_id) qs.set('occasion_id', String(params.occasion_id))
+  if (params?.my_company_id) qs.set('my_company_id', String(params.my_company_id))
   if (params?.q) qs.set('q', params.q)
   if (params?.year) qs.set('year', String(params.year))
   if (params?.month) qs.set('month', params.month)
@@ -36,7 +39,7 @@ export const listCards = (params?: {
 
 export const getCard = (id: string) => get<Card>(`/api/v2/cards/${id}`)
 
-export const updateCard = (id: string, body: { received_date?: string | null; notes?: string; display_name_language?: string | null }) =>
+export const updateCard = (id: string, body: { received_date?: string | null; notes?: string; display_name_language?: string | null; my_company_ids?: number[]; occasion_id?: number | null }) =>
   patch<import('../types').Card>(`/api/v2/cards/${id}`, body)
 
 export const deleteCard = (id: string) => del(`/api/v2/cards/${id}`)
@@ -67,7 +70,7 @@ export const updatePersonName = (personExtId: string, nameId: number, body: { fu
 export const addContactDetail = (personExtId: string, body: { detail_type: string; value?: string; label?: string }) =>
   post<import('../types').ContactDetail>(`/api/v2/persons/${personExtId}/contact-details`, body)
 
-export const updateContactDetail = (personExtId: string, detailId: number, body: { value?: string; label?: string; detail_type?: string }) =>
+export const updateContactDetail = (personExtId: string, detailId: number, body: { value?: string; label?: string; detail_type?: string; country_code?: string }) =>
   patch<import('../types').ContactDetail>(`/api/v2/persons/${personExtId}/contact-details/${detailId}`, body)
 
 export const deleteContactDetail = (personExtId: string, detailId: number) =>
@@ -78,6 +81,17 @@ export const updatePositionDetail = (personExtId: string, positionId: number, de
 
 export const updateOrgName = (personExtId: string, positionId: number, orgNameId: number, body: { name: string }) =>
   patch<import('../types').OrgName>(`/api/v2/persons/${personExtId}/positions/${positionId}/org-name/${orgNameId}`, body)
+
+// Countries
+export const listCountries = () => get<Country[]>('/api/v2/countries')
+
+export const createCountry = (body: { code: string; name: string }) =>
+  post<Country>('/api/v2/countries', body)
+
+export const updateCountry = (id: number, body: { name: string }) =>
+  patch<Country>(`/api/v2/countries/${id}`, body)
+
+export const deleteCountry = (id: number) => del(`/api/v2/countries/${id}`)
 
 // Occasions
 export const listOccasions = () => get<Occasion[]>('/api/v2/occasions')

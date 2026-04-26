@@ -74,6 +74,7 @@ class ParsedContactDetail(BaseModel):
     detail_type: str
     value: CF
     label: Optional[str] = None         # original label printed on card (e.g. "携帯", "TEL")
+    country_code: Optional[str] = None  # ISO 3166-1 alpha-2 for address_* types
 
 
 # ---------------------------------------------------------------------------

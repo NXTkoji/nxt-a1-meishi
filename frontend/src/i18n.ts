@@ -43,7 +43,7 @@ const translations = {
     emptySlot: '空',
 
     // ScanPage — review metadata
-    myCompanyLabel: '自社',
+    myCompanyLabel: '対面時の立場',
     occasionLabel: '場面',
     occasionAddNew: '＋ 新しい場面',
     occasionNewPlaceholder: '場面名を入力…',
@@ -70,6 +70,7 @@ const translations = {
     emptyMessage: 'まだ名刺がありません',
     emptyCta: '最初の名刺をスキャン',
     noName: '(名前なし)',
+    unknownCountry: '国不明',
 
     // ParsedCardEditor
     nameSection: (n: number) => `個人 ${n}`,
@@ -117,13 +118,20 @@ const translations = {
 
     // Settings page
     settingsTitle: '設定',
-    myCompaniesTitle: '自社一覧',
-    addCompanyPlaceholder: '会社名を入力…',
+    myCompaniesTitle: '対面時の立場一覧',
+    addCompanyPlaceholder: '立場名を入力…',
     addCompanyBtn: '＋ 追加',
     deleteBtn: '削除',
     confirmDelete: '削除してよろしいですか？',
     occasionsTitle: '場面一覧',
     addOccasionPlaceholder: '場面名を入力…',
+
+    countriesTitle: '国一覧',
+    addCountryCodePlaceholder: 'JP',
+    addCountryNamePlaceholder: '国名を入力…',
+    countryUnset: '国を選択…',
+    countryClear: 'クリア',
+    countryNoneRegistered: '登録された国がありません。設定から追加してください。',
 
     // Person detail
     viewPerson: '人物を見る',
@@ -151,6 +159,8 @@ const translations = {
 
     // Export flow
     navExport: 'エクスポート',
+    enterManuallyBtn: '＋ 手動入力',
+    manualEntryTitle: '人物情報を入力',
     exportBtn: 'エクスポート',
     exportTitle: 'カードをエクスポート',
     exportSearchPlaceholder: '名前・会社・メール・電話で検索…',
@@ -158,6 +168,7 @@ const translations = {
     exportFilterMonth: '月',
     exportFilterDate: '日付',
     exportFilterOccasion: '場面',
+    exportFilterMetAs: '対面時の立場',
     exportFilterNotExported: '未エクスポートのみ',
     exportClearFilter: '✕',
     exportSelectAll: (n: number) => `${n} 件を全選択`,
@@ -232,7 +243,7 @@ const translations = {
     emptySlot: 'Empty',
 
     // ScanPage — review metadata
-    myCompanyLabel: 'My Company',
+    myCompanyLabel: 'Met As',
     occasionLabel: 'Occasion',
     occasionAddNew: '+ New Occasion',
     occasionNewPlaceholder: 'Occasion name…',
@@ -259,6 +270,7 @@ const translations = {
     emptyMessage: 'No business cards yet',
     emptyCta: 'Scan your first card',
     noName: '(No name)',
+    unknownCountry: 'Unknown Country',
 
     // ParsedCardEditor
     nameSection: (n: number) => `Personal ${n}`,
@@ -306,13 +318,20 @@ const translations = {
 
     // Settings page
     settingsTitle: 'Settings',
-    myCompaniesTitle: 'My Companies',
-    addCompanyPlaceholder: 'Company name…',
+    myCompaniesTitle: 'Met As',
+    addCompanyPlaceholder: 'Name…',
     addCompanyBtn: '+ Add',
     deleteBtn: 'Delete',
     confirmDelete: 'Are you sure you want to delete this?',
     occasionsTitle: 'Occasions',
     addOccasionPlaceholder: 'Occasion name…',
+
+    countriesTitle: 'Countries',
+    addCountryCodePlaceholder: 'JP',
+    addCountryNamePlaceholder: 'Country name…',
+    countryUnset: 'set country…',
+    countryClear: 'clear',
+    countryNoneRegistered: 'No countries registered. Add them in Settings.',
 
     // Person detail
     viewPerson: 'View person',
@@ -340,6 +359,8 @@ const translations = {
 
     // Export flow
     navExport: 'Export',
+    enterManuallyBtn: '+ Enter Manually',
+    manualEntryTitle: 'Enter Person Details',
     exportBtn: 'Export',
     exportTitle: 'Export Cards',
     exportSearchPlaceholder: 'Search by name, company, email, phone…',
@@ -347,6 +368,7 @@ const translations = {
     exportFilterMonth: 'Month',
     exportFilterDate: 'Date',
     exportFilterOccasion: 'Occasion',
+    exportFilterMetAs: 'Met As',
     exportFilterNotExported: 'Not yet exported',
     exportClearFilter: '✕',
     exportSelectAll: (n: number) => `Select all ${n}`,

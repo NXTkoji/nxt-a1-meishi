@@ -118,6 +118,7 @@ class CardOut(BaseModel):
     sync_status: str
     created_at: datetime
     sides: List[CardSideOut] = Field(default_factory=list)
+    my_company_ids: List[int] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -163,6 +164,7 @@ class ContactDetailOut(BaseModel):
     detail_type: str
     value: str
     label: Optional[str]
+    country_code: Optional[str] = None
     is_primary: bool
 
     model_config = {"from_attributes": True}
@@ -213,6 +215,8 @@ class PersonListItem(BaseModel):
     id: int
     external_id: str
     primary_name: Optional[str] = None
+    family_name: Optional[str] = None
+    country_code: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -240,6 +244,28 @@ class OrgListItem(BaseModel):
     id: int
     external_id: str
     primary_name: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Countries
+# ---------------------------------------------------------------------------
+
+class CountryCreate(BaseModel):
+    code: str
+    name: str
+
+
+class CountryUpdate(BaseModel):
+    name: Optional[str] = None
+
+
+class CountryOut(BaseModel):
+    id: int
+    code: str
+    name: str
     created_at: datetime
 
     model_config = {"from_attributes": True}

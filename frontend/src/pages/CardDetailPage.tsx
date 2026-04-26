@@ -4,7 +4,7 @@
  * URL: /cards/:external_id
  * Shows card images (click to enlarge) + editable person data.
  */
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getCard,
@@ -13,12 +13,15 @@ import {
   addCardSide,
   deleteCardSide,
   promoteCardSideToFront,
+  listMyCompanies,
+  listOccasions,
+  createOccasion,
 } from '../api'
 import { LightboxImage } from '../components/ImageLightbox'
 import { PersonEditor } from '../components/PersonEditor'
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
-import type { Card, Person } from '../types'
+import type { Card, MyCompany, Occasion, Person } from '../types'
 
 function useCardExtId(): string {
   return window.location.pathname.split('/').pop() ?? ''
@@ -41,6 +44,31 @@ export function CardDetailPage() {
     queryKey: ['person', card?.person_external_id],
     queryFn: () => getPerson(card!.person_external_id!),
     enabled: !!card?.person_external_id,
+  })
+
+  const { data: companies = [] } = useQuery<MyCompany[]>({
+    queryKey: ['my-companies'],
+    queryFn: listMyCompanies,
+  })
+
+  const { data: occasions = [] } = useQuery<Occasion[]>({
+    queryKey: ['occasions'],
+    queryFn: listOccasions,
+  })
+
+  const [addingOccasion, setAddingOccasion] = useState(false)
+  const [newOccasionName, setNewOccasionName] = useState('')
+
+  const addOccasionMutation = useMutation({
+    mutationFn: (name: string) => createOccasion({ name }),
+    onSuccess: (occ) => {
+      qc.invalidateQueries({ queryKey: ['occasions'] })
+      updateCard(card?.external_id ?? '', { occasion_id: occ.id }).then(() =>
+        qc.invalidateQueries({ queryKey: ['card', extId] })
+      )
+      setAddingOccasion(false)
+      setNewOccasionName('')
+    },
   })
 
   const addSideMutation = useMutation({
@@ -155,7 +183,84 @@ export function CardDetailPage() {
       )}
 
       {/* Metadata */}
-      <section className="border-t border-gray-100 pt-4 flex items-center gap-4 flex-wrap">
+      <section className="border-t border-gray-100 pt-4 space-y-3">
+        {/* Met As */}
+        {companies.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-400">{t.myCompanyLabel}</span>
+            <div className="flex flex-wrap gap-1">
+              {companies.map(c => {
+                const selected = (card.my_company_ids ?? []).includes(c.id)
+                return (
+                  <button
+                    key={c.id}
+                    onClick={async () => {
+                      const current = card.my_company_ids ?? []
+                      const next = selected ? current.filter(id => id !== c.id) : [...current, c.id]
+                      await updateCard(card.external_id, { my_company_ids: next })
+                      qc.invalidateQueries({ queryKey: ['card', extId] })
+                    }}
+                    className={`px-2 py-0.5 rounded border text-xs ${selected ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600'}`}
+                  >
+                    {c.name}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+        {/* Occasion */}
+        <div className="flex items-start gap-2 flex-wrap">
+          <span className="text-xs text-gray-400 mt-0.5">{t.occasionLabel}</span>
+          <div className="flex flex-col gap-1">
+            <select
+              value={card.occasion_id ?? ''}
+              onChange={async e => {
+                const val = e.target.value ? Number(e.target.value) : null
+                await updateCard(card.external_id, { occasion_id: val })
+                qc.invalidateQueries({ queryKey: ['card', extId] })
+              }}
+              className="border border-gray-200 rounded px-2 py-0.5 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              <option value="">{t.noneOption}</option>
+              {[...occasions]
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+            {addingOccasion ? (
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={newOccasionName}
+                  onChange={e => setNewOccasionName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newOccasionName.trim()) addOccasionMutation.mutate(newOccasionName.trim())
+                    if (e.key === 'Escape') { setAddingOccasion(false); setNewOccasionName('') }
+                  }}
+                  placeholder={t.occasionNewPlaceholder}
+                  className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  autoFocus
+                />
+                <button
+                  className="text-xs text-blue-600 font-medium disabled:opacity-50"
+                  disabled={!newOccasionName.trim() || addOccasionMutation.isPending}
+                  onClick={() => newOccasionName.trim() && addOccasionMutation.mutate(newOccasionName.trim())}
+                >{t.saveBtn}</button>
+                <button
+                  className="text-xs text-gray-400"
+                  onClick={() => { setAddingOccasion(false); setNewOccasionName('') }}
+                >{t.cancelBtn}</button>
+              </div>
+            ) : (
+              <button
+                className="text-xs text-blue-500 hover:text-blue-700"
+                onClick={() => setAddingOccasion(true)}
+              >{t.occasionAddNew}</button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 flex-wrap">
         {person && (() => {
           const langs = [...new Set(
             person.names.filter(n => n.is_current).map(n => n.language)
@@ -196,6 +301,7 @@ export function CardDetailPage() {
           />
         </div>
         <p className="text-xs text-gray-300">ID: {card.external_id}</p>
+        </div>
       </section>
     </div>
   )

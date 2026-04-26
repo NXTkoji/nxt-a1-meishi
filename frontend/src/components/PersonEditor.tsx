@@ -2,7 +2,9 @@
  * PersonEditor — inline-editable view of a Person record.
  * Used by both CardDetailPage and PersonDetailPage.
  */
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
   updatePersonName,
   addContactDetail,
@@ -10,10 +12,11 @@ import {
   deleteContactDetail,
   updatePositionDetail,
   updateOrgName,
+  listCountries,
 } from '../api'
 import { useLang } from '../LangContext'
 import { useToast } from './Toast'
-import type { Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
+import type { Country, Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
 
 // ─── Editable field ───────────────────────────────────────────────────────────
 
@@ -180,6 +183,96 @@ function AddFieldMenu({
   )
 }
 
+// ─── Country picker ───────────────────────────────────────────────────────────
+
+export function CountryPicker({
+  value,
+  countries,
+  onSave,
+}: {
+  value: string | undefined
+  countries: Country[]
+  onSave: (code: string) => Promise<void>
+}) {
+  const { t } = useLang()
+  const { showToast } = useToast()
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 })
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  const selected = countries.find(c => c.code === value)
+
+  const handleOpen = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      setDropPos({ top: r.bottom + window.scrollY + 4, left: r.left + window.scrollX })
+    }
+    setOpen(o => !o)
+  }
+
+  const pick = async (code: string) => {
+    setOpen(false)
+    if (code === (value ?? '')) return
+    setSaving(true)
+    try {
+      await onSave(code)
+    } catch {
+      showToast(t.saveError, 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="inline-block">
+      <button
+        ref={btnRef}
+        className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600 disabled:opacity-50"
+        onClick={handleOpen}
+        onMouseDown={e => e.stopPropagation()}
+        disabled={saving}
+      >
+        <span>🌐</span>
+        <span className={selected ? 'font-medium' : 'italic text-gray-300'}>
+          {selected ? `${selected.code} ${selected.name}` : (t.countryUnset ?? 'set country…')}
+        </span>
+        <span className="text-gray-300">▾</span>
+      </button>
+      {open && createPortal(
+        <>
+          <div className="fixed inset-0 z-[200]" onClick={() => setOpen(false)} />
+          <div
+            className="absolute z-[201] bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[200px] max-h-60 overflow-y-auto"
+            style={{ top: dropPos.top, left: dropPos.left }}
+          >
+            {value && (
+              <button
+                className="block w-full text-left text-xs px-3 py-1.5 hover:bg-blue-50 text-gray-400 italic"
+                onClick={() => pick('')}
+              >— {t.countryClear ?? 'clear'} —</button>
+            )}
+            {countries.map(c => (
+              <button
+                key={c.id}
+                className={`block w-full text-left text-xs px-3 py-1.5 hover:bg-blue-50 ${c.code === value ? 'font-semibold text-blue-600' : 'text-gray-700'}`}
+                onClick={() => pick(c.code)}
+              >
+                <span className="font-mono text-gray-400 mr-2">{c.code}</span>{c.name}
+              </button>
+            ))}
+            {countries.length === 0 && (
+              <p className="text-xs text-gray-400 px-3 py-2 italic">{t.countryNoneRegistered ?? 'No countries registered. Add them in Settings.'}</p>
+            )}
+          </div>
+        </>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 // ─── Contact section ──────────────────────────────────────────────────────────
 
 function ContactSection({
@@ -188,6 +281,7 @@ function ContactSection({
   posIdx = 0,
   contacts,
   onSave,
+  onSaveCountryCode,
   onDelete,
   onMove,
   onAdd,
@@ -198,11 +292,13 @@ function ContactSection({
   posIdx?: number
   contacts: ContactDetail[]
   onSave: (d: ContactDetail, v: string) => Promise<void>
+  onSaveCountryCode: (d: ContactDetail, v: string) => Promise<void>
   onDelete: (d: ContactDetail) => Promise<void>
   onMove: (payload: DragPayload) => Promise<void>
   onAdd: (type: string) => Promise<void>
   labelMap: Record<string, string>
 }) {
+  const { data: countries = [] } = useQuery<Country[]>({ queryKey: ['countries'], queryFn: listCountries })
   const [dropState, setDropState] = useState<'none' | 'valid' | 'invalid'>('none')
 
   const getPayload = (e: React.DragEvent): DragPayload | null => {
@@ -225,7 +321,7 @@ function ContactSection({
 
   return (
     <div
-      className={`mt-2 rounded border ${dropBorder} bg-gray-50/50 overflow-hidden transition-colors`}
+      className={`mt-2 rounded border ${dropBorder} bg-gray-50/50 transition-colors`}
       onDragOver={e => {
         e.preventDefault()
         const p = getPayload(e)
@@ -239,7 +335,7 @@ function ContactSection({
         if (p && isValid(p)) onMove(p)
       }}
     >
-      <div className="px-3 py-1 bg-gray-100/60 flex items-center justify-between">
+      <div className="px-3 py-1 bg-gray-100/60 flex items-center justify-between rounded-t">
         <span className="text-xs font-medium text-gray-500">{label}</span>
         <AddFieldMenu
           types={sectionKey === 'personal' ? PERSONAL_TYPES_LIST : WORK_TYPES_LIST}
@@ -254,7 +350,7 @@ function ContactSection({
         {contacts.map(d => (
           <div
             key={d.id}
-            className="flex items-center gap-2 py-1 border-b border-gray-100 last:border-0 group cursor-grab active:cursor-grabbing"
+            className="flex items-start gap-2 py-1 border-b border-gray-100 last:border-0 group cursor-grab active:cursor-grabbing"
             draggable
             onDragStart={e => {
               const payload: DragPayload = {
@@ -267,17 +363,26 @@ function ContactSection({
               e.dataTransfer.effectAllowed = 'move'
             }}
           >
-            <span className="text-gray-300 select-none text-xs shrink-0" title="Drag to move">⠿</span>
-            <span className="w-28 shrink-0 text-xs text-gray-400">{labelMap[d.detail_type] ?? d.detail_type}</span>
-            <div className="flex-1 text-sm">
+            <span className="text-gray-300 select-none text-xs shrink-0 mt-0.5" title="Drag to move">⠿</span>
+            <span className="w-28 shrink-0 text-xs text-gray-400 mt-0.5">{labelMap[d.detail_type] ?? d.detail_type}</span>
+            <div className="flex-1 text-sm min-w-0">
               <EditableField
                 value={d.value}
                 onSave={v => onSave(d, v)}
                 multiline={d.detail_type.startsWith('address')}
               />
+              {d.detail_type.startsWith('address') && (
+                <div className="mt-0.5">
+                  <CountryPicker
+                    value={d.country_code}
+                    countries={countries}
+                    onSave={code => onSaveCountryCode(d, code)}
+                  />
+                </div>
+              )}
             </div>
             <button
-              className="opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600 shrink-0"
+              className="opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600 shrink-0 mt-0.5"
               onClick={() => onDelete(d)}
             >✕</button>
           </div>
@@ -315,6 +420,9 @@ export function PersonEditor({
 
   const saveContact = (detail: ContactDetail, value: string) =>
     run(() => updateContactDetail(person.external_id, detail.id, { value }))
+
+  const saveCountryCode = (detail: ContactDetail, code: string) =>
+    run(() => updateContactDetail(person.external_id, detail.id, { country_code: code || undefined }))
 
   const removeContact = (detail: ContactDetail) =>
     run(() => deleteContactDetail(person.external_id, detail.id).then(() => showToast(t.deleteConfirmed)))
@@ -362,8 +470,8 @@ export function PersonEditor({
     <div className="space-y-4">
       {/* Names */}
       {person.names.filter(n => n.is_current).map(name => (
-        <section key={name.id} className="rounded-lg border border-gray-200 overflow-hidden">
-          <div className="bg-gray-50 px-3 py-1.5 flex items-center gap-2">
+        <section key={name.id} className="rounded-lg border border-gray-200">
+          <div className="bg-gray-50 px-3 py-1.5 flex items-center gap-2 rounded-t-lg">
             <span className="font-medium text-xs text-gray-600">{t.nameSection(1)}</span>
             <span className="text-xs bg-gray-200 text-gray-600 rounded px-1">{name.language}</span>
           </div>
@@ -390,6 +498,7 @@ export function PersonEditor({
               posIdx={0}
               contacts={personalContacts}
               onSave={saveContact}
+              onSaveCountryCode={saveCountryCode}
               onDelete={removeContact}
               onMove={p => moveContact(p, 'personal', 0)}
               onAdd={type => addContact(type, 0)}
@@ -401,8 +510,8 @@ export function PersonEditor({
 
       {/* Positions / Organizations */}
       {person.positions.map((pos, pi) => (
-        <section key={pos.id} className="rounded-lg border border-gray-200 overflow-hidden">
-          <div className="bg-gray-50 px-3 py-1.5">
+        <section key={pos.id} className="rounded-lg border border-gray-200">
+          <div className="bg-gray-50 px-3 py-1.5 rounded-t-lg">
             <span className="font-medium text-xs text-gray-600">{t.orgSection(pi + 1)}</span>
           </div>
           <div className="px-3 pt-1 pb-2 space-y-1.5">
@@ -431,6 +540,7 @@ export function PersonEditor({
               posIdx={pi}
               contacts={getWorkContactsForPos(pi)}
               onSave={saveContact}
+              onSaveCountryCode={saveCountryCode}
               onDelete={removeContact}
               onMove={p => moveContact(p, 'work', pi)}
               onAdd={type => addContact(type, pi)}

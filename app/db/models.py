@@ -279,6 +279,19 @@ class PersonRelationship(Base):
 
 
 # ---------------------------------------------------------------------------
+# Countries  (managed list for consistent naming)
+# ---------------------------------------------------------------------------
+
+class Country(Base):
+    __tablename__ = "countries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(4), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+# ---------------------------------------------------------------------------
 # Occasions  (groups 2+ cards from the same event)
 # ---------------------------------------------------------------------------
 
@@ -406,6 +419,8 @@ class ContactDetail(Base):
     value: Mapped[str] = mapped_column(String(1024), nullable=False)
     # Original label printed on the card (e.g., "携帯", "TEL", "FAX")
     label: Mapped[Optional[str]] = mapped_column(String(64))
+    # ISO 3166-1 alpha-2 country code for address_* details (e.g. "JP", "US")
+    country_code: Mapped[Optional[str]] = mapped_column(String(4))
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 

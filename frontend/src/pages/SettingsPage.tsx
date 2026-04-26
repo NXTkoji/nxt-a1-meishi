@@ -3,10 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listMyCompanies, createMyCompany, updateMyCompany, deleteMyCompany,
   listOccasions, createOccasion, updateOccasion, deleteOccasion,
+  listCountries, createCountry, updateCountry, deleteCountry,
 } from '../api'
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
-import type { MyCompany, Occasion } from '../types'
+import type { Country, MyCompany, Occasion } from '../types'
 
 
 // ─── Company row ──────────────────────────────────────────────────────────────
@@ -167,6 +168,82 @@ function OccasionRow({ occasion }: { occasion: Occasion }) {
   )
 }
 
+// ─── Country row ─────────────────────────────────────────────────────────────
+
+function CountryRow({ country }: { country: Country }) {
+  const { t } = useLang()
+  const { showToast } = useToast()
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(country.name)
+
+  const updateMutation = useMutation({
+    mutationFn: (name: string) => updateCountry(country.id, { name }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['countries'] })
+      setEditing(false)
+      showToast(t.savedChanges)
+    },
+    onError: () => showToast(t.saveError, 'error'),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteCountry(country.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['countries'] })
+      showToast(t.deleteConfirmed)
+    },
+    onError: () => showToast(t.saveError, 'error'),
+  })
+
+  const commit = () => {
+    const name = draft.trim()
+    if (!name || name === country.name) { setEditing(false); return }
+    updateMutation.mutate(name)
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 last:border-0">
+      <span className="w-10 shrink-0 text-xs font-mono font-medium text-gray-500 bg-gray-100 rounded px-1 py-0.5 text-center">{country.code}</span>
+      {editing ? (
+        <>
+          <input
+            className="flex-1 text-sm border border-blue-400 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(country.name); setEditing(false) } }}
+            autoFocus
+          />
+          <button
+            className="text-xs text-blue-600 font-medium disabled:opacity-50 shrink-0"
+            onClick={commit}
+            disabled={updateMutation.isPending}
+          >{t.saveBtn}</button>
+          <button
+            className="text-xs text-gray-400 shrink-0"
+            onClick={() => { setDraft(country.name); setEditing(false) }}
+          >{t.cancelBtn}</button>
+        </>
+      ) : (
+        <>
+          <button
+            className="flex-1 text-sm text-gray-900 hover:text-blue-600 text-left truncate flex items-center gap-1 group"
+            onClick={() => { setDraft(country.name); setEditing(true) }}
+          >
+            {country.name}
+            <span className="opacity-0 group-hover:opacity-60 text-xs text-blue-400">✏️</span>
+          </button>
+          <button
+            onClick={() => { if (window.confirm(`${t.confirmDelete}\n"${country.name}"`)) deleteMutation.mutate() }}
+            disabled={deleteMutation.isPending}
+            className="text-xs text-red-400 hover:text-red-600 disabled:opacity-50 shrink-0"
+          >{t.deleteBtn}</button>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Settings page ────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
@@ -175,6 +252,8 @@ export function SettingsPage() {
   const qc = useQueryClient()
   const [newCompany, setNewCompany] = useState('')
   const [newOccasion, setNewOccasion] = useState('')
+  const [newCountryCode, setNewCountryCode] = useState('')
+  const [newCountryName, setNewCountryName] = useState('')
 
   const { data: companies = [] } = useQuery<MyCompany[]>({
     queryKey: ['my-companies'],
@@ -184,6 +263,11 @@ export function SettingsPage() {
   const { data: occasions = [] } = useQuery<Occasion[]>({
     queryKey: ['occasions'],
     queryFn: listOccasions,
+  })
+
+  const { data: countries = [] } = useQuery<Country[]>({
+    queryKey: ['countries'],
+    queryFn: listCountries,
   })
 
   const addCompanyMutation = useMutation({
@@ -206,11 +290,22 @@ export function SettingsPage() {
     onError: () => showToast(t.saveError, 'error'),
   })
 
+  const addCountryMutation = useMutation({
+    mutationFn: () => createCountry({ code: newCountryCode.trim().toUpperCase(), name: newCountryName.trim() }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['countries'] })
+      setNewCountryCode('')
+      setNewCountryName('')
+      showToast(t.savedChanges)
+    },
+    onError: () => showToast(t.saveError, 'error'),
+  })
+
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-8">
       <h1 className="text-lg font-semibold text-gray-900">{t.settingsTitle}</h1>
 
-      {/* My Companies */}
+      {/* Received As */}
       <section>
         <h2 className="text-sm font-medium text-gray-700 mb-3">{t.myCompaniesTitle}</h2>
         <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
@@ -257,6 +352,40 @@ export function SettingsPage() {
           <button
             onClick={() => { const n = newOccasion.trim(); if (n) addOccasionMutation.mutate(n) }}
             disabled={!newOccasion.trim() || addOccasionMutation.isPending}
+            className="btn-primary text-sm disabled:opacity-50"
+          >{t.addCompanyBtn}</button>
+        </div>
+      </section>
+
+      {/* Countries */}
+      <section>
+        <h2 className="text-sm font-medium text-gray-700 mb-3">{t.countriesTitle}</h2>
+        <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+          {countries.map(c => <CountryRow key={c.id} country={c} />)}
+          {countries.length === 0 && (
+            <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
+          )}
+        </div>
+        <div className="flex gap-2 mt-3">
+          <input
+            type="text"
+            value={newCountryCode}
+            onChange={e => setNewCountryCode(e.target.value.toUpperCase().slice(0, 2))}
+            onKeyDown={e => { if (e.key === 'Enter') { const el = e.currentTarget.nextElementSibling as HTMLInputElement; el?.focus() } }}
+            placeholder={t.addCountryCodePlaceholder}
+            className="w-16 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <input
+            type="text"
+            value={newCountryName}
+            onChange={e => setNewCountryName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && newCountryCode.trim() && newCountryName.trim()) addCountryMutation.mutate() }}
+            placeholder={t.addCountryNamePlaceholder}
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <button
+            onClick={() => addCountryMutation.mutate()}
+            disabled={!newCountryCode.trim() || !newCountryName.trim() || addCountryMutation.isPending}
             className="btn-primary text-sm disabled:opacity-50"
           >{t.addCompanyBtn}</button>
         </div>

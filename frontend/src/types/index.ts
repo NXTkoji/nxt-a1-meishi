@@ -123,6 +123,7 @@ export interface Card {
   sync_status: string
   created_at: string
   sides: CardSide[]
+  my_company_ids: number[]
 }
 
 export interface CardListItem {
@@ -156,6 +157,7 @@ export interface ContactDetail {
   detail_type: string
   value: string
   label?: string
+  country_code?: string
   is_primary: boolean
 }
 
@@ -196,6 +198,16 @@ export interface PersonListItem {
   id: number
   external_id: string
   primary_name?: string
+  family_name?: string
+  country_code?: string
+  created_at: string
+}
+
+// Countries
+export interface Country {
+  id: number
+  code: string
+  name: string
   created_at: string
 }
 

@@ -80,7 +80,8 @@ _SCHEMA = """\
     {
       "detail_type": "phone_work|phone_mobile|phone_fax|email_work|email_personal|address_work|address_home|url_website|social_wechat|social_line|social_linkedin|social_other",
       "value": {"value": "...", "confidence": 1.0},
-      "label": "original label printed on card or null"
+      "label": "original label printed on card or null",
+      "country_code": "ISO 3166-1 alpha-2 code for address_* types (e.g. JP, US, TW) or null"
     }
   ],
   "card_date": "YYYY-MM-DD or null",
@@ -103,7 +104,10 @@ EXTRACTION RULES:
 4. Phone labels: TEL/電話 → phone_work, 携帯/手機/Mobile/Cell → phone_mobile,
    FAX/傳真/ファックス → phone_fax. Preserve the exact number format.
 5. Address: use address_work for business addresses, address_home for home.
-   For addresses, put the full formatted address as the value.
+   For addresses, put the full formatted address as the value. Always set
+   country_code to the ISO 3166-1 alpha-2 code inferred from the address
+   (e.g. JP for Japan, US for USA, TW for Taiwan, CN for China). Omit only
+   if country truly cannot be determined.
 6. Social: WeChat ID (微信) → social_wechat, LINE ID → social_line.
 7. Back/additional sides: MERGE information — do not duplicate. Use extra
    sides to fill in missing language versions or additional contact details.
@@ -208,6 +212,7 @@ def _build_parsed_card(data: dict) -> ParsedCard:
             detail_type=cd["detail_type"],
             value=_cf_required(cd.get("value", {"value": ""})),
             label=cd.get("label"),
+            country_code=cd.get("country_code") or None,
         )
         for cd in data.get("contact_details", [])
         if cd.get("value", {}).get("value")
