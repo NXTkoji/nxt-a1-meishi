@@ -17,6 +17,7 @@ import {
   countCards,
   createOccasion,
   createSession,
+  detectCorners,
   getSession,
   listMyCompanies,
   listOccasions,
@@ -615,6 +616,9 @@ export function ScanPage() {
         cardCount={outlineTarget.count}
         onComplete={handleOutlineComplete}
         onCancel={() => setOutlineTarget(null)}
+        onDetectCorners={(seed) =>
+          detectCorners(session.external_id, outlineTarget.img.id, seed)
+        }
       />
     )}
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
