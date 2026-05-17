@@ -846,6 +846,103 @@ def _refine_with_contours(
     return rough, None
 
 
+def detect_corners_from_seed(
+    temp_relative_path: str,
+    seed_x: float,
+    seed_y: float,
+) -> tuple[list[dict], float]:
+    """
+    Find the 4 corners of the business card nearest the seed point.
+
+    Uses OpenCV Canny edge detection + contour quadrilateral approximation.
+    If no quad-shaped contour contains the seed, returns a default rectangle
+    centered on the seed with confidence 0.0.
+
+    Args:
+        temp_relative_path: Relative path under TEMP_DIR (passed to read_temp_image).
+        seed_x: Normalized [0, 1] x coordinate of the tap point.
+        seed_y: Normalized [0, 1] y coordinate of the tap point.
+
+    Returns:
+        (corners, confidence)
+        corners — list of 4 dicts {"x": float, "y": float} in TL/TR/BR/BL order,
+                  coordinates normalized to [0, 1].
+        confidence — 0.0 (fallback rectangle) to 1.0 (high-confidence quad).
+    """
+    raw = read_temp_image(temp_relative_path)
+    working = _resize_bytes(raw)
+    img_pil = Image.open(io.BytesIO(working)).convert("RGB")
+    img_w, img_h = img_pil.size
+
+    # Clamp seed to valid pixel range
+    seed_px = int(max(0, min(img_w - 1, seed_x * img_w)))
+    seed_py = int(max(0, min(img_h - 1, seed_y * img_h)))
+
+    img_bgr = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 30, 100)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Cards must be at least 1% of image area to filter out noise
+    MIN_AREA = img_w * img_h * 0.01
+
+    best_quad: np.ndarray | None = None
+    best_area = 0.0
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < MIN_AREA:
+            continue
+        # Only consider contours that actually contain the seed point
+        if cv2.pointPolygonTest(contour, (float(seed_px), float(seed_py)), False) < 0:
+            continue
+        # Try successively looser epsilon until we get a 4-point approximation
+        arc = cv2.arcLength(contour, True)
+        for eps_factor in (0.02, 0.04, 0.06, 0.08):
+            approx = cv2.approxPolyDP(contour, eps_factor * arc, True)
+            if len(approx) == 4:
+                if area > best_area:
+                    best_area = area
+                    best_quad = approx.reshape(4, 2).astype(np.float32)
+                break
+
+    if best_quad is not None:
+        sorted_pts = _sort_quad_points(best_quad)
+        corners = [
+            {"x": float(p[0] / img_w), "y": float(p[1] / img_h)}
+            for p in sorted_pts
+        ]
+        # Scale confidence: 20% of image area → 1.0
+        confidence = float(min(1.0, best_area / (img_w * img_h) * 5))
+        logger.info(
+            "detect_corners_from_seed: seed=(%.3f,%.3f) → quad area=%.0f confidence=%.2f",
+            seed_x, seed_y, best_area, confidence,
+        )
+        return corners, confidence
+
+    # Fallback: axis-aligned rectangle centered on the seed,
+    # assuming standard business card aspect ratio ~1.75:1.
+    card_w = 0.35
+    card_h = card_w / 1.75
+    x1 = max(0.0, seed_x - card_w / 2)
+    y1 = max(0.0, seed_y - card_h / 2)
+    x2 = min(1.0, seed_x + card_w / 2)
+    y2 = min(1.0, seed_y + card_h / 2)
+    fallback_corners = [
+        {"x": x1, "y": y1},
+        {"x": x2, "y": y1},
+        {"x": x2, "y": y2},
+        {"x": x1, "y": y2},
+    ]
+    logger.info(
+        "detect_corners_from_seed: no quad found for seed=(%.3f,%.3f) → fallback rectangle",
+        seed_x, seed_y,
+    )
+    return fallback_corners, 0.0
+
+
 async def detect_and_split(
     session_ext_id: str,
     temp_relative_path: str,
