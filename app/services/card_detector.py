@@ -871,8 +871,16 @@ def detect_corners_from_seed(
     """
     raw = read_temp_image(temp_relative_path)
     working = _resize_bytes(raw)
-    img_pil = Image.open(io.BytesIO(working)).convert("RGB")
+    try:
+        img_pil = Image.open(io.BytesIO(working)).convert("RGB")
+    except Exception:
+        logger.warning("detect_corners_from_seed: could not decode image at %s", temp_relative_path)
+        return [{"x": 0.15, "y": 0.25}, {"x": 0.85, "y": 0.25},
+                {"x": 0.85, "y": 0.75}, {"x": 0.15, "y": 0.75}], 0.0
     img_w, img_h = img_pil.size
+    if img_w == 0 or img_h == 0:
+        return [{"x": 0.15, "y": 0.25}, {"x": 0.85, "y": 0.25},
+                {"x": 0.85, "y": 0.75}, {"x": 0.15, "y": 0.75}], 0.0
 
     # Clamp seed to valid pixel range
     seed_px = int(max(0, min(img_w - 1, seed_x * img_w)))
@@ -883,7 +891,7 @@ def detect_corners_from_seed(
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blurred, 30, 100)
 
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     # Cards must be at least 1% of image area to filter out noise
     MIN_AREA = img_w * img_h * 0.01

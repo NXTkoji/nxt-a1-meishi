@@ -49,7 +49,15 @@ def test_detect_corners_from_seed_high_confidence_for_clear_card():
          patch("app.services.card_detector._resize_bytes", return_value=img_bytes):
         corners, confidence = detect_corners_from_seed("fake/path.jpg", 0.5, 0.5)
 
+    # Must be detection result, not fallback
     assert confidence > 0.0
+    # Corners should bracket the known card region (card is at x=150..450, y=100..300 in a 600x400 image)
+    xs = [c["x"] for c in corners]
+    ys = [c["y"] for c in corners]
+    assert min(xs) < 0.35, f"Left edge too far right: {min(xs)}"
+    assert max(xs) > 0.65, f"Right edge too far left: {max(xs)}"
+    assert min(ys) < 0.35, f"Top edge too far down: {min(ys)}"
+    assert max(ys) > 0.55, f"Bottom edge too far up: {max(ys)}"
 
 
 def test_detect_corners_from_seed_fallback_when_no_contour():
@@ -81,3 +89,18 @@ def test_detect_corners_seed_outside_image_returns_fallback():
         corners, confidence = detect_corners_from_seed("fake/path.jpg", 1.5, -0.5)
 
     assert len(corners) == 4
+
+
+def test_detect_corners_seed_outside_card_returns_fallback():
+    """Seed is within image bounds but outside the card — should return fallback."""
+    from app.services.card_detector import detect_corners_from_seed
+
+    img_bytes = _make_test_image_with_card()
+
+    # Tap the top-left corner of the image, well outside the card (card starts at x=0.25, y=0.25)
+    with patch("app.services.card_detector.read_temp_image", return_value=img_bytes), \
+         patch("app.services.card_detector._resize_bytes", return_value=img_bytes):
+        corners, confidence = detect_corners_from_seed("fake/path.jpg", 0.05, 0.05)
+
+    assert len(corners) == 4
+    assert confidence == 0.0
