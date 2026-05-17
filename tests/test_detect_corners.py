@@ -104,3 +104,11 @@ def test_detect_corners_seed_outside_card_returns_fallback():
 
     assert len(corners) == 4
     assert confidence == 0.0
+
+
+def test_detect_corners_endpoint_exists():
+    """Confirm the detect_corners route is registered."""
+    from app.routers.v2 import sessions as s
+    paths = [r.path for r in s.router.routes]
+    assert any("detect-corners" in p for p in paths), \
+        f"No detect-corners route found. Routes: {paths}"

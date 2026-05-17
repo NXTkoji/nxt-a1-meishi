@@ -333,6 +333,53 @@ class _Point(BaseModel):
     y: float
 
 
+# ---------------------------------------------------------------------------
+# 3c. Detect card corners from a seed tap point
+# ---------------------------------------------------------------------------
+
+class DetectCornersRequest(BaseModel):
+    x: float  # normalized [0, 1] tap x coordinate
+    y: float  # normalized [0, 1] tap y coordinate
+
+
+class DetectCornersResponse(BaseModel):
+    corners: list[_Point]  # 4 points: TL, TR, BR, BL in normalized coords
+    confidence: float      # 0.0 = fallback rectangle, 1.0 = high-confidence quad
+
+
+@router.post("/{sid}/images/{img_id}/detect-corners", response_model=DetectCornersResponse)
+async def detect_corners(
+    sid: str,
+    img_id: int,
+    body: DetectCornersRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Given a seed tap point on the image, detect the 4 corners of the business
+    card nearest that point using OpenCV contour detection.
+
+    Returns 4 normalized corner coordinates (TL/TR/BR/BL) and a confidence
+    score (0.0 = fell back to default rectangle, 1.0 = clear quad found).
+    """
+    session = await _get_session(db, sid)
+    img = await db.scalar(
+        select(ScanSessionImage).where(
+            ScanSessionImage.id == img_id,
+            ScanSessionImage.session_id == session.id,
+        )
+    )
+    if not img:
+        raise HTTPException(404, "Image not found in this session")
+
+    corners, confidence = card_detector.detect_corners_from_seed(
+        img.image_path, body.x, body.y
+    )
+    return DetectCornersResponse(
+        corners=[_Point(x=c["x"], y=c["y"]) for c in corners],
+        confidence=confidence,
+    )
+
+
 class ManualSplitRequest(BaseModel):
     polygons: list[list[_Point]]  # one 4-point polygon per card
 
