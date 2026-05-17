@@ -54,6 +54,18 @@ export const manualSplitImage = (
 ): Promise<SplitResult> =>
   post(`${BASE}/${sid}/images/${imgId}/manual-split`, { polygons })
 
+export interface DetectCornersResult {
+  corners: Point[]   // 4 points: TL, TR, BR, BL, normalized [0,1]
+  confidence: number // 0.0 = fallback rectangle, 1.0 = high-confidence quad
+}
+
+export const detectCorners = (
+  sid: string,
+  imgId: number,
+  seed: Point,
+): Promise<DetectCornersResult> =>
+  post(`${BASE}/${sid}/images/${imgId}/detect-corners`, { x: seed.x, y: seed.y })
+
 export const rotateImage = (
   sid: string,
   imgId: number,
