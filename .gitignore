@@ -16,3 +16,4 @@ build/
 uploads/
 .DS_Store
 .claude/
+.worktrees/
