@@ -10,7 +10,7 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete as sa_delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,6 +22,7 @@ from app.db.models import (
     OrganizationName,
     Person,
     PersonName,
+    PersonRelationship,
     Position,
     PositionDetail,
 )
@@ -274,6 +275,11 @@ async def merge_persons(
             .values({col: primary.id})
         )
 
+    # Expire stale ORM relationship collections on source persons so SQLAlchemy
+    # does not attempt to cascade-delete already-reassigned child rows.
+    for p in sources:
+        db.expire(p, ["names", "contact_details", "positions", "cards"])
+
     # Concatenate notes
     source_notes = [p.notes for p in sources if p.notes]
     if source_notes:
@@ -296,7 +302,15 @@ async def merge_persons(
     )
     duplicate_contact_count = dup_count_row.scalar() or 0
 
-    # Delete source persons (cascade handles PersonRelationship)
+    # Explicitly delete PersonRelationship rows where source persons are the
+    # target (to_person_id). relationships_from is covered by cascade="all,
+    # delete-orphan", but relationships_to has no cascade, so these must be
+    # cleaned up manually before deleting the source persons.
+    await db.execute(
+        sa_delete(PersonRelationship).where(PersonRelationship.to_person_id.in_(source_ids))
+    )
+
+    # Delete source persons (relationships_from cascades; relationships_to cleaned up above)
     for p in sources:
         await db.delete(p)
 
