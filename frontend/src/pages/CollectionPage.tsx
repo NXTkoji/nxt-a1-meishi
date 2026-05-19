@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { listCards, listPersons, listCountries } from '../api'
 import { useLang } from '../LangContext'
 import type { CardListItem, Country, PersonListItem } from '../types'
+import { MergeModal } from '../components/MergeModal'
 
 const _intlNames = new Intl.DisplayNames(['ja', 'en'], { type: 'region' })
 
@@ -108,6 +109,24 @@ export function CollectionPage() {
       .map(([code, persons]) => ({ code, persons }))
   }, [persons])
 
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showMergeModal, setShowMergeModal] = useState(false)
+
+  const toggleSelect = (extId: string) =>
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(extId) ? next.delete(extId) : next.add(extId)
+      return next
+    })
+
+  const exitSelectMode = () => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
+  const selectedPersons = persons.filter(p => selectedIds.has(p.external_id))
+
   const toggleYear = (year: number) =>
     setCollapsedYears(prev => {
       const next = new Set(prev)
@@ -141,7 +160,7 @@ export function CollectionPage() {
       <div className="flex items-center gap-2">
         <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
           <button
-            onClick={() => setView('cards')}
+            onClick={() => { setView('cards'); exitSelectMode() }}
             className={`px-3 py-1.5 ${view === 'cards' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
           >
             {t.tabCards}
@@ -160,6 +179,22 @@ export function CollectionPage() {
           onChange={e => setQ(e.target.value)}
           className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
+        {view === 'persons' && !selectMode && (
+          <button
+            onClick={() => setSelectMode(true)}
+            className="text-sm px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            {t.selectPersonsBtn}
+          </button>
+        )}
+        {view === 'persons' && selectMode && (
+          <button
+            onClick={exitSelectMode}
+            className="text-sm px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            {t.cancelSelectBtn}
+          </button>
+        )}
         <a
           href="/export"
           className="text-sm px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
@@ -242,21 +277,48 @@ export function CollectionPage() {
                   </button>
                   {!collapsed && (
                     <div className="ml-4 divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
-                      {group.map(p => (
-                        <a
-                          key={p.id}
-                          href={`/persons/${p.external_id}`}
-                          className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
-                        >
-                          <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
-                            {(p.primary_name ?? '?').charAt(0)}
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
-                            <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
-                          </div>
-                        </a>
-                      ))}
+                      {group.map(p => {
+                        const isSelected = selectedIds.has(p.external_id)
+                        if (selectMode) {
+                          return (
+                            <div
+                              key={p.id}
+                              onClick={() => toggleSelect(p.external_id)}
+                              className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelect(p.external_id)}
+                                onClick={e => e.stopPropagation()}
+                                className="accent-blue-600 w-4 h-4 shrink-0"
+                              />
+                              <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
+                                {(p.primary_name ?? '?').charAt(0)}
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
+                                <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
+                              </div>
+                            </div>
+                          )
+                        }
+                        return (
+                          <a
+                            key={p.id}
+                            href={`/persons/${p.external_id}`}
+                            className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
+                          >
+                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
+                              {(p.primary_name ?? '?').charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
+                              <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
+                            </div>
+                          </a>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -264,6 +326,29 @@ export function CollectionPage() {
             })}
           </div>
         )
+      )}
+      {/* Floating action bar — visible in select mode with ≥2 selected */}
+      {selectMode && selectedIds.size >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white border border-gray-200 rounded-2xl shadow-xl px-5 py-3 z-40">
+          <span className="text-sm text-gray-600">{t.selectedN(selectedIds.size)}</span>
+          <button
+            onClick={() => setShowMergeModal(true)}
+            className="btn-primary text-sm"
+          >
+            {t.mergeSelectedBtn(selectedIds.size)}
+          </button>
+        </div>
+      )}
+
+      {/* Merge modal */}
+      {showMergeModal && selectedPersons.length >= 2 && (
+        <MergeModal
+          selected={selectedPersons}
+          onClose={() => {
+            setShowMergeModal(false)
+            exitSelectMode()
+          }}
+        />
       )}
     </div>
   )
