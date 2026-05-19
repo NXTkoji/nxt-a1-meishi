@@ -123,9 +123,13 @@ export function CollectionPage() {
   const exitSelectMode = () => {
     setSelectMode(false)
     setSelectedIds(new Set())
+    setShowMergeModal(false)
   }
 
-  const selectedPersons = persons.filter(p => selectedIds.has(p.external_id))
+  const selectedPersons = useMemo(
+    () => persons.filter(p => selectedIds.has(p.external_id)),
+    [persons, selectedIds],
+  )
 
   const toggleYear = (year: number) =>
     setCollapsedYears(prev => {
@@ -329,7 +333,7 @@ export function CollectionPage() {
       )}
       {/* Floating action bar — visible in select mode with ≥2 selected */}
       {selectMode && selectedIds.size >= 2 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white border border-gray-200 rounded-2xl shadow-xl px-5 py-3 z-40">
+        <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white border border-gray-200 rounded-2xl shadow-xl px-5 py-3 z-40">
           <span className="text-sm text-gray-600">{t.selectedN(selectedIds.size)}</span>
           <button
             onClick={() => setShowMergeModal(true)}
