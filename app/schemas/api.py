@@ -363,3 +363,16 @@ class ExportResultItem(BaseModel):
 
 class ExportResponse(BaseModel):
     results: List[ExportResultItem]
+
+
+# ---------------------------------------------------------------------------
+# Person Merge
+# ---------------------------------------------------------------------------
+
+class MergeRequest(BaseModel):
+    source_ids: List[str]  # external_ids of persons to be merged INTO primary
+
+
+class MergeResult(BaseModel):
+    person: PersonOut
+    duplicate_contact_count: int
