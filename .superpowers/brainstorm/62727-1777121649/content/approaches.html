@@ -1,0 +1,65 @@
+<h2>Manual Person Entry — 3 Approaches</h2>
+<p class="subtitle">You want name (multi-lang), phone, email, company, date, occasion, Met As — that's essentially the same fields as a scanned card.</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Reuse the scan flow — skip the camera</h3>
+      <p>Add a <strong>"Enter Manually"</strong> button alongside "New Scan". It creates a blank card group and drops you into the existing review stage — the same ParsedCardEditor + Met As / Occasion / Date panel you already use after scanning. No images required.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Zero new UI components — reuses everything</li>
+          <li>Identical editing experience to scanned cards</li>
+          <li>Person + Card stored consistently in DB</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Backend needs to allow Card with no images</li>
+          <li>Scan flow UX slightly repurposed</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>New dedicated "Manual Entry" page</h3>
+      <p>A separate route <code>/manual</code> with a purpose-built form: name fields, language selector, company, phone, email, date, occasion, Met As. Submit creates Person + contacts via individual API calls. No Card is created.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Clean, focused UX for manual entry</li>
+          <li>No backend changes needed</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Lots of new frontend code</li>
+          <li>Duplicates ParsedCardEditor logic</li>
+          <li>Met As / Occasion have nowhere to live (those are card-level fields)</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>New Person button → PersonDetailPage inline editing</h3>
+      <p>A "+ New Person" button on the Persons tab creates an empty Person immediately and redirects to PersonDetailPage. The user then fills in names, contacts, positions using the existing inline edit controls.</p>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Minimal new code</li>
+          <li>No backend changes</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>No way to set Met As, Occasion, or Date — those are card-level</li>
+          <li>Fragmented UX: many separate inline edits</li>
+          <li>Poor experience for initial data entry</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:20px">⭐ Recommended: <strong>Option A</strong> — reuses all existing components and keeps Met As / Occasion / Date naturally in place as card-level fields, even for image-free entries.</p>

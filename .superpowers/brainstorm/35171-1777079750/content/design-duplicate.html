@@ -1,0 +1,109 @@
+<h2>Design — Section 1: Duplicate Check</h2>
+<p class="subtitle">Inline panel in the existing Review step of the scan flow</p>
+
+<div class="section">
+  <h3>Flow</h3>
+  <div style="display:flex;gap:8px;align-items:center;font-size:0.75rem;flex-wrap:wrap">
+    <div style="background:#1e293b;border-radius:4px;padding:6px 10px;color:#94a3b8">Upload</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#1e293b;border-radius:4px;padding:6px 10px;color:#94a3b8">Grouping</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#1e293b;border-radius:4px;padding:6px 10px;color:#94a3b8">Analysis</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#0f172a;border:1px solid #3b82f6;border-radius:4px;padding:6px 10px;color:#93c5fd;font-weight:600">Review ← duplicate panel here</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#1e293b;border-radius:4px;padding:6px 10px;color:#94a3b8">Confirm</div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Duplicate Panel — States</h3>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+
+    <div style="flex:1;min-width:200px">
+      <div class="label">No duplicate detected</div>
+      <div style="background:#1e293b;border-radius:6px;padding:10px;margin-top:6px;font-size:0.72rem">
+        <div style="background:#0f172a;border-radius:4px;padding:8px;margin-bottom:6px">
+          <div style="color:#f1f5f9;font-weight:600">田中 太郎</div>
+          <div style="color:#64748b">NXT株式会社 · CEO</div>
+          <div style="color:#64748b;margin-top:4px;font-size:0.65rem">090-9999-8888 · t.tanaka@nxt.co</div>
+        </div>
+        <div style="color:#64748b;font-size:0.65rem;text-align:center;padding:4px">No existing record found</div>
+        <button class="mock-button" style="width:100%;margin-top:6px;background:#3b82f6;font-size:0.65rem">Save as new contact</button>
+      </div>
+    </div>
+
+    <div style="flex:1;min-width:200px">
+      <div class="label">Duplicate detected</div>
+      <div style="background:#1e293b;border-radius:6px;padding:10px;margin-top:6px;font-size:0.72rem">
+        <div style="background:#0f172a;border-radius:4px;padding:8px;margin-bottom:8px">
+          <div style="color:#f1f5f9;font-weight:600">田中 太郎</div>
+          <div style="color:#64748b">NXT株式会社 · CEO</div>
+          <div style="color:#4ade80;font-size:0.65rem">090-9999-8888 ← new field</div>
+        </div>
+        <div style="background:#451a03;border:1px solid #92400e;border-radius:4px;padding:8px;margin-bottom:8px">
+          <div style="color:#fbbf24;font-size:0.65rem;font-weight:600;margin-bottom:6px">⚠ 97% match — Existing record</div>
+          <div style="color:#f1f5f9">田中 太郎</div>
+          <div style="color:#94a3b8">NXT · Managing Director</div>
+          <div style="color:#94a3b8;font-size:0.65rem">03-1234-5678 · t.tanaka@nxt.co</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
+          <button class="mock-button" style="font-size:0.6rem;padding:5px 4px">Discard new</button>
+          <button class="mock-button" style="font-size:0.6rem;padding:5px 4px;background:#3b82f6">Merge fields</button>
+          <button class="mock-button" style="font-size:0.6rem;padding:5px 4px">Replace all</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="flex:1;min-width:200px">
+      <div class="label">Merge field picker</div>
+      <div style="background:#1e293b;border-radius:6px;padding:10px;margin-top:6px;font-size:0.72rem">
+        <div style="color:#94a3b8;font-size:0.65rem;margin-bottom:8px">Pick which value to keep for each field:</div>
+        <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:4px;align-items:center;font-size:0.62rem">
+          <div style="color:#475569">Field</div>
+          <div style="color:#475569;text-align:center">Existing</div>
+          <div style="color:#475569;text-align:center">New card</div>
+
+          <div style="color:#94a3b8">Title</div>
+          <div style="background:#0f172a;border-radius:3px;padding:4px;color:#94a3b8;text-align:center">Managing Dir.</div>
+          <div style="background:#3b82f6;border-radius:3px;padding:4px;color:#fff;text-align:center">CEO ✓</div>
+
+          <div style="color:#94a3b8">Phone</div>
+          <div style="background:#0f172a;border-radius:3px;padding:4px;color:#94a3b8;text-align:center">03-1234-5678</div>
+          <div style="background:#3b82f6;border-radius:3px;padding:4px;color:#fff;text-align:center">090-9999-8888 ✓</div>
+
+          <div style="color:#94a3b8">Email</div>
+          <div style="background:#3b82f6;border-radius:3px;padding:4px;color:#fff;text-align:center">t.tanaka@nxt ✓</div>
+          <div style="background:#0f172a;border-radius:3px;padding:4px;color:#94a3b8;text-align:center">—</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px">
+          <button class="mock-button" style="font-size:0.6rem;padding:5px">Cancel</button>
+          <button class="mock-button" style="font-size:0.6rem;padding:5px;background:#3b82f6">Apply merge</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>Actions Summary</h3>
+  <div style="font-size:0.8rem;display:flex;flex-direction:column;gap:6px">
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:12px;align-items:flex-start">
+      <span style="color:#f87171;font-weight:600;min-width:90px">Discard new</span>
+      <span style="color:#94a3b8">Scanned card is deleted. Existing record untouched. Session continues.</span>
+    </div>
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:12px;align-items:flex-start">
+      <span style="color:#60a5fa;font-weight:600;min-width:90px">Merge fields</span>
+      <span style="color:#94a3b8">Opens field-picker (shown above). User selects winning value per field. Card image is still saved and linked to the existing person.</span>
+    </div>
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:12px;align-items:flex-start">
+      <span style="color:#a78bfa;font-weight:600;min-width:90px">Replace all</span>
+      <span style="color:#94a3b8">All fields on existing person overwritten with new card data. Card image saved and linked. No field-picker shown.</span>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:20px;background:#0f172a;border-radius:6px;padding:12px;font-size:0.78rem;color:#94a3b8">
+  <strong style="color:#f1f5f9">Does this look right?</strong> In particular — for "Merge fields", should the card image from the new scan always be saved and linked to the existing person (as a new card side/record), or only saved when the user explicitly merges something?
+</div>

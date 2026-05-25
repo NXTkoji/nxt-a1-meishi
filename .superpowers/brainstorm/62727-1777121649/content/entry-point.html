@@ -1,0 +1,72 @@
+<h2>Where does "Enter Manually" live?</h2>
+<p class="subtitle">Three placement options for the entry point</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Always visible — both buttons in header</h3>
+      <div class="mockup" style="margin-top:8px">
+        <div class="mockup-header">Collection</div>
+        <div class="mockup-body" style="padding:12px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="flex:1;font-weight:600;font-size:14px">Business Card Collection</span>
+            <span class="mock-button" style="background:#f3f4f6;color:#374151;border:1px solid #d1d5db;padding:4px 10px;font-size:12px;border-radius:6px">+ Enter Manually</span>
+            <span class="mock-button" style="padding:4px 10px;font-size:12px;border-radius:6px">+ New Scan</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <span style="background:#2563eb;color:white;padding:3px 10px;border-radius:5px;font-size:12px">Cards</span>
+            <span style="border:1px solid #d1d5db;padding:3px 10px;border-radius:5px;font-size:12px;color:#6b7280">Persons</span>
+            <span class="mock-input" style="flex:1;padding:3px 10px;font-size:12px">Search...</span>
+          </div>
+        </div>
+      </div>
+      <p style="margin-top:8px;font-size:13px;color:#6b7280">Always accessible regardless of tab. Two buttons may feel slightly crowded on mobile.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Context-sensitive — appears only on Persons tab</h3>
+      <div class="mockup" style="margin-top:8px">
+        <div class="mockup-header">Collection</div>
+        <div class="mockup-body" style="padding:12px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="flex:1;font-weight:600;font-size:14px">Business Card Collection</span>
+            <span class="mock-button" style="padding:4px 10px;font-size:12px;border-radius:6px">+ New Person</span>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <span style="border:1px solid #d1d5db;padding:3px 10px;border-radius:5px;font-size:12px;color:#6b7280">Cards</span>
+            <span style="background:#2563eb;color:white;padding:3px 10px;border-radius:5px;font-size:12px">Persons</span>
+            <span class="mock-input" style="flex:1;padding:3px 10px;font-size:12px">Search...</span>
+          </div>
+          <p style="font-size:12px;color:#9ca3af;font-style:italic;text-align:center;margin-top:16px">Person list here…</p>
+        </div>
+      </div>
+      <p style="margin-top:8px;font-size:13px;color:#6b7280">Button label changes to context: "New Scan" on Cards tab, "New Person" on Persons tab. Clean and unambiguous.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>On the Scan page — "No card? Enter manually"</h3>
+      <div class="mockup" style="margin-top:8px">
+        <div class="mockup-header">New Scan</div>
+        <div class="mockup-body" style="padding:12px;text-align:center">
+          <div style="border:2px dashed #d1d5db;border-radius:8px;padding:24px 16px;margin-bottom:12px">
+            <p style="font-size:13px;color:#6b7280">Drop card photos here<br>or click to select files</p>
+          </div>
+          <p style="font-size:12px;color:#9ca3af">No card to scan?</p>
+          <span style="font-size:12px;color:#2563eb;text-decoration:underline;cursor:pointer">Enter person details manually →</span>
+        </div>
+      </div>
+      <p style="margin-top:8px;font-size:13px;color:#6b7280">Discovery is lower — user must navigate to Scan page first. But keeps CollectionPage header clean.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:20px">⭐ Recommended: <strong>Option B</strong> — context-sensitive button is the cleanest. On the Cards tab it says "New Scan", on the Persons tab it says "New Person". Unambiguous intent, no crowding.</p>

@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getCard,
   updateCard,
+  deleteCard,
   getPerson,
   addCardSide,
   deleteCardSide,
@@ -92,6 +93,15 @@ export function CardDetailPage() {
   const promoteMutation = useMutation({
     mutationFn: (sideOrder: number) => promoteCardSideToFront(extId, sideOrder),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['card', extId] }),
+    onError: () => showToast(t.saveError, 'error'),
+  })
+
+  const deleteCardMutation = useMutation({
+    mutationFn: () => deleteCard(extId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cards'] })
+      window.location.href = '/collection'
+    },
     onError: () => showToast(t.saveError, 'error'),
   })
 
@@ -301,6 +311,18 @@ export function CardDetailPage() {
           />
         </div>
         <p className="text-xs text-gray-300">ID: {card.external_id}</p>
+        </div>
+
+        <div className="pt-2">
+          <button
+            className="text-xs text-red-400 hover:text-red-600 disabled:opacity-50"
+            disabled={deleteCardMutation.isPending}
+            onClick={() => {
+              if (window.confirm(t.confirmDeleteCard)) deleteCardMutation.mutate()
+            }}
+          >
+            {t.deleteCardBtn}
+          </button>
         </div>
       </section>
     </div>

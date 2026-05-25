@@ -1,0 +1,176 @@
+<h2>Design — Duplicate Review UI (Revised)</h2>
+<p class="subtitle">Same field-editor style as post-analysis, two records side by side</p>
+
+<div class="section">
+  <h3>Concept</h3>
+  <div style="font-size:0.8rem;color:#94a3b8;line-height:1.6">
+    When a duplicate is detected, the card's review panel expands into a <strong style="color:#f1f5f9">two-column field editor</strong>.
+    Left = existing record. Right = new card.
+    The user moves, adds, or deletes fields freely across both sides — just like the existing post-analysis editor.
+    Whatever is in the <strong style="color:#f1f5f9">left column when they confirm</strong> becomes the saved state of the existing person.
+    The new card's image is always linked to the person regardless of choice.
+  </div>
+</div>
+
+<div class="section">
+  <h3>Mockup — Duplicate Field Editor</h3>
+
+  <div style="background:#0f172a;border-radius:8px;padding:12px;font-size:0.72rem">
+
+    <!-- Header -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div>
+        <span style="color:#fbbf24;font-weight:600">⚠ Possible duplicate — 97% match</span>
+        <span style="color:#64748b;font-size:0.65rem;margin-left:8px">Edit fields below, then confirm</span>
+      </div>
+      <button class="mock-button" style="font-size:0.65rem;padding:4px 10px;background:#475569">Not a duplicate →</button>
+    </div>
+
+    <!-- Two columns -->
+    <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:start">
+
+      <!-- Left: Existing person -->
+      <div>
+        <div style="color:#60a5fa;font-size:0.65rem;font-weight:600;margin-bottom:6px;text-align:center">← EXISTING RECORD (will be saved)</div>
+        <div style="background:#1e293b;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px">
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em">Names</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">田中 太郎</div>
+              <div style="color:#64748b;font-size:0.6rem">primary · ja</div>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px">→</button>
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+            </div>
+          </div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">Taro Tanaka</div>
+              <div style="color:#64748b;font-size:0.6rem">romanized · en</div>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px">→</button>
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+            </div>
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Position</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">Managing Director</div>
+              <div style="color:#64748b;font-size:0.6rem">NXT株式会社</div>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px">→</button>
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+            </div>
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Contact</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">03-1234-5678</div>
+              <div style="color:#64748b;font-size:0.6rem">phone · work</div>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px">→</button>
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+            </div>
+          </div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">t.tanaka@nxt.co</div>
+              <div style="color:#64748b;font-size:0.6rem">email · work</div>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px">→</button>
+              <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+            </div>
+          </div>
+
+          <button class="mock-button" style="font-size:0.6rem;padding:4px;width:100%;margin-top:2px;border:1px dashed #475569;background:transparent;color:#64748b">+ Add field</button>
+        </div>
+      </div>
+
+      <!-- Middle divider -->
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding-top:28px;gap:4px;color:#475569;font-size:0.65rem">
+        <div>←</div>
+        <div style="writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:0.1em">MOVE</div>
+        <div>→</div>
+      </div>
+
+      <!-- Right: New card -->
+      <div>
+        <div style="color:#4ade80;font-size:0.65rem;font-weight:600;margin-bottom:6px;text-align:center">NEW CARD (discard or move left)</div>
+        <div style="background:#1e293b;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px">
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em">Names</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="display:flex;gap:4px">
+                <button class="mock-button" style="font-size:0.55rem;padding:2px 5px">←</button>
+                <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+              </div>
+            </div>
+            <div style="text-align:right">
+              <div style="color:#f1f5f9">田中 太郎</div>
+              <div style="color:#64748b;font-size:0.6rem">primary · ja</div>
+            </div>
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Position</div>
+          <div style="background:#163220;border:1px solid #166534;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="display:flex;gap:4px">
+                <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;background:#166534">←</button>
+                <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+              </div>
+            </div>
+            <div style="text-align:right">
+              <div style="color:#4ade80">CEO</div>
+              <div style="color:#86efac;font-size:0.6rem">NXT株式会社 · new</div>
+            </div>
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Contact</div>
+          <div style="background:#163220;border:1px solid #166534;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="display:flex;gap:4px">
+                <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;background:#166534">←</button>
+                <button class="mock-button" style="font-size:0.55rem;padding:2px 5px;color:#f87171">✕</button>
+              </div>
+            </div>
+            <div style="text-align:right">
+              <div style="color:#4ade80">090-9999-8888</div>
+              <div style="color:#86efac;font-size:0.6rem">mobile · new</div>
+            </div>
+          </div>
+
+          <button class="mock-button" style="font-size:0.6rem;padding:4px;width:100%;margin-top:2px;border:1px dashed #475569;background:transparent;color:#64748b">+ Add field</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer actions -->
+    <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:12px">
+      <button class="mock-button" style="font-size:0.65rem;padding:5px 12px;color:#f87171">Discard new card</button>
+      <button class="mock-button" style="font-size:0.65rem;padding:5px 12px;background:#3b82f6">Confirm merge →</button>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>Field highlighting</h3>
+  <div style="font-size:0.8rem;color:#94a3b8;line-height:1.6">
+    Fields highlighted in <strong style="color:#4ade80">green</strong> on the right = new data not present in existing record (new phone, updated title, etc.).
+    Same-value fields shown in normal style.
+    This helps the user quickly spot what's actually different.
+  </div>
+</div>
+
+<div style="margin-top:16px;background:#0f172a;border-radius:6px;padding:12px;font-size:0.78rem;color:#94a3b8">
+  <strong style="color:#f1f5f9">Does this direction look right?</strong> The → and ← arrows move a field from one column to the other. ✕ deletes it entirely. "Not a duplicate" dismisses the panel and saves the new card as a fresh person. Does this match what you had in mind?
+</div>

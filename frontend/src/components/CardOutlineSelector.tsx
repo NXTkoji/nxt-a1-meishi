@@ -46,6 +46,8 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
   const [detectError, setDetectError] = useState<string | null>(null)
 
   const [dragHandle, setDragHandle] = useState<DragHandle | null>(null)
+  // remains true from corner mousedown/touchstart until AFTER the spurious click fires
+  const cornerDragRef = useRef(false)
 
   const canCrop = polygons.length >= 1
   const tapMode = !!onDetectCorners
@@ -102,7 +104,7 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
   // ── TAP MODE handlers ─────────────────────────────────────────────────────
 
   const handleTap = async (e: React.MouseEvent | React.TouchEvent) => {
-    if (dragHandle || detecting) return
+    if (dragHandle || detecting || cornerDragRef.current) return
     e.preventDefault()
     const { clientX, clientY } = getClientPos(e)
     const seed = toNorm(clientX, clientY)
@@ -156,6 +158,8 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
     e.preventDefault()
     if (dragHandle) {
       setDragHandle(null)
+      // defer clear so the spurious click (fired after mouseup in same task) sees the flag still set
+      setTimeout(() => { cornerDragRef.current = false }, 0)
       return
     }
     if (!dragStart || !dragEnd) return
@@ -209,8 +213,11 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
             cx={p.x} cy={p.y} r={12}
             fill={color} stroke="white" strokeWidth={2}
             style={{ cursor: 'grab', pointerEvents: 'all' }}
-            onMouseDown={e => { e.stopPropagation(); setDragHandle({ polyIdx, cornerIdx: ci }) }}
-            onTouchStart={e => { e.stopPropagation(); setDragHandle({ polyIdx, cornerIdx: ci }) }}
+            onMouseDown={e => { e.stopPropagation(); cornerDragRef.current = true; setDragHandle({ polyIdx, cornerIdx: ci }) }}
+            // preventDefault suppresses synthesized mouse events on touch (prevents double-fire)
+            onTouchStart={e => { e.stopPropagation(); e.preventDefault(); cornerDragRef.current = true; setDragHandle({ polyIdx, cornerIdx: ci }) }}
+            onClick={e => e.stopPropagation()}
+            onTouchEnd={e => { e.stopPropagation(); setDragHandle(null); setTimeout(() => { cornerDragRef.current = false }, 0) }}
           />
         ))}
       </g>
@@ -269,7 +276,8 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
         {...(tapMode
           ? {
               onClick: handleTap,
-              onTouchEnd: handleTap,
+              // if finger lifts outside the circle, clear dragHandle; otherwise tap to add card
+              onTouchEnd: (e: React.TouchEvent) => { if (dragHandle !== null) { e.preventDefault(); setDragHandle(null); setTimeout(() => { cornerDragRef.current = false }, 0) } else { handleTap(e) } },
               onMouseMove: dragHandle ? handlePointerMove : undefined,
               onTouchMove: dragHandle ? handlePointerMove : undefined,
               onMouseUp: dragHandle ? handlePointerUp : undefined,

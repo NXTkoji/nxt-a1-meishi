@@ -1,0 +1,90 @@
+<h2>Manual Entry Screen</h2>
+<p class="subtitle">What the user sees after clicking "+ Enter Manually" — the existing scan review UI, with no image slots and a clear header.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Enter Person Details</div>
+  <div class="mockup-body" style="padding:16px;font-size:13px">
+
+    <!-- Stage indicator: simplified, no upload/group/analyze -->
+    <div style="display:flex;gap:0;margin-bottom:16px;border-radius:8px;overflow:hidden;border:1px solid #e5e7eb">
+      <div style="flex:1;text-align:center;padding:6px;background:#2563eb;color:white;font-size:12px">Review</div>
+      <div style="flex:1;text-align:center;padding:6px;background:#f9fafb;color:#9ca3af;font-size:12px">Done</div>
+    </div>
+
+    <!-- Card group (no image area) -->
+    <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:12px;background:white">
+
+      <!-- ParsedCardEditor (same as scan review) -->
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Personal 1</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Family name (ja)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Given name (ja)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Family name (en)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Given name (en)</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Organization 1</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Company (ja)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Company (en)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Title (ja)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Title (en)</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Work Contacts</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Phone (Work)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Mobile</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">Email (Work)</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:5px 8px;font-size:12px;color:#9ca3af">+ Add Field</div>
+        </div>
+      </div>
+
+      <!-- Metadata strip (Met As / Occasion / Date / Notes) -->
+      <div style="border-top:1px solid #f3f4f6;padding-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div>
+          <div style="font-size:11px;color:#9ca3af;margin-bottom:4px">Met As</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <span style="border:1px solid #2563eb;background:#2563eb;color:white;border-radius:4px;padding:2px 7px;font-size:11px">紐克仕</span>
+            <span style="border:1px solid #d1d5db;color:#6b7280;border-radius:4px;padding:2px 7px;font-size:11px">Rotary</span>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#9ca3af;margin-bottom:4px">Occasion</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:4px 8px;font-size:12px;color:#9ca3af">None</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#9ca3af;margin-bottom:4px">Met on</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:4px 8px;font-size:12px;color:#374151">2026-04-25</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:#9ca3af;margin-bottom:4px">Notes</div>
+          <div style="border:1px solid #d1d5db;border-radius:5px;padding:4px 8px;font-size:12px;color:#9ca3af;min-height:30px"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Save button -->
+    <div style="text-align:right">
+      <span class="mock-button" style="padding:8px 20px;font-size:13px">Save person ✓</span>
+    </div>
+
+  </div>
+</div>
+
+<div class="section" style="margin-top:16px">
+  <p class="subtitle">Key differences from the scan review stage:</p>
+  <ul style="font-size:13px;color:#374151;line-height:1.8;padding-left:20px">
+    <li>No image thumbnails — the card group starts empty</li>
+    <li>Simplified stage bar: just <strong>Review → Done</strong> (no Upload / Group / Analyze)</li>
+    <li><strong>"Received date"</strong> label becomes <strong>"Met on"</strong></li>
+    <li>Everything else — ParsedCardEditor, Met As chips, Occasion, Notes — is identical</li>
+    <li>A <strong>Card record with no sides</strong> is created on save (backend change needed)</li>
+  </ul>
+</div>
