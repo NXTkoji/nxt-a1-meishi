@@ -330,18 +330,20 @@ async def export_image(
 
     # Resolve relative image path to absolute file path
     image_path = settings.images_path / card_side.image_path
-    if not image_path.is_file():
+    # Prevent path traversal: ensure resolved path stays inside images_path
+    try:
+        resolved = image_path.resolve()
+        resolved.relative_to(settings.images_path.resolve())
+    except ValueError:
         raise HTTPException(status_code=404, detail="Image file not found on disk")
 
-    # Build download filename from primary name
-    legacy = _build_legacy_card(
-        db_card,
-        db_card.person,
-        db_card.person.contact_details,
-        db_card.person.positions,
-    )
-    names = legacy.person.names
-    primary = next((n.value for n in names if n.type == "primary"), names[0].value if names else "card")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+
+    # Build download filename from primary name (use DB model directly)
+    db_names = [n for n in db_card.person.names if n.is_current]
+    primary_name_obj = next((n for n in db_names if n.name_type == "primary"), None)
+    primary = primary_name_obj.full_name if primary_name_obj else (db_names[0].full_name if db_names else "card")
     # Sanitize for use as filename (remove slashes, null bytes)
     safe_name = primary.replace("/", "_").replace("\x00", "")
     ext = os.path.splitext(card_side.image_path)[1] or ".jpg"
@@ -351,7 +353,7 @@ async def export_image(
     mime_type = mime_type or "image/jpeg"
 
     return FileResponse(
-        path=str(image_path),
+        path=str(resolved),
         media_type=mime_type,
         filename=download_filename,
     )
