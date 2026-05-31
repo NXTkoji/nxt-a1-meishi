@@ -8,11 +8,13 @@ POST /api/v2/export
 from __future__ import annotations
 
 import logging
+import mimetypes
+import os
 from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -296,4 +298,60 @@ async def export_csv(
         content=csv_text.encode("utf-8-sig"),  # utf-8-sig adds BOM for Excel compat
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/image/{card_id}/{side}")
+async def export_image(
+    card_id: str,
+    side: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Download a card image named <primary_name>_front.jpg or <primary_name>_back.jpg.
+
+    side must be "front" or "back".
+    Returns 404 if card not found or that side has no image.
+    """
+    from app.config import settings
+
+    if side not in ("front", "back"):
+        raise HTTPException(status_code=400, detail="side must be 'front' or 'back'")
+
+    db_card = await _load_full_card(db, card_id)
+    if db_card is None:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    # side_order: 0 = front, 1 = back
+    side_order = 0 if side == "front" else 1
+    card_side = next((s for s in db_card.sides if s.side_order == side_order), None)
+    if card_side is None:
+        raise HTTPException(status_code=404, detail=f"No {side} image for this card")
+
+    # Resolve relative image path to absolute file path
+    image_path = settings.images_path / card_side.image_path
+    if not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+
+    # Build download filename from primary name
+    legacy = _build_legacy_card(
+        db_card,
+        db_card.person,
+        db_card.person.contact_details,
+        db_card.person.positions,
+    )
+    names = legacy.person.names
+    primary = next((n.value for n in names if n.type == "primary"), names[0].value if names else "card")
+    # Sanitize for use as filename (remove slashes, null bytes)
+    safe_name = primary.replace("/", "_").replace("\x00", "")
+    ext = os.path.splitext(card_side.image_path)[1] or ".jpg"
+    download_filename = f"{safe_name}_{side}{ext}"
+
+    mime_type, _ = mimetypes.guess_type(str(image_path))
+    mime_type = mime_type or "image/jpeg"
+
+    return FileResponse(
+        path=str(image_path),
+        media_type=mime_type,
+        filename=download_filename,
     )
