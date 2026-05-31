@@ -11,7 +11,8 @@ import logging
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -248,3 +249,53 @@ async def run_export(body: ExportRequest, db: AsyncSession = Depends(get_db)):
             results.append(item)
 
     return ExportResponse(results=results)
+
+
+@router.get("/csv")
+async def export_csv(
+    card_ids: str = Query(..., description="Comma-separated card external IDs"),
+    format: str = Query(..., description="odoo or google_contacts"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Download a CSV of the requested cards formatted for Odoo or Google Contacts.
+
+    GET /api/v2/export/csv?card_ids=abc,def&format=odoo
+    GET /api/v2/export/csv?card_ids=abc,def&format=google_contacts
+    """
+    from app.services.csv_export import format_google_csv, format_odoo_csv
+    from fastapi import HTTPException
+
+    if format not in ("odoo", "google_contacts"):
+        raise HTTPException(status_code=400, detail="format must be 'odoo' or 'google_contacts'")
+
+    ext_ids = [cid.strip() for cid in card_ids.split(",") if cid.strip()]
+    if not ext_ids:
+        raise HTTPException(status_code=400, detail="card_ids must not be empty")
+
+    # Load cards
+    legacy_cards = []
+    for ext_id in ext_ids:
+        db_card = await _load_full_card(db, ext_id)
+        if db_card is None:
+            continue  # silently skip missing cards
+        legacy = _build_legacy_card(
+            db_card,
+            db_card.person,
+            db_card.person.contact_details,
+            db_card.person.positions,
+        )
+        legacy_cards.append(legacy)
+
+    if format == "odoo":
+        csv_text = format_odoo_csv(legacy_cards)
+        filename = "contacts_odoo.csv"
+    else:
+        csv_text = format_google_csv(legacy_cards)
+        filename = "contacts_google.csv"
+
+    return StreamingResponse(
+        iter([csv_text.encode("utf-8-sig")]),  # utf-8-sig adds BOM for Excel compat
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
