@@ -44,7 +44,7 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 /** Fetch one URL and trigger download. Returns true on success (non-404 counts as success for optional images). */
 async function fetchAndDownload(
   url: string,
-  filename: string,
+  fallbackFilename: string,
 ): Promise<boolean> {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${API_KEY}` },
@@ -52,6 +52,10 @@ async function fetchAndDownload(
   if (res.status === 404) return true  // 404 = no image for that side — skip silently
   if (!res.ok) return false
   const blob = await res.blob()
+  // Use server-provided filename from Content-Disposition when available
+  const cd = res.headers.get('content-disposition') ?? ''
+  const match = cd.match(/filename="?([^"]+)"?/)
+  const filename = match?.[1] ?? fallbackFilename
   triggerBlobDownload(blob, filename)
   return true
 }
@@ -130,6 +134,7 @@ export function ExportDestinationSelector({
 
   async function handleExport() {
     setHasRun(true)
+    setDownloadStatus({})  // Clear previous results before starting new export
     const pushDests = [...selected].filter(k => {
       const d = DESTINATIONS.find(x => x.key === k)
       return d && !d.download
