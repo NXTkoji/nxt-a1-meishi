@@ -11,8 +11,8 @@ import logging
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,6 +31,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.schemas.api import ExportRequest, ExportResponse, ExportResultItem
+from app.services.csv_export import format_google_csv, format_odoo_csv
 
 logger = logging.getLogger(__name__)
 
@@ -263,9 +264,6 @@ async def export_csv(
     GET /api/v2/export/csv?card_ids=abc,def&format=odoo
     GET /api/v2/export/csv?card_ids=abc,def&format=google_contacts
     """
-    from app.services.csv_export import format_google_csv, format_odoo_csv
-    from fastapi import HTTPException
-
     if format not in ("odoo", "google_contacts"):
         raise HTTPException(status_code=400, detail="format must be 'odoo' or 'google_contacts'")
 
@@ -294,8 +292,8 @@ async def export_csv(
         csv_text = format_google_csv(legacy_cards)
         filename = "contacts_google.csv"
 
-    return StreamingResponse(
-        iter([csv_text.encode("utf-8-sig")]),  # utf-8-sig adds BOM for Excel compat
+    return Response(
+        content=csv_text.encode("utf-8-sig"),  # utf-8-sig adds BOM for Excel compat
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
