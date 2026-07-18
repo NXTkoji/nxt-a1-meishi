@@ -89,8 +89,12 @@ async def auto_sync_card(card_id: int) -> None:
             # card.id — rollback() expires all attributes on `card`, and
             # re-reading card.id afterward would trigger an implicit lazy
             # reload outside of an awaited context (MissingGreenlet).
-            await db.rollback()
+            #
+            # rollback() itself is inside this try so that a failure here
+            # (e.g. a broken connection) is logged and swallowed too — this
+            # background task must never raise.
             try:
+                await db.rollback()
                 db.add(CardSyncHistory(
                     card_id=card_id,
                     destination="google_contacts",

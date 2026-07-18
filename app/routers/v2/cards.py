@@ -270,6 +270,9 @@ async def update_card(
     out = CardOut.model_validate(card)
     out.person_external_id = person_ext_id
     out.my_company_ids = list(mc_ids)
+    # get_db commits the session after this handler returns and before
+    # Starlette runs background tasks, so auto_sync_card always sees this
+    # update once it opens its own session — no explicit commit needed here.
     background_tasks.add_task(auto_sync_card, card.id)
     return out
 
