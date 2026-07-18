@@ -130,6 +130,17 @@ async def sync_to_google(card: Card, existing_resource: str | None = None) -> st
 
     async with httpx.AsyncClient() as client:
         if existing_resource:
+            # Google's People API rejects updateContact unless the request
+            # includes the contact's current etag ("Request must set
+            # person.etag..."), so fetch it first.
+            etag_resp = await client.get(
+                f"{PEOPLE_API}/{existing_resource}",
+                headers=headers,
+                params={"personFields": "metadata"},
+            )
+            etag_resp.raise_for_status()
+            body["etag"] = etag_resp.json()["etag"]
+
             # Update existing contact
             resp = await client.patch(
                 f"{PEOPLE_API}/{existing_resource}:updateContact",
