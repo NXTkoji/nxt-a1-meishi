@@ -468,7 +468,7 @@ git commit -m "fix: load card images with API key query param"
 
 This task is infrastructure configuration, not application code — there's no test to write. Each step includes the exact command and what to check instead.
 
-**Prerequisite:** `nxta.co` DNS must be manageable through a Cloudflare account (free plan is sufficient). If it isn't on Cloudflare yet, this requires changing nameservers at your domain registrar — stop and confirm this is acceptable before proceeding, since it affects all `nxta.co` DNS, not just this subdomain.
+**Approach:** `nxta.co`'s root DNS (Google Workspace email, website) stays on GoDaddy, untouched. Instead, only the subdomain `tools.nxta.co` is delegated to Cloudflare as its own independent zone — this requires one NS record at GoDaddy and nothing else changes at the root. This app's tunnel gets `meishi-api.tools.nxta.co`; future internal tools can reuse the same `tools.nxta.co` delegation without any further registrar changes.
 
 **Files:**
 - Create: `~/.cloudflared/config.yml` (not part of the git repo — machine-local infra config)
@@ -479,41 +479,54 @@ This task is infrastructure configuration, not application code — there's no t
 Run: `brew install cloudflared`
 Expected: installs successfully; `cloudflared --version` prints a version string.
 
-- [ ] **Step 2: Authenticate with Cloudflare**
+- [ ] **Step 2: Create the `tools.nxta.co` zone in Cloudflare**
+
+**This step must be done by Koji** — it's an interactive dashboard action. Go to the Cloudflare dashboard → Add a Site → enter `tools.nxta.co` (the subdomain, not the root domain). Cloudflare recognizes this as a subdomain and creates it as its own independent zone, then displays two nameservers assigned to that zone (e.g. `xxx.ns.cloudflare.com` / `yyy.ns.cloudflare.com`). Note them for the next step.
+
+- [ ] **Step 3: Delegate the subdomain at GoDaddy**
+
+**This step must be done by Koji** — it's an interactive registrar action. In GoDaddy's DNS management for `nxta.co`, add one NS record: Host = `tools`, Value = the first Cloudflare nameserver from Step 2. Add a second NS record the same way for the second nameserver. Do **not** touch any existing MX, A, or TXT records — this only delegates authority for `tools.nxta.co` and everything under it; the rest of `nxta.co`'s DNS is unaffected.
+
+- [ ] **Step 4: Confirm delegation is active**
+
+Run: `dig +short NS tools.nxta.co`
+Expected: prints the two Cloudflare nameservers from Step 2. This can take anywhere from a few minutes to a few hours to propagate after Step 3 — re-run until it resolves, and confirm in the Cloudflare dashboard that the `tools.nxta.co` zone shows status "Active" before continuing. Also spot-check that nxta.co's email is unaffected: `dig +short MX nxta.co` should still show the same Google Workspace records as before.
+
+- [ ] **Step 5: Authenticate with Cloudflare**
 
 Run: `cloudflared tunnel login`
-Expected: opens a browser window. **This step requires you (Koji) to log into your Cloudflare account and select the `nxta.co` zone to authorize.** It saves a certificate to `~/.cloudflared/cert.pem`.
+Expected: opens a browser window. **This step requires you (Koji) to log into your Cloudflare account and select the `tools.nxta.co` zone to authorize.** It saves a certificate to `~/.cloudflared/cert.pem`.
 
-- [ ] **Step 3: Create the named tunnel**
+- [ ] **Step 6: Create the named tunnel**
 
 Run: `cloudflared tunnel create nxt-a1-meishi`
 Expected: prints a tunnel UUID and creates a credentials file at `~/.cloudflared/<UUID>.json`. Note the UUID for the next step.
 
-- [ ] **Step 4: Route the subdomain to the tunnel**
+- [ ] **Step 7: Route the subdomain to the tunnel**
 
-Run: `cloudflared tunnel route dns nxt-a1-meishi meishi-api.nxta.co`
-Expected: creates a CNAME record for `meishi-api.nxta.co` pointing at the tunnel, visible in the Cloudflare DNS dashboard afterward.
+Run: `cloudflared tunnel route dns nxt-a1-meishi meishi-api.tools.nxta.co`
+Expected: creates a CNAME record for `meishi-api.tools.nxta.co` pointing at the tunnel, visible in the Cloudflare DNS dashboard afterward.
 
-- [ ] **Step 5: Write the tunnel config**
+- [ ] **Step 8: Write the tunnel config**
 
-Create `~/.cloudflared/config.yml` (replace `<UUID>` with the value from Step 3):
+Create `~/.cloudflared/config.yml` (replace `<UUID>` with the value from Step 6):
 ```yaml
 tunnel: nxt-a1-meishi
 credentials-file: /Users/Koji/.cloudflared/<UUID>.json
 
 ingress:
-  - hostname: meishi-api.nxta.co
+  - hostname: meishi-api.tools.nxta.co
     service: http://localhost:8000
   - service: http_status:404
 ```
 
-- [ ] **Step 6: Test the tunnel manually before wiring up the LaunchAgent**
+- [ ] **Step 9: Test the tunnel manually before wiring up the LaunchAgent**
 
 Run: `cloudflared tunnel run nxt-a1-meishi`
-In a separate terminal (or from your phone on cellular data, not Wi-Fi, to confirm it's really public): `curl https://meishi-api.nxta.co/api/v1/health`
+In a separate terminal (or from your phone on cellular data, not Wi-Fi, to confirm it's really public): `curl https://meishi-api.tools.nxta.co/api/v1/health`
 Expected: `{"status":"ok"}`. Once confirmed, stop the manual run with Ctrl-C.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 10: Commit**
 
 Nothing to commit — this step produces no repo changes.
 
@@ -567,12 +580,12 @@ Expected: no output (success is silent).
 
 - [ ] **Step 3: Verify the tunnel survives independently of any manual terminal session**
 
-Run: `curl https://meishi-api.nxta.co/api/v1/health`
+Run: `curl https://meishi-api.tools.nxta.co/api/v1/health`
 Expected: `{"status":"ok"}`, with no `cloudflared tunnel run` process running manually in a foreground terminal — only the LaunchAgent-managed one (check with `ps aux | grep cloudflared`).
 
 - [ ] **Step 4: Verify the tunnel restarts after a reboot (optional but recommended)**
 
-Restart the Mac, then after login run: `curl https://meishi-api.nxta.co/api/v1/health`
+Restart the Mac, then after login run: `curl https://meishi-api.tools.nxta.co/api/v1/health`
 Expected: `{"status":"ok"}` without manually starting anything.
 
 ---
@@ -1202,7 +1215,7 @@ final class APIConfig {
     }
 
     private init() {
-        self.baseURLString = UserDefaults.standard.string(forKey: baseURLDefaultsKey) ?? "https://meishi-api.nxta.co"
+        self.baseURLString = UserDefaults.standard.string(forKey: baseURLDefaultsKey) ?? "https://meishi-api.tools.nxta.co"
         self.apiKey = KeychainStore.load() ?? ""
     }
 
@@ -1322,7 +1335,7 @@ final class APIClientTests: XCTestCase {
     override func setUp() {
         super.setUp()
         config = APIConfig.shared
-        config.baseURLString = "https://meishi-api.nxta.co"
+        config.baseURLString = "https://meishi-api.tools.nxta.co"
         config.apiKey = "test-key"
         client = APIClient(config: config, session: MockURLProtocol.makeTestSession())
     }
@@ -2941,7 +2954,7 @@ git commit -m "feat: add contact detail and notes edit sheets; app builds end to
 
 This is a verification task, not a code-writing task — no files change unless QA turns up a bug, in which case fix it, re-run the specific check, and commit the fix with a normal `fix:` message before continuing.
 
-**Prerequisites:** Tasks 1–4 (backend hardening + public tunnel) and Tasks 5–18 (iOS app) are both complete. The backend is reachable at `https://meishi-api.nxta.co` and has at least one real (or test) contact with a scanned card in it.
+**Prerequisites:** Tasks 1–4 (backend hardening + public tunnel) and Tasks 5–18 (iOS app) are both complete. The backend is reachable at `https://meishi-api.tools.nxta.co` and has at least one real (or test) contact with a scanned card in it.
 
 - [ ] **Step 1: Configure the app**
 
@@ -2961,7 +2974,7 @@ Tap a card image thumbnail. Confirm it opens full-screen, pinch-to-zoom works, a
 
 - [ ] **Step 5: Edit each field type**
 
-For one test contact: edit a name field, edit the position title, edit the company name, edit an existing contact detail, add a new contact detail, delete a contact detail, and edit notes. After each save, confirm the change reflects immediately in the detail view (the view model reloads after every mutation) — and confirm it also shows updated on the web app (`http://localhost:8000` or `https://meishi-api.nxta.co`, refreshing that page) to verify both clients see the same backend state.
+For one test contact: edit a name field, edit the position title, edit the company name, edit an existing contact detail, add a new contact detail, delete a contact detail, and edit notes. After each save, confirm the change reflects immediately in the detail view (the view model reloads after every mutation) — and confirm it also shows updated on the web app (`http://localhost:8000` or `https://meishi-api.tools.nxta.co`, refreshing that page) to verify both clients see the same backend state.
 
 - [ ] **Step 6: Error states**
 
