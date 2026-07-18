@@ -125,3 +125,55 @@ def test_auto_sync_card_records_history(client_with_test_db, monkeypatch):
             break
 
     asyncio.run(_check())
+
+
+def test_auto_sync_card_records_error_history_when_legacy_card_build_fails(client_with_test_db, monkeypatch):
+    """If something inside auto_sync_card's orchestration (e.g. build_legacy_card)
+    raises unexpectedly, auto_sync_card must not propagate the exception (it runs
+    as a fire-and-forget BackgroundTasks call with nothing awaiting it) and must
+    still record a CardSyncHistory row with result="error" so the failure is
+    visible instead of vanishing silently.
+    """
+    from app.services import contact_sync
+    monkeypatch.setattr(contact_sync, "AsyncSessionLocal", client_with_test_db.session_maker)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("unexpected shape surprise")
+
+    monkeypatch.setattr(contact_sync, "build_legacy_card", _boom)
+
+    from app.db.models import Card, CardSyncHistory, Person
+    from sqlalchemy import select
+
+    card_id_holder = {}
+
+    async def _setup():
+        async for db in app.dependency_overrides[get_db]():
+            person = Person(external_id="p4")
+            db.add(person)
+            await db.flush()
+            card = Card(external_id="c4", person_id=person.id, sync_status="pending")
+            db.add(card)
+            await db.flush()
+            card_id_holder["id"] = card.id
+            await db.commit()
+            break
+
+    asyncio.run(_setup())
+
+    # Must not raise.
+    asyncio.run(contact_sync.auto_sync_card(card_id_holder["id"]))
+
+    async def _check():
+        async for db in app.dependency_overrides[get_db]():
+            person = await db.scalar(select(Person).where(Person.external_id == "p4"))
+            # No successful sync happened, so the resource should stay unset.
+            assert person.google_resource is None
+            history = (await db.scalars(select(CardSyncHistory))).all()
+            assert len(history) == 1
+            assert history[0].destination == "google_contacts"
+            assert history[0].result == "error"
+            assert "unexpected shape surprise" in history[0].error_message
+            break
+
+    asyncio.run(_check())

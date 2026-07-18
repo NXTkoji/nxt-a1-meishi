@@ -47,31 +47,58 @@ async def auto_sync_card(card_id: int) -> None:
     already be closed by then.
     """
     async with AsyncSessionLocal() as db:
-        card = await db.scalar(
-            select(Card)
-            .where(Card.id == card_id)
-            .options(
-                selectinload(Card.person).selectinload(Person.names),
-                selectinload(Card.person).selectinload(Person.contact_details),
-                selectinload(Card.person).selectinload(Person.positions)
-                    .selectinload(Position.details),
-                selectinload(Card.person).selectinload(Person.positions)
-                    .selectinload(Position.organization)
-                    .selectinload(Organization.names),
-                selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
+        card = None
+        try:
+            card = await db.scalar(
+                select(Card)
+                .where(Card.id == card_id)
+                .options(
+                    selectinload(Card.person).selectinload(Person.names),
+                    selectinload(Card.person).selectinload(Person.contact_details),
+                    selectinload(Card.person).selectinload(Person.positions)
+                        .selectinload(Position.details),
+                    selectinload(Card.person).selectinload(Person.positions)
+                        .selectinload(Position.organization)
+                        .selectinload(Organization.names),
+                    selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
+                )
             )
-        )
-        if card is None or card.deleted_at is not None:
-            logger.warning("auto_sync_card: card id=%s not found or deleted", card_id)
-            return
+            if card is None or card.deleted_at is not None:
+                logger.warning("auto_sync_card: card id=%s not found or deleted", card_id)
+                return
 
-        legacy = build_legacy_card(card, card.person, card.person.contact_details, card.person.positions)
-        result, error_message = await sync_card_to_google_contacts(db, card, legacy)
+            legacy = build_legacy_card(card, card.person, card.person.contact_details, card.person.positions)
+            result, error_message = await sync_card_to_google_contacts(db, card, legacy)
 
-        db.add(CardSyncHistory(
-            card_id=card.id,
-            destination="google_contacts",
-            result=result,
-            error_message=error_message,
-        ))
-        await db.commit()
+            db.add(CardSyncHistory(
+                card_id=card.id,
+                destination="google_contacts",
+                result=result,
+                error_message=error_message,
+            ))
+            await db.commit()
+        except Exception as exc:
+            logger.exception("auto_sync_card: unexpected error syncing card id=%s", card_id)
+            if card is None:
+                # Card was never loaded (e.g. the initial query itself failed) —
+                # there's nothing to attach a CardSyncHistory row to.
+                return
+            # Reset the session in case the failure left a pending transaction
+            # in a bad state, then record the failure so it's at least visible.
+            # Note: card_id (the function argument) is used here rather than
+            # card.id — rollback() expires all attributes on `card`, and
+            # re-reading card.id afterward would trigger an implicit lazy
+            # reload outside of an awaited context (MissingGreenlet).
+            await db.rollback()
+            try:
+                db.add(CardSyncHistory(
+                    card_id=card_id,
+                    destination="google_contacts",
+                    result="error",
+                    error_message=str(exc),
+                ))
+                await db.commit()
+            except Exception:
+                logger.exception(
+                    "auto_sync_card: failed to record error CardSyncHistory for card id=%s", card_id
+                )
