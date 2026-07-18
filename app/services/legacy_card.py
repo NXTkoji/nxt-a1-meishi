@@ -87,6 +87,9 @@ def build_legacy_card(
         social=social,
     )
 
+    # Raw, unsorted, not deduped — google_contacts.py's _build_person_body
+    # is the only consumer today and does its own dedup/sort; a future
+    # second consumer should not assume this list is already clean.
     my_company_labels = [
         link.my_company.google_label or link.my_company.name
         for link in db_card.my_company_links
