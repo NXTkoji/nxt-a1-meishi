@@ -135,7 +135,7 @@ async def sync_to_google(card: Card, existing_resource: str | None = None) -> st
                 f"{PEOPLE_API}/{existing_resource}:updateContact",
                 headers=headers,
                 json=body,
-                params={"updatePersonFields": "names,organizations,phoneNumbers,emailAddresses,addresses,urls,biographies"},
+                params={"updatePersonFields": "names,organizations,phoneNumbers,emailAddresses,addresses,urls,biographies,userDefined"},
             )
         else:
             resp = await client.post(
