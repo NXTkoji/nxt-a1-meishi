@@ -109,6 +109,12 @@ def _build_person_body(card: Card) -> dict:
     if note_parts:
         body["biographies"] = [{"value": "\n".join(note_parts), "contentType": "TEXT_PLAIN"}]
 
+    # Met As (which of the user's businesses this contact was met through)
+    if card.my_company_labels:
+        labels = sorted({label for label in card.my_company_labels if label})
+        if labels:
+            body["userDefined"] = [{"key": "Met As", "value": ", ".join(labels)}]
+
     return body
 
 
