@@ -1,5 +1,7 @@
 # iPhone View/Edit App Implementation Plan
 
+> **SUPERSEDED (2026-07-18):** This plan is on hold. After building Task 3 (Google Drive snapshot export), discovered that a custom SwiftUI app sideloaded without the $99/year Apple Developer Program requires re-signing in Xcode every 7 days — an ongoing cost/hassle not previously surfaced. Decided instead to auto-push every card to Google Contacts (`app/services/google_contacts.py`, currently manual-trigger-only) and use the native iOS Contacts app / Google Contacts app as the phone-side viewer. Google Contacts is explicitly a **read-mostly viewer**: edits made there do not flow back to this app's database, and some fields won't have a home there — a "Met As" custom field (People API `userDefined`) will be added to close some of that gap. Tasks 1–2 (PATCH notes endpoint, image route auth) and Task 3 (Drive snapshot export service) are already committed on `feat/iphone-viewer-app` and are harmless to leave as-is, just unused for now. Do not resume Tasks 4+ without first re-confirming this decision still holds.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a native SwiftUI iPhone app that browses, searches, views, and edits the contacts already captured by NXT-A1 — synced through a dedicated Google Drive folder rather than a live connection to the backend.
