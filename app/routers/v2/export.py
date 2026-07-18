@@ -22,6 +22,7 @@ from sqlalchemy.orm import selectinload
 from app.auth import verify_api_key
 from app.db.models import (
     Card,
+    CardMyCompany,
     CardSyncHistory,
     ContactDetail,
     Organization,
@@ -34,6 +35,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.schemas.api import ExportRequest, ExportResponse, ExportResultItem
 from app.services.csv_export import format_google_csv, format_odoo_csv
+from app.services.legacy_card import build_legacy_card
 
 logger = logging.getLogger(__name__)
 
@@ -42,102 +44,6 @@ router = APIRouter(
     tags=["export"],
     dependencies=[Depends(verify_api_key)],
 )
-
-
-# ---------------------------------------------------------------------------
-# Bridge: convert v2 DB Card → legacy models.card.Card for sync services
-# ---------------------------------------------------------------------------
-
-def _build_legacy_card(
-    db_card: Card,
-    person: Person,
-    contact_details: list[ContactDetail],
-    positions: list[Position],
-):
-    """Convert v2 DB objects into the legacy app.models.card.Card Pydantic model."""
-    from app.models.card import (
-        Address,
-        Card as LegacyCard,
-        Email,
-        Person as LegacyPerson,
-        PersonName as LegacyName,
-        Phone,
-        Position as LegacyPosition,
-        Social,
-    )
-
-    names = [
-        LegacyName(
-            value=n.full_name,
-            language=n.language,
-            type=n.name_type,
-        )
-        for n in person.names
-        if n.is_current
-    ]
-
-    legacy_positions = []
-    for pos in positions:
-        org_name_ja = next(
-            (on.name for on in pos.organization.names if on.language == "ja" and on.is_current),
-            next((on.name for on in pos.organization.names if on.is_current), ""),
-        )
-        org_name_en = next(
-            (on.name for on in pos.organization.names if on.language == "en" and on.is_current),
-            "",
-        )
-        title_ja = next(
-            (pd.title or "" for pd in pos.details if pd.language == "ja"), ""
-        )
-        title_en = next(
-            (pd.title or "" for pd in pos.details if pd.language == "en"), ""
-        )
-        dept = next(
-            (pd.department or "" for pd in pos.details if pd.language == "ja"),
-            next((pd.department or "" for pd in pos.details), ""),
-        )
-        legacy_positions.append(LegacyPosition(
-            company=org_name_ja,
-            company_english=org_name_en,
-            title=title_ja,
-            title_english=title_en,
-            department=dept,
-        ))
-
-    phones, emails, addresses = [], [], []
-    website = ""
-    social = Social()
-    for cd in contact_details:
-        t = cd.detail_type
-        if t in ("phone_work", "phone_mobile", "phone_fax"):
-            kind = t.replace("phone_", "")
-            phones.append(Phone(value=cd.value, type=kind, label=cd.label or ""))
-        elif t in ("email_work", "email_personal"):
-            kind = t.replace("email_", "")
-            emails.append(Email(value=cd.value, type=kind))
-        elif t in ("address_work", "address_home"):
-            kind = t.replace("address_", "")
-            addresses.append(Address(type=kind, full=cd.value))
-        elif t == "url_website":
-            website = cd.value
-        elif t == "social_wechat":
-            social.wechat = cd.value
-        elif t == "social_line":
-            social.line = cd.value
-        elif t == "social_linkedin":
-            social.linkedin = cd.value
-
-    legacy_person = LegacyPerson(
-        names=names,
-        positions=legacy_positions,
-        phones=phones,
-        emails=emails,
-        addresses=addresses,
-        website=website,
-        social=social,
-    )
-
-    return LegacyCard(person=legacy_person)
 
 
 async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
@@ -153,6 +59,7 @@ async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
             selectinload(Card.person).selectinload(Person.positions)
                 .selectinload(Position.organization)
                 .selectinload(Organization.names),
+            selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
         )
     )
 
@@ -172,7 +79,7 @@ async def _export_one(
     error_message = None
 
     try:
-        legacy = _build_legacy_card(card, person, contact_details, positions)
+        legacy = build_legacy_card(card, person, contact_details, positions)
 
         if destination == "odoo":
             from app.services.odoo_sync import sync_to_odoo
@@ -279,7 +186,7 @@ async def export_csv(
         db_card = await _load_full_card(db, ext_id)
         if db_card is None:
             continue  # silently skip missing cards
-        legacy = _build_legacy_card(
+        legacy = build_legacy_card(
             db_card,
             db_card.person,
             db_card.person.contact_details,
