@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,6 +16,7 @@ from app.db.models import Card, CardMyCompany, CardSide, Person, PersonName
 from app.db.session import get_db
 from app.schemas.api import CardListItem, CardOut, CardSideOut
 from app.services import image_store
+from app.services.contact_sync import auto_sync_card
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,7 @@ async def get_card(card_ext_id: str, db: AsyncSession = Depends(get_db)):
 async def update_card(
     card_ext_id: str,
     body: dict,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     from datetime import date as date_type
@@ -268,6 +270,10 @@ async def update_card(
     out = CardOut.model_validate(card)
     out.person_external_id = person_ext_id
     out.my_company_ids = list(mc_ids)
+    # get_db commits the session after this handler returns and before
+    # Starlette runs background tasks, so auto_sync_card always sees this
+    # update once it opens its own session — no explicit commit needed here.
+    background_tasks.add_task(auto_sync_card, card.id)
     return out
 
 

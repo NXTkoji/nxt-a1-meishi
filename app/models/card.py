@@ -77,6 +77,7 @@ class Card(BaseModel):
     scanned_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     received_date: str = ""  # date card was received (user can override)
     notes: str = ""
+    my_company_labels: list[str] = Field(default_factory=list)
     images: CardImages = Field(default_factory=CardImages)
     person: Person = Field(default_factory=Person)
     match: MatchResult = Field(default_factory=MatchResult)

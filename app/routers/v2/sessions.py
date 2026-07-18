@@ -53,6 +53,7 @@ from app.schemas.api import (
 )
 from app.services import card_detector, contact_matcher, correction_store, image_store
 from app.services.claude_parser import stream_parse_card_sides
+from app.services.contact_sync import auto_sync_card
 
 logger = logging.getLogger(__name__)
 
@@ -776,6 +777,8 @@ async def confirm_session(
     await db.commit()
 
     background_tasks.add_task(image_store.delete_temp_session, sid)
+    for result in confirmed:
+        background_tasks.add_task(auto_sync_card, result.card_id)
     return ConfirmResponse(confirmed=confirmed)
 
 

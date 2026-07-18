@@ -109,6 +109,12 @@ def _build_person_body(card: Card) -> dict:
     if note_parts:
         body["biographies"] = [{"value": "\n".join(note_parts), "contentType": "TEXT_PLAIN"}]
 
+    # Met As (which of the user's businesses this contact was met through)
+    if card.my_company_labels:
+        labels = sorted({label for label in card.my_company_labels if label})
+        if labels:
+            body["userDefined"] = [{"key": "Met As", "value": ", ".join(labels)}]
+
     return body
 
 
@@ -124,12 +130,23 @@ async def sync_to_google(card: Card, existing_resource: str | None = None) -> st
 
     async with httpx.AsyncClient() as client:
         if existing_resource:
+            # Google's People API rejects updateContact unless the request
+            # includes the contact's current etag ("Request must set
+            # person.etag..."), so fetch it first.
+            etag_resp = await client.get(
+                f"{PEOPLE_API}/{existing_resource}",
+                headers=headers,
+                params={"personFields": "metadata"},
+            )
+            etag_resp.raise_for_status()
+            body["etag"] = etag_resp.json()["etag"]
+
             # Update existing contact
             resp = await client.patch(
                 f"{PEOPLE_API}/{existing_resource}:updateContact",
                 headers=headers,
                 json=body,
-                params={"updatePersonFields": "names,organizations,phoneNumbers,emailAddresses,addresses,urls,biographies"},
+                params={"updatePersonFields": "names,organizations,phoneNumbers,emailAddresses,addresses,urls,biographies,userDefined"},
             )
         else:
             resp = await client.post(
