@@ -94,16 +94,8 @@ async def _export_one(
                 error_message = "sync_to_odoo returned None"
 
         elif destination == "google_contacts":
-            from app.services.google_contacts import sync_to_google
-            existing_resource = person.google_resource
-            resource_name = await sync_to_google(legacy, existing_resource)
-            if resource_name:
-                result = "updated" if existing_resource else "created"
-                person.google_resource = resource_name
-                card.google_sync_at = datetime.utcnow()
-            else:
-                result = "error"
-                error_message = "sync_to_google returned None"
+            from app.services.contact_sync import sync_card_to_google_contacts
+            result, error_message = await sync_card_to_google_contacts(db, card, legacy)
 
         else:
             result = "error"

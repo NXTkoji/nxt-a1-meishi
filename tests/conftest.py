@@ -46,6 +46,7 @@ def client_with_test_db(tmp_path):
 
     app.dependency_overrides[get_db] = _override_get_db
     test_client = TestClient(app)
+    test_client.session_maker = session_maker
 
     yield test_client
 
