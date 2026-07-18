@@ -1,0 +1,160 @@
+<h2>3 Design Approaches</h2>
+<p class="subtitle">How should duplicate check and export integrate into the existing app?</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Inline Extension <span style="font-size:0.75rem;background:#4ade80;color:#000;padding:2px 8px;border-radius:99px;margin-left:8px">Recommended</span></h3>
+      <p>Duplicate panel expands inline within the existing review card. Export mode adds a checkbox overlay and floating action bar to the existing card list — no new screens.</p>
+      <div style="display:flex;gap:12px;margin-top:12px">
+        <div style="flex:1">
+          <div class="mock-nav" style="font-size:0.7rem;padding:6px 10px">NXT-A1 — Review</div>
+          <div style="background:#1e293b;border-radius:6px;padding:10px;margin-top:4px;font-size:0.75rem">
+            <div style="background:#0f172a;border-radius:4px;padding:8px;margin-bottom:6px">
+              <div style="color:#94a3b8;font-size:0.65rem;margin-bottom:4px">SCANNED CARD</div>
+              <div style="color:#f1f5f9">田中 太郎 / Taro Tanaka</div>
+              <div style="color:#64748b">NXT株式会社 · CEO</div>
+            </div>
+            <div style="background:#dc2626;border-radius:4px;padding:8px;border:1px solid #ef4444">
+              <div style="color:#fca5a5;font-size:0.65rem;margin-bottom:6px">⚠ POSSIBLE DUPLICATE — 97% match</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.65rem">
+                <div style="background:#1e293b;border-radius:3px;padding:6px">
+                  <div style="color:#64748b;margin-bottom:2px">Existing record</div>
+                  <div style="color:#f1f5f9">田中 太郎</div>
+                  <div style="color:#64748b">NXT · Managing Director</div>
+                  <div style="color:#64748b">03-1234-5678</div>
+                </div>
+                <div style="background:#1e293b;border-radius:3px;padding:6px">
+                  <div style="color:#64748b;margin-bottom:2px">New card</div>
+                  <div style="color:#f1f5f9">田中 太郎</div>
+                  <div style="color:#64748b">NXT株式会社 · CEO</div>
+                  <div style="color:#4ade80">090-9999-8888 ← new</div>
+                </div>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:8px">
+                <button class="mock-button" style="flex:1;font-size:0.6rem;padding:4px">Discard new</button>
+                <button class="mock-button" style="flex:1;font-size:0.6rem;padding:4px;background:#3b82f6">Merge fields</button>
+                <button class="mock-button" style="flex:1;font-size:0.6rem;padding:4px">Replace all</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1">
+          <div class="mock-nav" style="font-size:0.7rem;padding:6px 10px">NXT-A1 — Cards</div>
+          <div style="background:#1e293b;border-radius:6px;padding:10px;margin-top:4px;font-size:0.75rem">
+            <div style="display:flex;align-items:center;gap:6px;background:#3b82f6;border-radius:4px;padding:6px 8px;margin-bottom:8px">
+              <span style="color:#fff;font-size:0.65rem">3 selected</span>
+              <span style="flex:1"></span>
+              <button class="mock-button" style="font-size:0.6rem;padding:3px 8px;background:#fff;color:#1e293b">Export →</button>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;background:#0f172a;border-radius:3px;padding:6px;margin-bottom:4px">
+              <div style="width:14px;height:14px;border:2px solid #3b82f6;border-radius:2px;background:#3b82f6"></div>
+              <div>
+                <div style="color:#f1f5f9;font-size:0.65rem">田中 太郎</div>
+                <div style="color:#64748b;font-size:0.6rem">NXT · CEO <span style="color:#4ade80">● Odoo</span></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;background:#0f172a;border-radius:3px;padding:6px;margin-bottom:4px">
+              <div style="width:14px;height:14px;border:2px solid #3b82f6;border-radius:2px;background:#3b82f6"></div>
+              <div>
+                <div style="color:#f1f5f9;font-size:0.65rem">山田 花子</div>
+                <div style="color:#64748b;font-size:0.6rem">ABC株式会社 · Sales</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;background:#0f172a;border-radius:3px;padding:6px">
+              <div style="width:14px;height:14px;border:2px solid #475569;border-radius:2px"></div>
+              <div>
+                <div style="color:#f1f5f9;font-size:0.65rem">佐藤 次郎</div>
+                <div style="color:#64748b;font-size:0.6rem">DEF Inc. · Engineer</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>No new navigation or screens to learn</li><li>Duplicate decision happens in context of the card image</li><li>Fastest to implement</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Review card becomes tall/busy when duplicate panel is open</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Dedicated Screens</h3>
+      <p>Duplicate check becomes its own full-screen step between analysis and confirm. Export gets its own page accessible from a nav menu item.</p>
+      <div style="display:flex;gap:8px;margin-top:12px;font-size:0.7rem">
+        <div style="flex:1;background:#1e293b;border-radius:6px;padding:8px">
+          <div style="color:#94a3b8;font-size:0.65rem;margin-bottom:6px">SCAN FLOW</div>
+          <div style="display:flex;flex-direction:column;gap:3px">
+            <div style="background:#0f172a;border-radius:3px;padding:5px 8px;color:#64748b;font-size:0.6rem">1. Upload</div>
+            <div style="background:#0f172a;border-radius:3px;padding:5px 8px;color:#64748b;font-size:0.6rem">2. Grouping</div>
+            <div style="background:#0f172a;border-radius:3px;padding:5px 8px;color:#64748b;font-size:0.6rem">3. Analysis</div>
+            <div style="background:#dc2626;border-radius:3px;padding:5px 8px;color:#fca5a5;font-size:0.6rem">4. ⚠ Duplicate Review ← new</div>
+            <div style="background:#0f172a;border-radius:3px;padding:5px 8px;color:#64748b;font-size:0.6rem">5. Confirm</div>
+          </div>
+        </div>
+        <div style="flex:1;background:#1e293b;border-radius:6px;padding:8px">
+          <div style="color:#94a3b8;font-size:0.65rem;margin-bottom:6px">EXPORT PAGE</div>
+          <div style="background:#0f172a;border-radius:3px;padding:8px;font-size:0.6rem">
+            <div style="color:#f1f5f9;margin-bottom:4px">Select destination:</div>
+            <div style="color:#4ade80">☑ Odoo</div>
+            <div style="color:#94a3b8">☐ Google Contacts</div>
+            <div style="color:#94a3b8;margin-bottom:8px">☐ ...</div>
+            <div style="color:#f1f5f9;margin-bottom:4px">Cards to export:</div>
+            <div style="color:#4ade80">☑ 田中 太郎</div>
+            <div style="color:#4ade80">☑ 山田 花子</div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>Cleaner, focused UX for each task</li><li>Export page is easy to find</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Adds a step to every scan even when no duplicate exists</li><li>More screens to build and maintain</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Modal-First</h3>
+      <p>Duplicate check pops a full-screen modal when a match is found. Export is a multi-step modal/wizard triggered from the card list. No new pages at all.</p>
+      <div style="background:#1e293b;border-radius:6px;padding:10px;margin-top:10px;font-size:0.75rem;position:relative">
+        <div style="opacity:0.3;filter:blur(1px)">
+          <div class="mock-nav" style="font-size:0.7rem;padding:4px 10px">NXT-A1</div>
+          <div style="padding:8px;color:#64748b;font-size:0.65rem">Card list in background...</div>
+        </div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+          <div style="background:#1e293b;border:1px solid #3b82f6;border-radius:8px;padding:14px;width:85%;box-shadow:0 20px 40px rgba(0,0,0,0.6)">
+            <div style="color:#f1f5f9;font-weight:600;font-size:0.8rem;margin-bottom:2px">Possible duplicate found</div>
+            <div style="color:#64748b;font-size:0.65rem;margin-bottom:10px">97% confidence match with existing record</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.65rem;margin-bottom:10px">
+              <div style="background:#0f172a;border-radius:4px;padding:8px">
+                <div style="color:#64748b;margin-bottom:3px">Existing</div>
+                <div style="color:#f1f5f9">田中 太郎</div>
+                <div style="color:#64748b">Managing Director</div>
+              </div>
+              <div style="background:#0f172a;border-radius:4px;padding:8px">
+                <div style="color:#64748b;margin-bottom:3px">New card</div>
+                <div style="color:#f1f5f9">田中 太郎</div>
+                <div style="color:#4ade80">CEO ← changed</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:4px">
+              <button class="mock-button" style="flex:1;font-size:0.6rem;padding:4px">Discard</button>
+              <button class="mock-button" style="flex:1;font-size:0.6rem;padding:4px;background:#3b82f6">Merge</button>
+              <button class="mock-button" style="flex:1;font-size:0.6rem;padding:4px">Replace</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons" style="margin-top:10px">
+        <div class="pros"><h4>Pros</h4><ul><li>Draws full attention to the duplicate decision</li><li>No new pages needed</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Modal blocks the card image — user can't see the source they're deciding about</li><li>Modal fatigue if scanning many cards with duplicates</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>

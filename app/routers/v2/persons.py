@@ -10,23 +10,27 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import delete as sa_delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import verify_api_key
 from app.db.models import (
+    Card,
     ContactDetail,
     Organization,
     OrganizationName,
     Person,
     PersonName,
+    PersonRelationship,
     Position,
     PositionDetail,
 )
 from app.db.session import get_db
 from app.schemas.api import (
     ContactDetailOut,
+    MergeRequest,
+    MergeResult,
     OrgNameOut,
     PersonCreate,
     PersonListItem,
@@ -223,6 +227,97 @@ async def delete_person(person_ext_id: str, db: AsyncSession = Depends(get_db)):
     if not person:
         raise HTTPException(404, "Person not found")
     await db.delete(person)
+
+
+@router.post("/{primary_ext_id}/merge", response_model=MergeResult)
+async def merge_persons(
+    primary_ext_id: str,
+    body: MergeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge N source persons into primary. All cards, names, contact details,
+    and positions are reassigned. Sources are deleted. Returns merged PersonOut
+    and count of duplicate contact details detected."""
+
+    # Load primary
+    primary = await db.scalar(select(Person).where(Person.external_id == primary_ext_id))
+    if not primary:
+        raise HTTPException(404, "Primary person not found")
+
+    # Filter out primary from source_ids (idempotent)
+    source_ext_ids = [sid for sid in body.source_ids if sid != primary_ext_id]
+    if not source_ext_ids:
+        return MergeResult(
+            person=await _load_person_out(db, primary),
+            duplicate_contact_count=0,
+        )
+
+    # Load source persons — 404 if any missing
+    sources = []
+    for ext_id in source_ext_ids:
+        p = await db.scalar(select(Person).where(Person.external_id == ext_id))
+        if not p:
+            raise HTTPException(404, f"Source person not found: {ext_id}")
+        sources.append(p)
+
+    source_ids = [p.id for p in sources]
+
+    # Reassign all child rows to primary
+    for table, col in [
+        (Card, Card.person_id),
+        (PersonName, PersonName.person_id),
+        (ContactDetail, ContactDetail.person_id),
+        (Position, Position.person_id),
+    ]:
+        await db.execute(
+            update(table)
+            .where(col.in_(source_ids))
+            .values({col: primary.id})
+        )
+
+    # Expire stale ORM relationship collections on source persons so SQLAlchemy
+    # does not attempt to cascade-delete already-reassigned child rows.
+    for p in sources:
+        db.expire(p, ["names", "contact_details", "positions", "cards"])
+
+    # Concatenate notes
+    source_notes = [p.notes for p in sources if p.notes]
+    if source_notes:
+        existing = primary.notes or ""
+        combined = "\n".join(filter(None, [existing] + source_notes))
+        primary.notes = combined
+
+    await db.flush()
+
+    # Count duplicate contact details: same (detail_type, lower(trim(value)))
+    dup_count_row = await db.execute(
+        select(func.count())
+        .select_from(
+            select(ContactDetail.detail_type, func.lower(func.trim(ContactDetail.value)))
+            .where(ContactDetail.person_id == primary.id)
+            .group_by(ContactDetail.detail_type, func.lower(func.trim(ContactDetail.value)))
+            .having(func.count() > 1)
+            .subquery()
+        )
+    )
+    duplicate_contact_count = dup_count_row.scalar() or 0
+
+    # Explicitly delete PersonRelationship rows where source persons are the
+    # target (to_person_id). relationships_from is covered by cascade="all,
+    # delete-orphan", but relationships_to has no cascade, so these must be
+    # cleaned up manually before deleting the source persons.
+    await db.execute(
+        sa_delete(PersonRelationship).where(PersonRelationship.to_person_id.in_(source_ids))
+    )
+
+    # Delete source persons (relationships_from cascades; relationships_to cleaned up above)
+    for p in sources:
+        await db.delete(p)
+
+    await db.flush()
+
+    person_out = await _load_person_out(db, primary)
+    return MergeResult(person=person_out, duplicate_contact_count=duplicate_contact_count)
 
 
 # ── Inline editing endpoints ──────────────────────────────────────────────────

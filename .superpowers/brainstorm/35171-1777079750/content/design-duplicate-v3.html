@@ -1,0 +1,159 @@
+<h2>Design — Duplicate Review UI (v3)</h2>
+<p class="subtitle">Drag fields from new card → existing record, same as post-analysis editor</p>
+
+<div class="section">
+  <h3>Mockup — Drag & Drop Field Editor</h3>
+
+  <div style="background:#0f172a;border-radius:8px;padding:12px;font-size:0.72rem">
+
+    <!-- Header -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div>
+        <span style="color:#fbbf24;font-weight:600">⚠ Possible duplicate — 97% match</span>
+        <span style="color:#64748b;font-size:0.65rem;margin-left:8px">Drag fields from the right into the existing record</span>
+      </div>
+      <button class="mock-button" style="font-size:0.65rem;padding:4px 10px;background:#475569">Not a duplicate →</button>
+    </div>
+
+    <!-- Two columns -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
+
+      <!-- Left: Existing person -->
+      <div>
+        <div style="color:#60a5fa;font-size:0.65rem;font-weight:600;margin-bottom:6px;text-align:center">EXISTING RECORD</div>
+        <div style="background:#1e293b;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px;min-height:260px">
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em">Names</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">田中 太郎</div>
+              <div style="color:#64748b;font-size:0.6rem">primary · ja</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">Taro Tanaka</div>
+              <div style="color:#64748b;font-size:0.6rem">romanized · en</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Position</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">Managing Director</div>
+              <div style="color:#64748b;font-size:0.6rem">NXT株式会社</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+
+          <!-- Drop zone (active state) -->
+          <div style="border:2px dashed #3b82f6;border-radius:4px;padding:8px;text-align:center;color:#60a5fa;font-size:0.62rem;background:#0f1e3d">
+            ↓ Drop field here
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Contact</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">03-1234-5678</div>
+              <div style="color:#64748b;font-size:0.6rem">phone · work</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f1f5f9">t.tanaka@nxt.co</div>
+              <div style="color:#64748b;font-size:0.6rem">email · work</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Right: New card -->
+      <div>
+        <div style="color:#4ade80;font-size:0.65rem;font-weight:600;margin-bottom:6px;text-align:center">NEW CARD — drag fields left</div>
+        <div style="background:#1e293b;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px">
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em">Names</div>
+          <div style="background:#0f172a;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center;cursor:grab">
+            <span style="color:#475569;font-size:0.75rem;margin-right:6px">⠿</span>
+            <div style="flex:1">
+              <div style="color:#f1f5f9">田中 太郎</div>
+              <div style="color:#64748b;font-size:0.6rem">primary · ja</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Position</div>
+          <!-- Being dragged state -->
+          <div style="background:#163220;border:1px solid #166534;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center;cursor:grabbing;opacity:0.7;box-shadow:0 4px 12px rgba(0,0,0,0.5)">
+            <span style="color:#4ade80;font-size:0.75rem;margin-right:6px">⠿</span>
+            <div style="flex:1">
+              <div style="color:#4ade80">CEO</div>
+              <div style="color:#86efac;font-size:0.6rem">NXT株式会社 · new</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px">Contact</div>
+          <div style="background:#163220;border:1px solid #166534;border-radius:4px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center;cursor:grab">
+            <span style="color:#4ade80;font-size:0.75rem;margin-right:6px">⠿</span>
+            <div style="flex:1">
+              <div style="color:#4ade80">090-9999-8888</div>
+              <div style="color:#86efac;font-size:0.6rem">mobile · new</div>
+            </div>
+            <button class="mock-button" style="font-size:0.55rem;padding:2px 6px;color:#f87171;background:transparent;border:1px solid #374151">✕</button>
+          </div>
+
+        </div>
+
+        <div style="margin-top:8px;background:#1e293b;border-radius:6px;padding:8px;font-size:0.65rem;color:#64748b;line-height:1.5">
+          <strong style="color:#94a3b8">How it works:</strong><br>
+          ⠿ Drag any field from here into the existing record on the left.<br>
+          ✕ Delete a field from either column.<br>
+          Fields remaining here after confirm are discarded.
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer actions -->
+    <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:12px">
+      <button class="mock-button" style="font-size:0.65rem;padding:5px 12px;color:#f87171">Discard new card</button>
+      <button class="mock-button" style="font-size:0.65rem;padding:5px 12px;background:#3b82f6">Confirm merge →</button>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <h3>Interaction summary</h3>
+  <div style="display:flex;flex-direction:column;gap:5px;font-size:0.78rem">
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:10px">
+      <span style="color:#94a3b8;min-width:130px">⠿ Drag (right → left)</span>
+      <span style="color:#64748b">Move a field from new card into existing record</span>
+    </div>
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:10px">
+      <span style="color:#94a3b8;min-width:130px">✕ Delete</span>
+      <span style="color:#64748b">Remove a field from either column permanently</span>
+    </div>
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:10px">
+      <span style="color:#94a3b8;min-width:130px">Not a duplicate</span>
+      <span style="color:#64748b">Dismiss panel, save new card as a separate new person</span>
+    </div>
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:10px">
+      <span style="color:#94a3b8;min-width:130px">Discard new card</span>
+      <span style="color:#64748b">Throw away the scan entirely, keep existing record as-is</span>
+    </div>
+    <div style="background:#1e293b;border-radius:4px;padding:8px 12px;display:flex;gap:10px">
+      <span style="color:#94a3b8;min-width:130px">Confirm merge</span>
+      <span style="color:#64748b">Save left column as updated existing person; new card image linked to them</span>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:16px;background:#0f172a;border-radius:6px;padding:12px;font-size:0.78rem;color:#94a3b8">
+  <strong style="color:#f1f5f9">Does this look right?</strong> The "CEO" field is shown mid-drag with a drop zone appearing on the left. New fields are highlighted green. Ready to move on to the Export section?
+</div>

@@ -203,6 +203,11 @@ export interface PersonListItem {
   created_at: string
 }
 
+export interface MergeResult {
+  person: Person
+  duplicate_contact_count: number
+}
+
 // Countries
 export interface Country {
   id: number

@@ -1,0 +1,160 @@
+<h2>Design — Export Card Selection</h2>
+<p class="subtitle">Filter first, then select/deselect individual records</p>
+
+<div class="section">
+  <h3>Export Selection Screen Flow</h3>
+  <div style="display:flex;gap:8px;align-items:center;font-size:0.72rem;flex-wrap:wrap">
+    <div style="background:#1e293b;border-radius:4px;padding:5px 10px;color:#94a3b8">Card List</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#0f172a;border:1px solid #3b82f6;border-radius:4px;padding:5px 10px;color:#93c5fd;font-weight:600">Tap "Export"</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#0f172a;border:1px solid #3b82f6;border-radius:4px;padding:5px 10px;color:#93c5fd;font-weight:600">Filter + Select</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#1e293b;border-radius:4px;padding:5px 10px;color:#94a3b8">Choose destinations</div>
+    <div style="color:#475569">→</div>
+    <div style="background:#1e293b;border-radius:4px;padding:5px 10px;color:#94a3b8">Export & result</div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Filter + Select Screen</h3>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+
+    <!-- Main mockup -->
+    <div style="background:#0f172a;border-radius:8px;overflow:hidden;font-size:0.72rem;width:320px;flex-shrink:0">
+      <div class="mock-nav" style="font-size:0.7rem;padding:8px 12px;display:flex;gap:8px;align-items:center">
+        <span style="color:#64748b">✕ Cancel</span>
+        <span style="flex:1;text-align:center;color:#f1f5f9;font-weight:600">Select Cards to Export</span>
+      </div>
+
+      <!-- Filter bar -->
+      <div style="padding:8px 10px;background:#1e293b;display:flex;flex-direction:column;gap:6px">
+
+        <!-- Text search -->
+        <div style="position:relative">
+          <input class="mock-input" placeholder="Search name, company, email, title…" style="width:100%;font-size:0.65rem;padding:6px 10px;box-sizing:border-box">
+        </div>
+
+        <!-- Filter chips row -->
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          <!-- Active chip -->
+          <div style="background:#1d4ed8;border-radius:99px;padding:3px 10px;display:flex;gap:4px;align-items:center">
+            <span style="color:#fff;font-size:0.6rem">April 2026</span>
+            <span style="color:#93c5fd;font-size:0.6rem;cursor:pointer">✕</span>
+          </div>
+          <!-- Active chip -->
+          <div style="background:#1d4ed8;border-radius:99px;padding:3px 10px;display:flex;gap:4px;align-items:center">
+            <span style="color:#fff;font-size:0.6rem">IT展示会</span>
+            <span style="color:#93c5fd;font-size:0.6rem;cursor:pointer">✕</span>
+          </div>
+          <!-- Add filter -->
+          <div style="background:#1e293b;border:1px dashed #475569;border-radius:99px;padding:3px 10px;cursor:pointer">
+            <span style="color:#64748b;font-size:0.6rem">+ Filter</span>
+          </div>
+        </div>
+
+        <!-- Filter picker (expanded) -->
+        <div style="background:#0f172a;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px">
+          <div style="color:#475569;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em">Add filter</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="mock-button" style="font-size:0.6rem;padding:3px 8px">Year</button>
+            <button class="mock-button" style="font-size:0.6rem;padding:3px 8px;background:#1d4ed8">Month ✓</button>
+            <button class="mock-button" style="font-size:0.6rem;padding:3px 8px">Date</button>
+            <button class="mock-button" style="font-size:0.6rem;padding:3px 8px;background:#1d4ed8">Occasion ✓</button>
+            <button class="mock-button" style="font-size:0.6rem;padding:3px 8px">Not yet exported</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results header -->
+      <div style="padding:6px 10px;background:#162032;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #1e293b">
+        <span style="color:#93c5fd;font-size:0.65rem">12 results · 3 selected</span>
+        <div style="display:flex;gap:6px">
+          <button class="mock-button" style="font-size:0.6rem;padding:2px 8px;background:transparent;border:1px solid #475569;color:#94a3b8">Select all 12</button>
+          <button class="mock-button" style="font-size:0.6rem;padding:2px 8px;background:transparent;border:1px solid #475569;color:#94a3b8">Deselect all</button>
+        </div>
+      </div>
+
+      <!-- Result list -->
+      <div style="padding:6px 8px;display:flex;flex-direction:column;gap:3px;max-height:240px;overflow:hidden">
+
+        <div style="background:#1e293b;border-radius:4px;padding:7px 8px;display:flex;gap:8px;align-items:center;border:1px solid #3b82f6">
+          <div style="width:14px;height:14px;background:#3b82f6;border-radius:3px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="color:#fff;font-size:0.55rem">✓</span>
+          </div>
+          <div style="flex:1">
+            <div style="color:#f1f5f9">田中 太郎</div>
+            <div style="color:#64748b;font-size:0.6rem">NXT · CEO · 2026-04-12</div>
+          </div>
+          <span style="background:#1a3a2a;color:#4ade80;font-size:0.52rem;padding:2px 5px;border-radius:3px">Odoo</span>
+        </div>
+
+        <div style="background:#1e293b;border-radius:4px;padding:7px 8px;display:flex;gap:8px;align-items:center;border:1px solid #3b82f6">
+          <div style="width:14px;height:14px;background:#3b82f6;border-radius:3px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="color:#fff;font-size:0.55rem">✓</span>
+          </div>
+          <div style="flex:1">
+            <div style="color:#f1f5f9">山田 花子</div>
+            <div style="color:#64748b;font-size:0.6rem">ABC · Sales · 2026-04-12</div>
+          </div>
+        </div>
+
+        <div style="background:#1e293b;border-radius:4px;padding:7px 8px;display:flex;gap:8px;align-items:center">
+          <div style="width:14px;height:14px;border:2px solid #475569;border-radius:3px;flex-shrink:0"></div>
+          <div style="flex:1">
+            <div style="color:#f1f5f9">佐藤 次郎</div>
+            <div style="color:#64748b;font-size:0.6rem">DEF Inc. · Engineer · 2026-04-10</div>
+          </div>
+          <div style="display:flex;gap:2px">
+            <span style="background:#1a3a2a;color:#4ade80;font-size:0.52rem;padding:2px 5px;border-radius:3px">Odoo</span>
+            <span style="background:#1a2a3a;color:#60a5fa;font-size:0.52rem;padding:2px 5px;border-radius:3px">Google</span>
+          </div>
+        </div>
+
+        <div style="background:#1e293b;border-radius:4px;padding:7px 8px;display:flex;gap:8px;align-items:center;border:1px solid #3b82f6">
+          <div style="width:14px;height:14px;background:#3b82f6;border-radius:3px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="color:#fff;font-size:0.55rem">✓</span>
+          </div>
+          <div style="flex:1">
+            <div style="color:#f1f5f9">鈴木 一郎</div>
+            <div style="color:#64748b;font-size:0.6rem">GHI · Director · 2026-04-08</div>
+          </div>
+        </div>
+
+        <div style="text-align:center;color:#475569;font-size:0.6rem;padding:4px">+ 8 more results</div>
+      </div>
+
+      <!-- Footer -->
+      <div style="padding:8px 10px;border-top:1px solid #1e293b">
+        <button class="mock-button" style="width:100%;padding:8px;background:#3b82f6;font-size:0.72rem;font-weight:600">
+          Next: Choose destinations (3 cards) →
+        </button>
+      </div>
+    </div>
+
+    <!-- Annotation -->
+    <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:10px;font-size:0.78rem">
+      <div style="background:#1e293b;border-radius:6px;padding:10px 12px">
+        <div style="color:#f1f5f9;font-weight:600;margin-bottom:4px">Filter chips</div>
+        <div style="color:#94a3b8;line-height:1.5">Active filters shown as dismissible chips. Tap "+ Filter" to add more. Available filters: Year, Month, Date, Occasion, and a quick "Not yet exported to any destination".</div>
+      </div>
+      <div style="background:#1e293b;border-radius:6px;padding:10px 12px">
+        <div style="color:#f1f5f9;font-weight:600;margin-bottom:4px">Text search</div>
+        <div style="color:#94a3b8;line-height:1.5">Searches across all text fields: name (all languages), company, title, department, email, phone, address, notes.</div>
+      </div>
+      <div style="background:#1e293b;border-radius:6px;padding:10px 12px">
+        <div style="color:#f1f5f9;font-weight:600;margin-bottom:4px">Select all / Deselect all</div>
+        <div style="color:#94a3b8;line-height:1.5">Applies only to current filtered results — not to all cards in the database. Individual rows can then be toggled on or off.</div>
+      </div>
+      <div style="background:#1e293b;border-radius:6px;padding:10px 12px">
+        <div style="color:#f1f5f9;font-weight:600;margin-bottom:4px">Sync badges</div>
+        <div style="color:#94a3b8;line-height:1.5">Subtle badges show which destinations this card has already been exported to. Informational only — doesn't block re-export.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div style="margin-top:16px;background:#0f172a;border-radius:6px;padding:12px;font-size:0.78rem;color:#94a3b8">
+  <strong style="color:#f1f5f9">Does this look right?</strong> Filter by month/year/occasion/text → results list → select all or pick individually → proceed to destination screen. Any filters or interactions you'd like to add or change?
+</div>

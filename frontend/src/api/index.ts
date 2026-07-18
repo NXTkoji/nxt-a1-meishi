@@ -64,6 +64,9 @@ export const getPerson = (id: string) => get<Person>(`/api/v2/persons/${id}`)
 
 export const deletePerson = (personExtId: string) => del(`/api/v2/persons/${personExtId}`)
 
+export const mergePersons = (primaryExtId: string, sourceIds: string[]) =>
+  post<import('../types').MergeResult>(`/api/v2/persons/${primaryExtId}/merge`, { source_ids: sourceIds })
+
 export const updatePersonName = (personExtId: string, nameId: number, body: { full_name?: string; family_name?: string; given_name?: string }) =>
   patch<import('../types').PersonName>(`/api/v2/persons/${personExtId}/names/${nameId}`, body)
 

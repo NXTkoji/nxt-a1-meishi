@@ -263,15 +263,28 @@ def _fill_row_gaps(crops: list[dict]) -> list[dict]:
 
 
 def _sort_quad_points(pts: np.ndarray) -> np.ndarray:
-    """Sort 4 points into [top-left, top-right, bottom-right, bottom-left] order."""
-    # Sum and diff of coordinates
-    s = pts.sum(axis=1)
-    d = np.diff(pts, axis=1).ravel()
-    tl = pts[np.argmin(s)]
-    br = pts[np.argmax(s)]
-    tr = pts[np.argmin(d)]
-    bl = pts[np.argmax(d)]
-    return np.array([tl, tr, br, bl], dtype=np.float32)
+    """
+    Sort 4 points into [top-left, top-right, bottom-right, bottom-left] order.
+
+    Works correctly for rotated cards by sorting points by angle from centroid,
+    starting from top-left and moving clockwise.
+    """
+    # Compute centroid
+    cx = np.mean(pts[:, 0])
+    cy = np.mean(pts[:, 1])
+
+    # Compute angle from centroid to each point
+    # atan2 returns angle in [-π, π]; we adjust to start from top-left (-135°)
+    angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
+
+    # Rotate angles so 0° starts at top-left (-135° in standard coords)
+    # and we go clockwise (TL → TR → BR → BL)
+    angles = angles - np.pi * 0.75  # shift so -135° becomes 0°
+    angles = np.where(angles < 0, angles + 2 * np.pi, angles)
+
+    # Sort points by angle
+    sorted_indices = np.argsort(angles)
+    return pts[sorted_indices].astype(np.float32)
 
 
 # ── Card background brightness ────────────────────────────────────────────────
@@ -889,7 +902,18 @@ def detect_corners_from_seed(
     img_bgr = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 30, 100)
+
+    # Adaptive Canny thresholds based on image brightness
+    # Dark images need lower thresholds; bright images need higher thresholds
+    gray_mean = float(blurred.mean())
+    if gray_mean < 80:      # Dark image
+        low, high = 20, 60
+    elif gray_mean < 150:   # Medium image
+        low, high = 30, 100
+    else:                   # Bright image
+        low, high = 50, 150
+
+    edges = cv2.Canny(blurred, low, high)
 
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 

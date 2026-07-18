@@ -141,6 +141,23 @@ const translations = {
     confirmDeletePerson: 'この人物とそのデータをすべて削除しますか？\\n\\n※ 関連する名刺には影響しません。',
     personDeleted: '人物を削除しました',
 
+    // Merge
+    selectPersonsBtn: '選択',
+    cancelSelectBtn: 'キャンセル',
+    selectedN: (n: number) => `${n} 件選択中`,
+    mergeSelectedBtn: (n: number) => `${n} 件をマージ`,
+    mergeModalTitle: 'どのレコードを残しますか？',
+    mergeModalConfirmTitle: (name: string) => `「${name}」にマージしますか？`,
+    mergeModalConfirmBody: (n: number) => `他の ${n} 件のレコードから名刺・名前・連絡先を移動します。それらのレコードは削除されます。`,
+    mergeConfirmBtn: 'マージする',
+    mergingBtn: 'マージ中…',
+    mergeSucceeded: 'マージしました',
+    mergeDuplicatesFound: (n: number) => `${n} 件の重複連絡先が見つかりました — 確認してください`,
+    mergeError: 'マージに失敗しました',
+
+    deleteCardBtn: 'この名刺を削除',
+    confirmDeleteCard: 'この名刺を削除しますか？この操作は取り消せません。',
+
     thumbnailNameLabel: 'サムネイル表示名',
     thumbnailNameAuto: '自動',
 
@@ -340,6 +357,23 @@ const translations = {
     deletePersonBtn: 'Delete person',
     confirmDeletePerson: 'Delete this person and all their data?\\n\\nNote: their business cards will not be deleted.',
     personDeleted: 'Person deleted',
+
+    // Merge
+    selectPersonsBtn: 'Select',
+    cancelSelectBtn: 'Cancel',
+    selectedN: (n: number) => `${n} selected`,
+    mergeSelectedBtn: (n: number) => `Merge ${n} persons`,
+    mergeModalTitle: 'Which record is primary?',
+    mergeModalConfirmTitle: (name: string) => `Merge into "${name}"?`,
+    mergeModalConfirmBody: (n: number) => `Cards, names, and contact details from the other ${n} record${n !== 1 ? 's' : ''} will be moved here. Those records will be permanently deleted.`,
+    mergeConfirmBtn: 'Confirm Merge',
+    mergingBtn: 'Merging…',
+    mergeSucceeded: 'Merged successfully',
+    mergeDuplicatesFound: (n: number) => `${n} duplicate contact detail${n !== 1 ? 's' : ''} found — review below`,
+    mergeError: 'Merge failed',
+
+    deleteCardBtn: 'Delete this card',
+    confirmDeleteCard: 'Delete this card? This cannot be undone.',
 
     thumbnailNameLabel: 'Thumbnail name',
     thumbnailNameAuto: 'Auto',

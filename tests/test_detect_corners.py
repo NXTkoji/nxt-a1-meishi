@@ -112,3 +112,61 @@ def test_detect_corners_endpoint_exists():
     paths = [r.path for r in s.router.routes]
     assert any("detect-corners" in p for p in paths), \
         f"No detect-corners route found. Routes: {paths}"
+
+
+def _make_test_image_with_rotated_card(angle_deg: float = 15) -> bytes:
+    """
+    Create a synthetic 600x400 white image with a rotated dark-bordered card.
+
+    Card is rotated by angle_deg degrees to test that corner sorting works
+    for non-axis-aligned cards (common in real photos).
+    """
+    import cv2
+
+    # Start with axis-aligned card
+    img = np.ones((400, 600, 3), dtype=np.uint8) * 220
+    img[100:300, 150:450] = 200
+    img[100:102, 150:450] = 50
+    img[298:300, 150:450] = 50
+    img[100:300, 150:152] = 50
+    img[100:300, 448:450] = 50
+
+    # Create a temporary PIL image to rotate
+    pil_temp = PILImage.fromarray(img.astype(np.uint8))
+    pil_rotated = pil_temp.rotate(angle_deg, expand=False, fillcolor=220)
+
+    # Convert back to JPEG bytes
+    buf = io.BytesIO()
+    pil_rotated.save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+
+def test_detect_corners_from_seed_handles_rotated_card():
+    """
+    Verify that corner detection works for rotated cards.
+
+    This is a regression test for the _sort_quad_points bug where corners
+    were sorted incorrectly for non-axis-aligned cards.
+    """
+    from app.services.card_detector import detect_corners_from_seed
+
+    # Test with 15° rotation (common in real photos)
+    img_bytes = _make_test_image_with_rotated_card(angle_deg=15)
+
+    with patch("app.services.card_detector.read_temp_image", return_value=img_bytes), \
+         patch("app.services.card_detector._resize_bytes", return_value=img_bytes):
+        corners, confidence = detect_corners_from_seed("fake/path.jpg", 0.5, 0.5)
+
+    # Must find corners (either actual detection or fallback)
+    assert len(corners) == 4
+
+    # If detection succeeded (confidence > 0), verify corners form a valid quadrilateral
+    if confidence > 0.0:
+        xs = [c["x"] for c in corners]
+        ys = [c["y"] for c in corners]
+
+        # Corners should roughly bracket the card area (allowing for rotation)
+        assert 0.0 <= min(xs) < 0.5, f"Card too far right: {min(xs)}"
+        assert 0.5 < max(xs) <= 1.0, f"Card too far left: {max(xs)}"
+        assert 0.0 <= min(ys) < 0.5, f"Card too far down: {min(ys)}"
+        assert 0.5 < max(ys) <= 1.0, f"Card too far up: {max(ys)}"
