@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -11,6 +12,15 @@ logger = logging.getLogger(__name__)
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 PEOPLE_API = "https://people.googleapis.com/v1"
+
+# Retry transient failures — a handful of production syncs have hit bare
+# httpx.ReadTimeout (connection just stalls, nothing to inspect) and
+# succeeded immediately on a second attempt. Also retry Google's own
+# rate-limit/server-error statuses; don't retry other 4xx (e.g. a malformed
+# body) since retrying an identical request won't change the outcome.
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 1.0
 
 
 async def _get_access_token() -> str:
@@ -125,6 +135,29 @@ async def sync_to_google(card: Card, existing_resource: str | None = None) -> st
         logger.warning("Google Contacts not configured, skipping")
         return None
 
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            return await _sync_to_google_once(card, existing_resource)
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            retryable, last_exc = True, exc
+        except httpx.HTTPStatusError as exc:
+            retryable = exc.response.status_code in _RETRYABLE_STATUS
+            last_exc = exc
+
+        if not retryable or attempt == _MAX_ATTEMPTS:
+            raise last_exc
+
+        delay = _RETRY_BACKOFF_SECONDS * attempt
+        logger.warning(
+            "Google Contacts sync attempt %d/%d failed (%r), retrying in %.0fs",
+            attempt, _MAX_ATTEMPTS, last_exc, delay,
+        )
+        await asyncio.sleep(delay)
+
+
+async def _sync_to_google_once(card: Card, existing_resource: str | None) -> str | None:
+    """Single create/update attempt — re-fetches token, body, and etag fresh
+    each call so a retry never reuses a stale etag from a prior attempt."""
     token = await _get_access_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body = _build_person_body(card)
