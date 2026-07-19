@@ -506,7 +506,7 @@ class FieldCorrection(Base):
 
 class CardSyncHistory(Base):
     """
-    Records every manual export event.
+    Records every sync event, manual export or automatic background sync.
     destination values: odoo, google_contacts, onedrive
     result values: created, updated, error
     """

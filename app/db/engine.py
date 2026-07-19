@@ -36,4 +36,8 @@ from sqlalchemy import event as sa_event
 sa_event.listen(engine.sync_engine, "connect", lambda conn, _: (
     conn.execute("PRAGMA journal_mode=WAL"),
     conn.execute("PRAGMA foreign_keys=ON"),
+    # Background-task auto-sync (contact_sync.py) now opens a DB session per
+    # card save, so concurrent writers are more common than before — wait up
+    # to 5s for a lock instead of failing immediately.
+    conn.execute("PRAGMA busy_timeout=5000"),
 ))
