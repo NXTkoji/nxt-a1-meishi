@@ -15,3 +15,4 @@ aiosqlite==0.20.0
 alembic==1.14.0
 opencv-python-headless
 greenlet
+pytest==9.1.1
