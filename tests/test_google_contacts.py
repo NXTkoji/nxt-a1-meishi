@@ -1,6 +1,7 @@
 import asyncio
 
 import httpx
+import pytest
 
 from app.models.card import Card as LegacyCard, Person as LegacyPerson
 from app.services.google_contacts import _build_person_body, sync_to_google
@@ -132,3 +133,123 @@ def test_sync_to_google_create_does_not_fetch_etag(monkeypatch):
     asyncio.run(sync_to_google(card, existing_resource=None))
 
     assert get_called["value"] is False
+
+
+def test_sync_to_google_retries_on_read_timeout_then_succeeds(monkeypatch):
+    """Regression test: production has hit bare httpx.ReadTimeout (connection
+    stalls, no response at all) that succeeded immediately on a second
+    attempt. sync_to_google must retry transient network errors instead of
+    propagating the first failure.
+    """
+    from app.config import settings
+    from app.services import google_contacts
+
+    monkeypatch.setattr(settings, "google_client_id", "cid")
+    monkeypatch.setattr(settings, "google_client_secret", "csecret")
+    monkeypatch.setattr(settings, "google_refresh_token", "rtoken")
+    monkeypatch.setattr(google_contacts, "_RETRY_BACKOFF_SECONDS", 0)
+
+    call_count = {"value": 0}
+
+    async def fake_post(self, url, **kwargs):
+        if "oauth2.googleapis.com" in url:
+            return httpx.Response(200, json={"access_token": "atoken"}, request=httpx.Request("POST", url))
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            raise httpx.ReadTimeout("")
+        return httpx.Response(200, json={"resourceName": "people/c123"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    card = LegacyCard(person=LegacyPerson())
+    resource = asyncio.run(sync_to_google(card, existing_resource=None))
+
+    assert resource == "people/c123"
+    assert call_count["value"] == 2
+
+
+def test_sync_to_google_gives_up_after_max_attempts(monkeypatch):
+    """Persistent transient failure must eventually surface as an error
+    (background caller records it in CardSyncHistory), not retry forever.
+    """
+    from app.config import settings
+    from app.services import google_contacts
+
+    monkeypatch.setattr(settings, "google_client_id", "cid")
+    monkeypatch.setattr(settings, "google_client_secret", "csecret")
+    monkeypatch.setattr(settings, "google_refresh_token", "rtoken")
+    monkeypatch.setattr(google_contacts, "_RETRY_BACKOFF_SECONDS", 0)
+
+    call_count = {"value": 0}
+
+    async def fake_post(self, url, **kwargs):
+        if "oauth2.googleapis.com" in url:
+            return httpx.Response(200, json={"access_token": "atoken"}, request=httpx.Request("POST", url))
+        call_count["value"] += 1
+        raise httpx.ReadTimeout("")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    card = LegacyCard(person=LegacyPerson())
+    with pytest.raises(httpx.ReadTimeout):
+        asyncio.run(sync_to_google(card, existing_resource=None))
+
+    assert call_count["value"] == google_contacts._MAX_ATTEMPTS
+
+
+def test_sync_to_google_does_not_retry_permanent_400(monkeypatch):
+    """A malformed-request 400 is not transient — retrying an identical
+    request wastes time and API quota without changing the outcome.
+    """
+    from app.config import settings
+    from app.services import google_contacts
+
+    monkeypatch.setattr(settings, "google_client_id", "cid")
+    monkeypatch.setattr(settings, "google_client_secret", "csecret")
+    monkeypatch.setattr(settings, "google_refresh_token", "rtoken")
+    monkeypatch.setattr(google_contacts, "_RETRY_BACKOFF_SECONDS", 0)
+
+    call_count = {"value": 0}
+
+    async def fake_post(self, url, **kwargs):
+        if "oauth2.googleapis.com" in url:
+            return httpx.Response(200, json={"access_token": "atoken"}, request=httpx.Request("POST", url))
+        call_count["value"] += 1
+        return httpx.Response(400, json={"error": {"message": "bad request"}}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    card = LegacyCard(person=LegacyPerson())
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(sync_to_google(card, existing_resource=None))
+
+    assert call_count["value"] == 1
+
+
+def test_sync_to_google_retries_on_503(monkeypatch):
+    """Google's own server-error/rate-limit statuses are transient too."""
+    from app.config import settings
+    from app.services import google_contacts
+
+    monkeypatch.setattr(settings, "google_client_id", "cid")
+    monkeypatch.setattr(settings, "google_client_secret", "csecret")
+    monkeypatch.setattr(settings, "google_refresh_token", "rtoken")
+    monkeypatch.setattr(google_contacts, "_RETRY_BACKOFF_SECONDS", 0)
+
+    call_count = {"value": 0}
+
+    async def fake_post(self, url, **kwargs):
+        if "oauth2.googleapis.com" in url:
+            return httpx.Response(200, json={"access_token": "atoken"}, request=httpx.Request("POST", url))
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            return httpx.Response(503, text="unavailable", request=httpx.Request("POST", url))
+        return httpx.Response(200, json={"resourceName": "people/c123"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    card = LegacyCard(person=LegacyPerson())
+    resource = asyncio.run(sync_to_google(card, existing_resource=None))
+
+    assert resource == "people/c123"
+    assert call_count["value"] == 2
