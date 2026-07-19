@@ -48,6 +48,11 @@ class Social(BaseModel):
     line: str = ""
 
 
+class PersonRelation(BaseModel):
+    type: str = ""  # relationship_types.key, e.g. "introduced_by", "partner"
+    name: str = ""  # the other person's display name
+
+
 class Person(BaseModel):
     names: list[PersonName] = Field(default_factory=list)
     positions: list[Position] = Field(default_factory=list)
@@ -56,6 +61,7 @@ class Person(BaseModel):
     addresses: list[Address] = Field(default_factory=list)
     website: str = ""
     social: Social = Field(default_factory=Social)
+    relations: list[PersonRelation] = Field(default_factory=list)
 
 
 class MatchResult(BaseModel):
@@ -76,7 +82,11 @@ class Card(BaseModel):
     id: str = ""
     scanned_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     received_date: str = ""  # date card was received (user can override)
+    received_location: str = ""
     notes: str = ""
+    occasion_name: str = ""
+    occasion_location: str = ""
+    met_as: str = ""  # MyCompany.name — which of the user's own companies/roles
     images: CardImages = Field(default_factory=CardImages)
     person: Person = Field(default_factory=Person)
     match: MatchResult = Field(default_factory=MatchResult)

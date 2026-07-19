@@ -21,8 +21,8 @@ interface Props {
   cardCount: number
   onComplete: (polygons: Point[][]) => void
   onCancel: () => void
-  /** If provided, activates tap mode. Called with the tap seed; resolves corners + confidence. */
-  onDetectCorners?: (seed: Point) => Promise<{ corners: Point[]; confidence: number }>
+  /** If provided, activates tap mode. Called with the tap seed and already-defined polygons; resolves corners + confidence. */
+  onDetectCorners?: (seed: Point, existing: Point[][]) => Promise<{ corners: Point[]; confidence: number }>
 }
 
 const COLORS = ['#ef4444', '#f97316', '#22c55e', '#3b82f6', '#a855f7', '#ec4899']
@@ -93,6 +93,29 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
     { x: Math.min(a.x, b.x), y: Math.max(a.y, b.y) },
   ]
 
+  // Ray-casting point-in-polygon test (normalized coords).
+  const pointInPolygon = (pt: Point, poly: Polygon): boolean => {
+    let inside = false
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y
+      const xj = poly[j].x, yj = poly[j].y
+      const intersect =
+        (yi > pt.y) !== (yj > pt.y) &&
+        pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi
+      if (intersect) inside = !inside
+    }
+    return inside
+  }
+
+  const centroid = (poly: Polygon): Point => ({
+    x: poly.reduce((s, p) => s + p.x, 0) / poly.length,
+    y: poly.reduce((s, p) => s + p.y, 0) / poly.length,
+  })
+
+  // True if a point falls inside any already-defined card outline.
+  const insideExistingCard = (pt: Point): boolean =>
+    polygons.some(poly => pointInPolygon(pt, poly))
+
   const getClientPos = (e: React.MouseEvent | React.TouchEvent) => {
     if ('touches' in e) {
       const t = e.touches[0] ?? e.changedTouches[0]
@@ -110,10 +133,16 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
     const seed = toNorm(clientX, clientY)
     if (!seed || !onDetectCorners) return
 
+    // Block-outright: a tap inside an already-defined card must not spawn a new candidate.
+    if (insideExistingCard(seed)) {
+      setDetectError('That card is already outlined')
+      return
+    }
+
     setDetecting(true)
     setDetectError(null)
     try {
-      const { corners, confidence } = await onDetectCorners(seed)
+      const { corners, confidence } = await onDetectCorners(seed, polygons)
       if (corners.length !== 4) throw new Error('Unexpected corner count from server')
       setPolygons(prev => [...prev, corners as Polygon])
       setPolyMeta(prev => [...prev, { confidence }])
@@ -132,6 +161,7 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
     const { clientX, clientY } = getClientPos(e)
     const pt = toNorm(clientX, clientY)
     if (!pt) return
+    setDetectError(null)
     setDragStart(pt)
     setDragEnd(pt)
   }
@@ -166,8 +196,14 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
     const dx = Math.abs(dragEnd.x - dragStart.x)
     const dy = Math.abs(dragEnd.y - dragStart.y)
     if (dx > 0.01 && dy > 0.01) {
-      setPolygons(prev => [...prev, rectFromPoints(dragStart, dragEnd)])
-      setPolyMeta(prev => [...prev, { confidence: 1.0 }])
+      const rect = rectFromPoints(dragStart, dragEnd)
+      // Block-outright: a box centered on an already-defined card must not spawn a new candidate.
+      if (insideExistingCard(centroid(rect))) {
+        setDetectError('That card is already outlined')
+      } else {
+        setPolygons(prev => [...prev, rect])
+        setPolyMeta(prev => [...prev, { confidence: 1.0 }])
+      }
     }
     setDragStart(null)
     setDragEnd(null)

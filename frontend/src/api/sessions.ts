@@ -63,14 +63,20 @@ export const detectCorners = (
   sid: string,
   imgId: number,
   seed: Point,
+  existingPolygons: Point[][] = [],
 ): Promise<DetectCornersResult> =>
-  post(`${BASE}/${sid}/images/${imgId}/detect-corners`, { x: seed.x, y: seed.y })
+  post(`${BASE}/${sid}/images/${imgId}/detect-corners`, {
+    x: seed.x,
+    y: seed.y,
+    existing_polygons: existingPolygons,
+  })
 
 export const rotateImage = (
   sid: string,
   imgId: number,
+  direction: 'cw' | 'ccw' = 'cw',
 ): Promise<{ id: number; image_filename: string }> =>
-  post(`${BASE}/${sid}/images/${imgId}/rotate`)
+  post(`${BASE}/${sid}/images/${imgId}/rotate?direction=${direction}`)
 
 export const cropImage = (
   sid: string,

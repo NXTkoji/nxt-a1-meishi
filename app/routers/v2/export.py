@@ -22,12 +22,14 @@ from sqlalchemy.orm import selectinload
 from app.auth import verify_api_key
 from app.db.models import (
     Card,
+    CardMyCompany,
     CardSyncHistory,
     ContactDetail,
     Organization,
     OrganizationName,
     Person,
     PersonName,
+    PersonRelationship,
     Position,
     PositionDetail,
 )
@@ -61,6 +63,7 @@ def _build_legacy_card(
         Email,
         Person as LegacyPerson,
         PersonName as LegacyName,
+        PersonRelation as LegacyRelation,
         Phone,
         Position as LegacyPosition,
         Social,
@@ -127,6 +130,15 @@ def _build_legacy_card(
         elif t == "social_linkedin":
             social.linkedin = cd.value
 
+    relations = []
+    for rel in person.relationships_from:
+        to_name = next(
+            (n.full_name for n in rel.to_person.names if n.is_current and n.name_type == "primary"),
+            next((n.full_name for n in rel.to_person.names if n.is_current), ""),
+        )
+        if to_name:
+            relations.append(LegacyRelation(type=rel.relationship_type.key, name=to_name))
+
     legacy_person = LegacyPerson(
         names=names,
         positions=legacy_positions,
@@ -135,9 +147,25 @@ def _build_legacy_card(
         addresses=addresses,
         website=website,
         social=social,
+        relations=relations,
     )
 
-    return LegacyCard(person=legacy_person)
+    occasion_name = db_card.occasion.name if db_card.occasion else ""
+    occasion_location = db_card.occasion.location or "" if db_card.occasion else ""
+    met_as = next(
+        (link.my_company.name for link in db_card.my_company_links),
+        "",
+    )
+
+    return LegacyCard(
+        received_date=str(db_card.received_date) if db_card.received_date else "",
+        received_location=db_card.received_location or "",
+        notes=db_card.notes or "",
+        occasion_name=occasion_name,
+        occasion_location=occasion_location,
+        met_as=met_as,
+        person=legacy_person,
+    )
 
 
 async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
@@ -146,6 +174,8 @@ async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
         .where(Card.external_id == card_ext_id, Card.deleted_at.is_(None))
         .options(
             selectinload(Card.sides),
+            selectinload(Card.occasion),
+            selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
             selectinload(Card.person).selectinload(Person.names),
             selectinload(Card.person).selectinload(Person.contact_details),
             selectinload(Card.person).selectinload(Person.positions)
@@ -153,6 +183,11 @@ async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
             selectinload(Card.person).selectinload(Person.positions)
                 .selectinload(Position.organization)
                 .selectinload(Organization.names),
+            selectinload(Card.person).selectinload(Person.relationships_from)
+                .selectinload(PersonRelationship.relationship_type),
+            selectinload(Card.person).selectinload(Person.relationships_from)
+                .selectinload(PersonRelationship.to_person)
+                .selectinload(Person.names),
         )
     )
 

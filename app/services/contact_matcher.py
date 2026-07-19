@@ -37,6 +37,16 @@ THRESH_NAME_EX = 0.85
 THRESH_NAME_FZ = 0.60
 REPORT_MINIMUM = 0.55   # below this we return no match
 
+# Name cross-validation: when a contact-detail match (email/phone) is found,
+# we check how well the matched person's name resembles any name on the card.
+# A name_sim of 0 means completely different people — e.g. a shared company
+# email, or a card with multiple people's phone numbers. The penalty scales
+# linearly from no-penalty (sim >= NAME_XVAL_OK) to full-penalty (sim == 0).
+NAME_XVAL_OK      = 0.5   # sim above this → no penalty applied
+NAME_XVAL_FLOOR   = 0.45  # penalised confidence is capped at this floor
+                           # (keeps it below THRESH_PHONE but above REPORT_MINIMUM
+                           # so the match is still surfaced as a low-confidence hint)
+
 
 # ---------------------------------------------------------------------------
 # Normalization helpers
@@ -162,6 +172,63 @@ async def _find_by_name(
     return best
 
 
+async def _best_name_similarity(
+    db: AsyncSession, person_id: int, card_names: List[str]
+) -> float:
+    """
+    Return the highest name similarity between any stored name for person_id
+    and any name on the card.  Returns 0.0 if card_names is empty.
+
+    Uses the same CJK-bigram + substring logic as _find_by_name so results
+    are comparable.  Latin names fall back to substring containment (0.70 if
+    one contains the other, else 0.0).
+    """
+    if not card_names:
+        return 0.0
+
+    rows = await db.execute(
+        select(PersonName.full_name).where(
+            PersonName.person_id == person_id,
+            PersonName.is_current == True,  # noqa: E712
+        )
+    )
+    stored_names = [r for (r,) in rows if r]
+    if not stored_names:
+        return 0.0
+
+    best_sim = 0.0
+    for card_name in card_names:
+        norm_c = _normalize_name(card_name)
+        for stored in stored_names:
+            norm_s = _normalize_name(stored)
+            if norm_c == norm_s:
+                return 1.0
+            sim = _trigram_similarity(norm_c, norm_s)
+            if sim > best_sim:
+                best_sim = sim
+            # Latin substring containment
+            if norm_c and norm_s and (norm_c in norm_s or norm_s in norm_c):
+                if 0.70 > best_sim:
+                    best_sim = 0.70
+    return best_sim
+
+
+def _apply_name_penalty(base_confidence: float, name_sim: float) -> float:
+    """
+    Penalise a contact-detail match when name similarity is low.
+
+    sim >= NAME_XVAL_OK  → no change
+    sim == 0             → confidence capped at NAME_XVAL_FLOOR
+    in between           → linear interpolation
+    """
+    if name_sim >= NAME_XVAL_OK:
+        return base_confidence
+    # t goes from 1 (sim=0) to 0 (sim=NAME_XVAL_OK)
+    t = 1.0 - (name_sim / NAME_XVAL_OK)
+    penalised = base_confidence - t * (base_confidence - NAME_XVAL_FLOOR)
+    return max(penalised, NAME_XVAL_FLOOR)
+
+
 async def _display_name(db: AsyncSession, person_id: int) -> str:
     name = await db.scalar(
         select(PersonName.full_name)
@@ -205,33 +272,49 @@ async def find_match(db: AsyncSession, card: ParsedCard) -> MatchResult:
     hit = await _find_by_email(db, emails)
     if hit:
         person_id, matched = hit
+        name_sim = await _best_name_similarity(db, person_id, names)
+        conf = _apply_name_penalty(THRESH_EMAIL, name_sim)
         display = await _display_name(db, person_id)
         ext_id = await _external_id(db, person_id)
-        logger.info("Email match: %s → person %d", matched, person_id)
-        return MatchResult(
-            is_existing=True,
-            person_id=person_id,
-            person_external_id=ext_id,
-            match_confidence=THRESH_EMAIL,
-            match_method="email",
-            matched_name=display,
+        logger.info(
+            "Email match: %s → person %d (name_sim=%.2f, conf=%.2f)",
+            matched, person_id, name_sim, conf,
         )
+        if conf < REPORT_MINIMUM:
+            logger.info("Email match suppressed: name mismatch too large")
+        else:
+            return MatchResult(
+                is_existing=True,
+                person_id=person_id,
+                person_external_id=ext_id,
+                match_confidence=conf,
+                match_method="email",
+                matched_name=display,
+            )
 
     # 2. Phone
     hit = await _find_by_phone(db, phones)
     if hit:
         person_id, matched = hit
+        name_sim = await _best_name_similarity(db, person_id, names)
+        conf = _apply_name_penalty(THRESH_PHONE, name_sim)
         display = await _display_name(db, person_id)
         ext_id = await _external_id(db, person_id)
-        logger.info("Phone match: %s → person %d", matched, person_id)
-        return MatchResult(
-            is_existing=True,
-            person_id=person_id,
-            person_external_id=ext_id,
-            match_confidence=THRESH_PHONE,
-            match_method="phone",
-            matched_name=display,
+        logger.info(
+            "Phone match: %s → person %d (name_sim=%.2f, conf=%.2f)",
+            matched, person_id, name_sim, conf,
         )
+        if conf < REPORT_MINIMUM:
+            logger.info("Phone match suppressed: name mismatch too large")
+        else:
+            return MatchResult(
+                is_existing=True,
+                person_id=person_id,
+                person_external_id=ext_id,
+                match_confidence=conf,
+                match_method="phone",
+                matched_name=display,
+            )
 
     # 3. Name
     hit = await _find_by_name(db, names)

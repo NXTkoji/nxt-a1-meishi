@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSV + Image Export — Design Spec</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 800px; margin: 48px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.6; }
+    h1 { font-size: 1.6rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 12px; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; color: #111; }
+    h3 { font-size: 1rem; margin-top: 1.5rem; color: #374151; }
+    h4 { font-size: 0.9rem; margin-top: 1.2rem; color: #6b7280; font-family: monospace; }
+    p { margin: 0.6rem 0; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.875rem; font-family: "SF Mono", monospace; }
+    pre { background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th { background: #f9fafb; text-align: left; padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; }
+    td { padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; vertical-align: top; }
+    ul, ol { padding-left: 1.4rem; margin: 0.5rem 0; }
+    li { margin: 0.25rem 0; }
+    .date { color: #9ca3af; font-size: 0.85rem; margin-top: -8px; margin-bottom: 24px; }
+    .badge-new { background: #dbeafe; color: #1d4ed8; font-size: 0.7rem; font-weight: 600; padding: 1px 6px; border-radius: 9999px; vertical-align: middle; margin-left: 6px; }
+    .badge-existing { background: #f3f4f6; color: #6b7280; font-size: 0.7rem; font-weight: 600; padding: 1px 6px; border-radius: 9999px; vertical-align: middle; margin-left: 6px; }
+    section { margin-bottom: 2rem; }
+  </style>
+</head>
+<body>
+
+  <h1>CSV + Image Export — Design Spec</h1>
+  <p class="date">2026-05-31</p>
+
+  <section>
+    <h2>Overview</h2>
+    <p>Add two new download-based export destinations alongside the existing direct-push destinations (Odoo XML-RPC, Google Contacts API). Users can select any combination of destinations in the existing ExportDestinationSelector UI.</p>
+  </section>
+
+  <section>
+    <h2>Destinations</h2>
+    <table>
+      <thead>
+        <tr><th>Key</th><th>Label</th><th>Type</th><th>Behavior</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>odoo</code></td>
+          <td>Odoo <span class="badge-existing">existing</span></td>
+          <td>Direct push</td>
+          <td>XML-RPC push to Odoo</td>
+        </tr>
+        <tr>
+          <td><code>google_contacts</code></td>
+          <td>Google Contacts <span class="badge-existing">existing</span></td>
+          <td>Direct push</td>
+          <td>Google People API push</td>
+        </tr>
+        <tr>
+          <td><code>odoo_export</code></td>
+          <td>Odoo Export (CSV + Images) <span class="badge-new">new</span></td>
+          <td>Download</td>
+          <td>Downloads CSV + individual card images (front/back per card)</td>
+        </tr>
+        <tr>
+          <td><code>google_csv</code></td>
+          <td>Google Contacts CSV <span class="badge-new">new</span></td>
+          <td>Download</td>
+          <td>Downloads CSV formatted for Google Contacts import</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Backend</h2>
+
+    <h3>New endpoints</h3>
+
+    <h4>GET /api/v2/export/csv</h4>
+    <p>Query params:</p>
+    <ul>
+      <li><code>card_ids</code> — comma-separated list of card external IDs</li>
+      <li><code>format</code> — <code>odoo</code> or <code>google_contacts</code></li>
+    </ul>
+    <p>Returns <code>text/csv</code> with <code>Content-Disposition: attachment; filename=contacts_odoo.csv</code> (or <code>contacts_google.csv</code>). No images included. Missing or empty fields produce empty CSV cells.</p>
+
+    <h4>GET /api/v2/export/image/{card_id}/{side}</h4>
+    <ul>
+      <li><code>card_id</code> — card external ID</li>
+      <li><code>side</code> — <code>front</code> or <code>back</code></li>
+    </ul>
+    <p>Returns the image file with:</p>
+    <ul>
+      <li><code>Content-Type: image/jpeg</code> (or detected MIME type)</li>
+      <li><code>Content-Disposition: attachment; filename=山田太郎_front.jpg</code></li>
+    </ul>
+    <p>Where the filename uses the contact's primary name. Returns 404 if the card doesn't exist or that side has no image.</p>
+
+    <h3>New file: <code>app/services/csv_export.py</code></h3>
+    <p>Two pure functions operating on a list of <code>LegacyCard</code> objects (same type used by <code>odoo_sync.py</code> and <code>google_contacts.py</code>):</p>
+
+    <p><strong><code>format_odoo_csv(cards: list[Card]) -> str</code></strong></p>
+    <p>Columns matching Odoo's standard contact import format:</p>
+    <p><code>Name</code>, <code>Company Name</code>, <code>Job Position</code>, <code>Department</code>, <code>Phone</code>, <code>Mobile</code>, <code>Email</code>, <code>Website</code>, <code>Street</code>, <code>City</code>, <code>Zip</code>, <code>Country</code>, <code>Notes</code></p>
+
+    <p><strong><code>format_google_csv(cards: list[Card]) -> str</code></strong></p>
+    <p>Columns matching Google Contacts import format:</p>
+    <p><code>Name</code>, <code>Given Name</code>, <code>Family Name</code>, <code>Organization Name</code>, <code>Organization Title</code>, <code>Phone 1 - Value</code>, <code>Phone 1 - Type</code>, <code>E-mail 1 - Value</code>, <code>Address 1 - Street</code>, <code>Address 1 - City</code>, <code>Address 1 - Postal Code</code>, <code>Address 1 - Country</code>, <code>Notes</code></p>
+
+    <p>Both functions use Python's stdlib <code>csv</code> module. No images included.</p>
+
+    <h3>Router: <code>app/routers/v2/export.py</code></h3>
+    <p>Add the two new GET endpoints to the existing export router. Card loading reuses <code>_load_full_card()</code> and <code>_build_legacy_card()</code> already defined in that file.</p>
+  </section>
+
+  <section>
+    <h2>Frontend</h2>
+
+    <h3><code>ExportDestinationSelector.tsx</code></h3>
+    <p>Add <code>download: boolean</code> flag to the <code>Destination</code> interface. Updated <code>DESTINATIONS</code>:</p>
+    <pre><code>const DESTINATIONS: Destination[] = [
+  { key: 'odoo',            label: 'Odoo',                       configured: true, download: false },
+  { key: 'google_contacts', label: 'Google Contacts',            configured: true, download: false },
+  { key: 'odoo_export',     label: 'Odoo Export (CSV + Images)', configured: true, download: true  },
+  { key: 'google_csv',      label: 'Google Contacts CSV',        configured: true, download: true  },
+]</code></pre>
+
+    <p><strong>Export button behavior:</strong></p>
+    <ol>
+      <li><strong>Direct-push destinations</strong> (<code>download: false</code>) — call existing <code>runExport</code> API, show result badges as today.</li>
+      <li><strong>Download destinations</strong> (<code>download: true</code>) — handled client-side, no <code>runExport</code> call:
+        <ul>
+          <li><code>odoo_export</code>: fetch <code>/api/v2/export/csv?card_ids=...&amp;format=odoo</code> → trigger download, then fetch <code>/api/v2/export/image/{id}/front</code> and <code>/api/v2/export/image/{id}/back</code> for each card sequentially → trigger download for each 200 response.</li>
+          <li><code>google_csv</code>: fetch <code>/api/v2/export/csv?card_ids=...&amp;format=google_contacts</code> → trigger download.</li>
+        </ul>
+      </li>
+    </ol>
+    <p>Downloads use a temporary <code>&lt;a href=blob download=filename&gt;</code> click pattern. Sequential image downloads avoid the browser's multi-download permission prompt.</p>
+
+    <p><strong>Result display:</strong></p>
+    <ul>
+      <li>Direct-push results: existing badge UI (created / updated / error).</li>
+      <li>Download destinations: inline status — "✓ Downloaded" or "✗ Failed" per destination.</li>
+      <li>Both can appear together when the user selects a mix.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What's not included</h2>
+    <ul>
+      <li>Card images are not embedded in CSV files (for either format).</li>
+      <li>Google Contacts CSV has no image column — Google doesn't support image import via CSV.</li>
+      <li>No ZIP packaging — individual files only.</li>
+      <li>The existing direct-push Odoo and Google Contacts destinations are unchanged.</li>
+    </ul>
+  </section>
+
+</body>
+</html>

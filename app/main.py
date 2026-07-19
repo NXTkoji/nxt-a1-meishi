@@ -6,7 +6,7 @@ from pathlib import Path
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.routers import scan, confirm, contacts
@@ -89,5 +89,8 @@ if _FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
-        index = _FRONTEND_DIST / "index.html"
-        return FileResponse(str(index), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+        # FileResponse uses aiofiles (async I/O) which fails on Google Drive FUSE.
+        # Synchronous read_bytes() works reliably on Drive-backed paths.
+        content = (_FRONTEND_DIST / "index.html").read_bytes()
+        return Response(content=content, media_type="text/html",
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
