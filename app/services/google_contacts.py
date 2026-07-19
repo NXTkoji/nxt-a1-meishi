@@ -31,15 +31,16 @@ def _build_person_body(card: Card) -> dict:
     person = card.person
     body: dict = {}
 
-    # Names
-    names = []
-    for n in person.names:
-        entry: dict = {"unstructuredName": n.value}
-        if n.type == "primary":
-            entry["metadata"] = {"primary": True}
-        names.append(entry)
-    if names:
-        body["names"] = names
+    # Names — the People API rejects more than one names[] entry per source,
+    # so send only the primary name and put any others in nicknames[] instead.
+    primary_name = next((n for n in person.names if n.type == "primary"), None)
+    if not primary_name and person.names:
+        primary_name = person.names[0]
+    other_names = [n.value for n in person.names if n is not primary_name and n.value]
+    if primary_name:
+        body["names"] = [{"unstructuredName": primary_name.value, "metadata": {"primary": True}}]
+    if other_names:
+        body["nicknames"] = [{"value": v} for v in other_names]
 
     # Organizations
     orgs = []
@@ -146,7 +147,7 @@ async def sync_to_google(card: Card, existing_resource: str | None = None) -> st
                 f"{PEOPLE_API}/{existing_resource}:updateContact",
                 headers=headers,
                 json=body,
-                params={"updatePersonFields": "names,organizations,phoneNumbers,emailAddresses,addresses,urls,biographies,userDefined"},
+                params={"updatePersonFields": "names,nicknames,organizations,phoneNumbers,emailAddresses,addresses,urls,biographies,userDefined"},
             )
         else:
             resp = await client.post(
