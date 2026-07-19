@@ -24,13 +24,10 @@ from app.db.models import (
     Card,
     CardMyCompany,
     CardSyncHistory,
-    ContactDetail,
     Organization,
-    OrganizationName,
     Person,
-    PersonName,
+    PersonRelationship,
     Position,
-    PositionDetail,
 )
 from app.db.session import get_db
 from app.schemas.api import ExportRequest, ExportResponse, ExportResultItem
@@ -52,6 +49,8 @@ async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
         .where(Card.external_id == card_ext_id, Card.deleted_at.is_(None))
         .options(
             selectinload(Card.sides),
+            selectinload(Card.occasion),
+            selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
             selectinload(Card.person).selectinload(Person.names),
             selectinload(Card.person).selectinload(Person.contact_details),
             selectinload(Card.person).selectinload(Person.positions)
@@ -59,7 +58,11 @@ async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
             selectinload(Card.person).selectinload(Person.positions)
                 .selectinload(Position.organization)
                 .selectinload(Organization.names),
-            selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
+            selectinload(Card.person).selectinload(Person.relationships_from)
+                .selectinload(PersonRelationship.relationship_type),
+            selectinload(Card.person).selectinload(Person.relationships_from)
+                .selectinload(PersonRelationship.to_person)
+                .selectinload(Person.names),
         )
     )
 

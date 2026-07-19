@@ -19,6 +19,7 @@ def build_legacy_card(
         Email,
         Person as LegacyPerson,
         PersonName as LegacyName,
+        PersonRelation as LegacyRelation,
         Phone,
         Position as LegacyPosition,
         Social,
@@ -77,6 +78,15 @@ def build_legacy_card(
         elif t == "social_linkedin":
             social.linkedin = cd.value
 
+    relations = []
+    for rel in person.relationships_from:
+        to_name = next(
+            (n.full_name for n in rel.to_person.names if n.is_current and n.name_type == "primary"),
+            next((n.full_name for n in rel.to_person.names if n.is_current), ""),
+        )
+        if to_name:
+            relations.append(LegacyRelation(type=rel.relationship_type.key, name=to_name))
+
     legacy_person = LegacyPerson(
         names=names,
         positions=legacy_positions,
@@ -85,6 +95,7 @@ def build_legacy_card(
         addresses=addresses,
         website=website,
         social=social,
+        relations=relations,
     )
 
     # Raw, unsorted, not deduped — google_contacts.py's _build_person_body
@@ -95,9 +106,15 @@ def build_legacy_card(
         for link in db_card.my_company_links
     ]
 
+    occasion_name = db_card.occasion.name if db_card.occasion else ""
+    occasion_location = db_card.occasion.location or "" if db_card.occasion else ""
+
     return LegacyCard(
         person=legacy_person,
         received_date=str(db_card.received_date) if db_card.received_date else "",
+        received_location=db_card.received_location or "",
         notes=db_card.notes or "",
         my_company_labels=my_company_labels,
+        occasion_name=occasion_name,
+        occasion_location=occasion_location,
     )

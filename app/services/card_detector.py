@@ -863,6 +863,7 @@ def detect_corners_from_seed(
     temp_relative_path: str,
     seed_x: float,
     seed_y: float,
+    existing_polygons: list[list[dict]] | None = None,
 ) -> tuple[list[dict], float]:
     """
     Find the 4 corners of the business card nearest the seed point.
@@ -903,41 +904,84 @@ def detect_corners_from_seed(
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Adaptive Canny thresholds based on image brightness
-    # Dark images need lower thresholds; bright images need higher thresholds
-    gray_mean = float(blurred.mean())
-    if gray_mean < 80:      # Dark image
-        low, high = 20, 60
-    elif gray_mean < 150:   # Medium image
-        low, high = 30, 100
-    else:                   # Bright image
-        low, high = 50, 150
+    # Use low Canny thresholds so dark-card boundaries (moderate gradient) are
+    # detected. The global image mean is not a reliable signal here — a photo
+    # with a dark card on a grey table has mean ≈ 150 but the card edge gradient
+    # is only ~30-60 Sobel magnitude. Higher thresholds miss those edges.
+    edges = cv2.Canny(blurred, 20, 80)
 
-    edges = cv2.Canny(blurred, low, high)
+    # Dilate edges to close gaps in the card boundary.
+    # Dark cards have a nearly-complete outer edge ring from Canny but with
+    # gaps — especially along the card-background transition where the contrast
+    # gradient is gradual. Without closing those gaps, findContours can't find
+    # a single closed loop that encloses the card interior. 8 iterations of
+    # 3×3 dilation bridges gaps up to ~17 px while still leaving interior
+    # features (text, logos) as separate, smaller regions.
+    k_dil = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    edges = cv2.dilate(edges, k_dil, iterations=8)
 
+    # Erase the interiors of already-defined card outlines from the edge map.
+    # This breaks multi-card spanning contours that form when dilation bridges
+    # adjacent card edges. We erode the mask by 3px so the shared boundary
+    # between an existing card and the new card is preserved as a Canny edge.
+    if existing_polygons:
+        exclude_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+        for poly in existing_polygons:
+            pts = np.array(
+                [[int(p["x"] * img_w), int(p["y"] * img_h)] for p in poly],
+                dtype=np.int32,
+            )
+            cv2.fillPoly(exclude_mask, [pts], 255)
+        k_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        exclude_mask = cv2.erode(exclude_mask, k_erode, iterations=3)
+        edges[exclude_mask > 0] = 0
+        logger.info(
+            "detect_corners_from_seed: masked %d existing polygon(s) from edge map",
+            len(existing_polygons),
+        )
+
+    # RETR_LIST finds all contours. We filter by:
+    # 1. Area 1%–85% of image
+    # 2. Contains seed point
+    # 3. Aspect ratio within business-card range (0.25–2.5) — rejects header
+    #    bands and other sub-card rectangles that are too wide/short
+    # 4. Smallest area wins — tightest single-card match, avoids multi-card spanning contours.
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Cards must be at least 1% of image area to filter out noise
     MIN_AREA = img_w * img_h * 0.01
+    MAX_AREA = img_w * img_h * 0.85
+    ASPECT_MIN, ASPECT_MAX = 0.25, 2.5  # standard cards: ~0.6 (portrait) or ~1.64 (landscape)
+    seed_brightness = float(blurred[seed_py, seed_px])
 
     best_quad: np.ndarray | None = None
-    best_area = 0.0
+    best_area = float('inf')  # pick smallest valid quad (single card, not multi-card spanning contour)
+
+    logger.info(
+        "detect_corners_from_seed v4: seed_px=(%d,%d) brightness=%.0f img=%dx%d contours=%d",
+        seed_px, seed_py, seed_brightness, img_w, img_h, len(contours),
+    )
 
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < MIN_AREA:
+        if area < MIN_AREA or area > MAX_AREA:
             continue
-        # Only consider contours that actually contain the seed point
         if cv2.pointPolygonTest(contour, (float(seed_px), float(seed_py)), False) < 0:
             continue
-        # Try successively looser epsilon until we get a 4-point approximation
         arc = cv2.arcLength(contour, True)
-        for eps_factor in (0.02, 0.04, 0.06, 0.08):
+        for eps_factor in (0.02, 0.04, 0.06, 0.08, 0.10, 0.15):
             approx = cv2.approxPolyDP(contour, eps_factor * arc, True)
             if len(approx) == 4:
-                if area > best_area:
+                pts = approx.reshape(4, 2).astype(np.float32)
+                x_ext = float(pts[:, 0].max() - pts[:, 0].min())
+                y_ext = float(pts[:, 1].max() - pts[:, 1].min())
+                ar = (x_ext / y_ext) if y_ext > 0 else 999.0
+                logger.info("  quad candidate: area=%.0f ar=%.2f %s",
+                            area, ar, "REJECTED" if ar < ASPECT_MIN or ar > ASPECT_MAX else "accepted")
+                if ar < ASPECT_MIN or ar > ASPECT_MAX:
+                    break  # bad aspect ratio — skip this contour
+                if area < best_area:
                     best_area = area
-                    best_quad = approx.reshape(4, 2).astype(np.float32)
+                    best_quad = pts
                 break
 
     if best_quad is not None:

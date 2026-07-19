@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_refresh_token: str = ""
 
+    # Google Drive (image backup)
+    google_drive_folder_id: str = ""
+    google_drive_images_folder_id: str = ""
+
     # Microsoft Graph (OneDrive)
     ms_client_id: str = ""
     ms_client_secret: str = ""
