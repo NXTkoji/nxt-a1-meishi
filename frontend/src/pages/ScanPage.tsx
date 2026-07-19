@@ -293,6 +293,12 @@ export function ScanPage() {
     return m ? parseInt(m[1], 10) : null
   }
 
+  // Extract the source prefix from a split filename (e.g. "IMG_6433_card2.jpg" → "IMG_6433")
+  const getSourcePrefix = (filename: string): string | null => {
+    const m = filename.match(/^(.+)_card\d+\./i)
+    return m ? m[1] : null
+  }
+
   // "Pair by position": group images by their _cardN suffix.
   // Images with the same position number (from different source photos) become
   // front/back sides of the same card group.
@@ -302,32 +308,72 @@ export function ScanPage() {
     return positions.length >= 2 && new Set(positions).size < positions.length
   })()
 
+  // True when some ungrouped images have _cardN suffix and some do not — mixing
+  // cropped splits with uncropped originals would give wrong pairing results.
+  const hasMixedCropState = (() => {
+    if (!canAutoPairByPos) return false
+    // Collect the source prefixes of all cropped (_cardN) images
+    const croppedPrefixes = new Set(
+      ungrouped
+        .map(i => getSourcePrefix(i.image_filename))
+        .filter((p): p is string => p !== null)
+    )
+    if (croppedPrefixes.size === 0) return false
+    // An un-suffixed image is "problematically uncropped" only if its base name
+    // matches a source prefix that also produced cropped siblings.
+    return ungrouped.some(i => {
+      if (getCardPos(i.image_filename) !== null) return false  // is itself cropped
+      const base = i.image_filename.replace(/\.[^.]+$/, '')   // strip extension
+      return croppedPrefixes.has(base)
+    })
+  })()
+
   const autoPairByPosition = async () => {
     const keepGroups = groups.filter(g => g.images.length > 0)
     setGroups(keepGroups)
     const imgs = [...ungrouped]
-    // Build a map from position index → images (preserving upload order as side order)
-    const byPos = new Map<number, SessionImage[]>()
-    const noPos: SessionImage[] = []
-    for (const img of imgs) {
-      const pos = getCardPos(img.image_filename)
-      if (pos !== null) {
-        if (!byPos.has(pos)) byPos.set(pos, [])
-        byPos.get(pos)!.push(img)
-      } else {
-        noPos.push(img)
+
+    // Separate images with _cardN suffix from those without
+    const withPos = imgs.filter(i => getCardPos(i.image_filename) !== null)
+    const noPos   = imgs.filter(i => getCardPos(i.image_filename) === null)
+
+    // Collect unique source prefixes in first-appearance order (= upload order)
+    const prefixOrder: string[] = []
+    const prefixSet = new Set<string>()
+    for (const img of withPos) {
+      const p = getSourcePrefix(img.image_filename)!
+      if (!prefixSet.has(p)) { prefixSet.add(p); prefixOrder.push(p) }
+    }
+
+    // Build lookup: prefix → position → image
+    const byPrefixPos = new Map<string, Map<number, SessionImage>>()
+    for (const img of withPos) {
+      const p   = getSourcePrefix(img.image_filename)!
+      const pos = getCardPos(img.image_filename)!
+      if (!byPrefixPos.has(p)) byPrefixPos.set(p, new Map())
+      byPrefixPos.get(p)!.set(pos, img)
+    }
+
+    // Pair source prefixes in consecutive pairs (front+back per batch).
+    // e.g. [A, B, C, D] → (A,B) and (C,D)
+    // Odd trailing prefix becomes single-sided cards.
+    for (let pi = 0; pi < prefixOrder.length; pi += 2) {
+      const prefA = prefixOrder[pi]
+      const prefB = pi + 1 < prefixOrder.length ? prefixOrder[pi + 1] : null
+      const posA  = byPrefixPos.get(prefA)!
+      const allPositions = [...posA.keys()].sort((a, b) => a - b)
+
+      for (const pos of allPositions) {
+        const id = crypto.randomUUID()
+        setGroups(prev => [...prev, newGroup(id)])
+        await assignToGroup(posA.get(pos)!, id, 0)
+        if (prefB) {
+          const posB = byPrefixPos.get(prefB)?.get(pos)
+          if (posB) await assignToGroup(posB, id, 1)
+        }
       }
     }
-    // Sort positions so Card #1 = smallest _cardN
-    const sortedPositions = [...byPos.keys()].sort((a, b) => a - b)
-    for (const pos of sortedPositions) {
-      const group = byPos.get(pos)!
-      const id = crypto.randomUUID()
-      setGroups(prev => [...prev, newGroup(id)])
-      for (let si = 0; si < group.length; si++) {
-        await assignToGroup(group[si], id, si)
-      }
-    }
+
     // Images without a _cardN suffix each become their own single-sided card
     for (const img of noPos) {
       const id = crypto.randomUUID()
@@ -408,9 +454,9 @@ export function ScanPage() {
     }
   }
 
-  const handleRotate = async (img: SessionImage) => {
+  const handleRotate = async (img: SessionImage, direction: 'cw' | 'ccw' = 'cw') => {
     if (!session) return
-    await rotateImage(session.external_id, img.id)
+    await rotateImage(session.external_id, img.id, direction)
     setImgCacheBust(prev => ({ ...prev, [img.id]: Date.now() }))
   }
 
@@ -448,8 +494,8 @@ export function ScanPage() {
       if (!toGroup) return
       const newSideOrder = toGroup.images.length
       await updateImageGroup(session.external_id, imgId, toGroupId, newSideOrder)
-      setGroups(prev =>
-        prev.map(g => {
+      setGroups(prev => {
+        const updated = prev.map(g => {
           if (g.tempCardId === fromGroupId) {
             const remaining = g.images.filter(i => i.id !== imgId)
             return { ...g, images: remaining }
@@ -458,8 +504,10 @@ export function ScanPage() {
             return { ...g, images: [...g.images, { ...img, temp_card_id: toGroupId, side_order: newSideOrder }] }
           }
           return g
-        }),
-      )
+        })
+        // Auto-delete the source group if it's now empty
+        return updated.filter(g => g.tempCardId !== fromGroupId || g.images.length > 0)
+      })
     },
     [session, groups],
   )
@@ -616,8 +664,8 @@ export function ScanPage() {
         cardCount={outlineTarget.count}
         onComplete={handleOutlineComplete}
         onCancel={() => setOutlineTarget(null)}
-        onDetectCorners={(seed) =>
-          detectCorners(session.external_id, outlineTarget.img.id, seed)
+        onDetectCorners={(seed, existing) =>
+          detectCorners(session.external_id, outlineTarget.img.id, seed, existing)
         }
       />
     )}
@@ -667,6 +715,11 @@ export function ScanPage() {
               )}
             </div>
           </div>
+          {hasMixedCropState && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              ⚠️ {t.mixedCropWarning}
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             {ungrouped.map(img => (
               <div
@@ -693,6 +746,13 @@ export function ScanPage() {
                     title={t.splitCards}
                   >
                     {splittingIds.has(img.id) ? '…' : '✂️'}
+                  </button>
+                  <button
+                    className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
+                    onClick={() => handleRotate(img, 'ccw')}
+                    title="Rotate 90° counter-clockwise"
+                  >
+                    ↺
                   </button>
                   <button
                     className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
@@ -732,6 +792,12 @@ export function ScanPage() {
               </div>
             )}
           </div>
+
+          {stage === 'grouping' && groups.length >= 2 && (
+            <p className="text-xs text-gray-400">
+              Tip: Drag an image from one card into another card to pair them as front and back.
+            </p>
+          )}
 
           {groups.map((group, gi) => (
             <CardGroupCard
@@ -788,8 +854,21 @@ export function ScanPage() {
                   )
                 )
               }
+              onRotateImage={handleRotate}
             />
           ))}
+
+          {stage === 'grouping' && (
+            <div className="flex justify-end pt-2">
+              <button
+                disabled={groups.every(g => g.images.length === 0)}
+                onClick={startAnalysis}
+                className="btn-primary text-sm"
+              >
+                {t.startAnalysis}
+              </button>
+            </div>
+          )}
         </section>
       )}
 
@@ -908,6 +987,7 @@ function OccasionPicker({
   const qc = useQueryClient()
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
+  const isComposing = useRef(false)
 
   const addMutation = useMutation({
     mutationFn: (name: string) => createOccasion({ name }),
@@ -954,8 +1034,10 @@ function OccasionPicker({
             type="text"
             value={newName}
             onChange={e => setNewName(e.target.value)}
+            onCompositionStart={() => { isComposing.current = true }}
+            onCompositionEnd={() => { isComposing.current = false }}
             onKeyDown={e => {
-              if (e.key === 'Enter' && newName.trim()) addMutation.mutate(newName.trim())
+              if (e.key === 'Enter' && newName.trim() && !isComposing.current) addMutation.mutate(newName.trim())
               if (e.key === 'Escape') { setAdding(false); setNewName('') }
             }}
             placeholder={t.occasionNewPlaceholder}
@@ -985,7 +1067,7 @@ function OccasionPicker({
 function CardGroupCard({
   group, index, sessionId, companies, occasions, stage,
   splittingIds, splitFeedback, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
-  onDupNotDuplicate, onDupDiscard, onDupMerge, isManual,
+  onDupNotDuplicate, onDupDiscard, onDupMerge, onRotateImage, isManual,
 }: {
   group: CardGroup
   index: number
@@ -1007,11 +1089,13 @@ function CardGroupCard({
   onDupNotDuplicate: (groupId: string) => void
   onDupDiscard: (groupId: string) => void
   onDupMerge: (groupId: string, mergedCard: ParsedCard) => void
+  onRotateImage: (img: SessionImage, direction?: 'cw' | 'ccw') => void
   isManual?: boolean
 }) {
   const { t } = useLang()
   const [cropImg, setCropImg] = useState<SessionImage | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [localCacheBust, setLocalCacheBust] = useState<Record<number, number>>({})
   const canDragDrop = stage === 'grouping' || stage === 'review'
 
   const sideLabel = (order: number) => {
@@ -1076,6 +1160,7 @@ function CardGroupCard({
         >
           {!isManual && (
             <>
+          <div className={`flex gap-2 flex-wrap ${stage === 'review' ? 'flex-col' : 'flex-row'}`}>
           {group.images
             .slice()
             .sort((a, b) => (a.side_order ?? 0) - (b.side_order ?? 0))
@@ -1091,27 +1176,51 @@ function CardGroupCard({
                 } : undefined}
               >
                 <LightboxImage
-                  src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}`}
+                  src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${localCacheBust[img.id] ? `?t=${localCacheBust[img.id]}` : ''}`}
                   alt={`side ${img.side_order}`}
                   className="h-28 w-auto rounded border border-gray-200 object-contain bg-gray-50"
                 />
                 <p className="text-xs text-gray-400 mt-1">{sideLabel(img.side_order ?? 0)}</p>
-                {stage === 'grouping' && (
+                {(stage === 'grouping' || stage === 'review') && (
                   <div className="flex gap-0.5 justify-center mt-0.5">
+                    {stage === 'grouping' && (
+                      <>
+                        <button
+                          className="bg-yellow-100 text-xs px-1.5 py-0.5 rounded text-yellow-700 hover:bg-yellow-400 hover:text-gray-900 disabled:opacity-50"
+                          disabled={splittingIds.has(img.id)}
+                          onClick={() => onSplitImage(img, group.tempCardId)}
+                          title={t.splitCards}
+                        >
+                          {splittingIds.has(img.id) ? '…' : '✂️'}
+                        </button>
+                        <button
+                          className="bg-blue-100 text-xs px-1.5 py-0.5 rounded text-blue-700 hover:bg-blue-500 hover:text-white"
+                          onClick={() => setCropImg(img)}
+                          title="Crop image"
+                        >
+                          ⬚
+                        </button>
+                      </>
+                    )}
                     <button
-                      className="bg-yellow-100 text-xs px-1.5 py-0.5 rounded text-yellow-700 hover:bg-yellow-400 hover:text-gray-900 disabled:opacity-50"
-                      disabled={splittingIds.has(img.id)}
-                      onClick={() => onSplitImage(img, group.tempCardId)}
-                      title={t.splitCards}
+                      className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
+                      onClick={async () => {
+                        await onRotateImage(img, 'ccw')
+                        setLocalCacheBust(prev => ({ ...prev, [img.id]: Date.now() }))
+                      }}
+                      title="Rotate 90° counter-clockwise"
                     >
-                      {splittingIds.has(img.id) ? '…' : '✂️'}
+                      ↺
                     </button>
                     <button
-                      className="bg-blue-100 text-xs px-1.5 py-0.5 rounded text-blue-700 hover:bg-blue-500 hover:text-white"
-                      onClick={() => setCropImg(img)}
-                      title="Crop image"
+                      className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
+                      onClick={async () => {
+                        await onRotateImage(img)
+                        setLocalCacheBust(prev => ({ ...prev, [img.id]: Date.now() }))
+                      }}
+                      title="Rotate 90° clockwise"
                     >
-                      ⬚
+                      ↻
                     </button>
                   </div>
                 )}
@@ -1127,6 +1236,7 @@ function CardGroupCard({
               <span className="text-xs text-gray-400">{t.emptySlot}</span>
             </div>
           )}
+          </div>
           {canDragDrop && group.images.length >= 2 && (
             <button
               className="text-xs text-gray-400 hover:text-gray-600 text-center py-0.5"

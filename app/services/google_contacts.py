@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -22,10 +23,52 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 1.0
 
+# Contact-group name -> resourceName, cached across calls within a batch run.
+_group_cache: dict[str, str] = {}
+_group_cache_loaded_at: float = 0.0
+_GROUP_CACHE_TTL = 300  # seconds
+
+
+def _parse_iso_date(value: str) -> dict | None:
+    """Parse a 'YYYY-MM-DD' string into a People API Date object."""
+    try:
+        year, month, day = (int(p) for p in value.split("-"))
+        return {"year": year, "month": month, "day": day}
+    except (ValueError, AttributeError):
+        return None
+
+
+async def _get_group_resource(client: httpx.AsyncClient, headers: dict, name: str) -> str | None:
+    """Look up a user-created Google Contact Group's resourceName by exact display name."""
+    global _group_cache_loaded_at
+    if not name:
+        return None
+    if not _group_cache or (time.monotonic() - _group_cache_loaded_at) > _GROUP_CACHE_TTL:
+        resp = await client.get(
+            f"{PEOPLE_API}/contactGroups",
+            headers=headers,
+            params={"groupFields": "name,groupType", "pageSize": 200},
+        )
+        resp.raise_for_status()
+        _group_cache.clear()
+        for g in resp.json().get("contactGroups", []):
+            if g.get("groupType") == "USER_CONTACT_GROUP":
+                _group_cache[g["name"]] = g["resourceName"]
+        _group_cache_loaded_at = time.monotonic()
+
+    resource = _group_cache.get(name)
+    if not resource:
+        logger.warning(
+            "No Google Contact Group named %r exists — ask Koji whether to create it "
+            "before this card's 'Met As' membership can be set.",
+            name,
+        )
+    return resource
+
 
 async def _get_access_token() -> str:
     """Exchange refresh token for a fresh access token."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(TOKEN_URL, data={
             "client_id": settings.google_client_id,
             "client_secret": settings.google_client_secret,
@@ -52,7 +95,9 @@ def _build_person_body(card: Card) -> dict:
     if other_names:
         body["nicknames"] = [{"value": v} for v in other_names]
 
-    # Organizations
+    # Organizations — native org/title as the primary entry; English company
+    # name (if any) as a second entry, since Google doesn't restrict
+    # organizations[] to one-per-source the way it does names[].
     orgs = []
     for pos in person.positions:
         org: dict = {}
@@ -64,6 +109,9 @@ def _build_person_body(card: Card) -> dict:
             org["title"] = pos.title
         if org:
             orgs.append(org)
+    english_company = next((pos.company_english for pos in person.positions if pos.company_english), "")
+    if english_company:
+        orgs.append({"name": english_company})
     if orgs:
         body["organizations"] = orgs
 
@@ -85,46 +133,71 @@ def _build_person_body(card: Card) -> dict:
     if emails:
         body["emailAddresses"] = emails
 
-    # Addresses
+    # Addresses — kept as a single formatted/street field rather than split
+    # into city/state/postal, per Koji's call.
     addresses = []
     for a in person.addresses:
         addr: dict = {"type": a.type or "work"}
         if a.full:
             addr["formattedValue"] = a.full
-        if a.street:
-            addr["streetAddress"] = a.street
-        if a.city:
-            addr["city"] = a.city
-        if a.state:
-            addr["region"] = a.state
-        if a.postal_code:
-            addr["postalCode"] = a.postal_code
-        if a.country:
-            addr["country"] = a.country
-        if a.country_code:
-            addr["countryCode"] = a.country_code
+            addr["streetAddress"] = a.full
         addresses.append(addr)
     if addresses:
         body["addresses"] = addresses
 
-    # Website
+    # URLs — website plus LinkedIn as a second entry.
+    urls = []
     if person.website:
-        body["urls"] = [{"value": person.website, "type": "work"}]
+        urls.append({"value": person.website, "type": "work"})
+    if person.social.linkedin:
+        urls.append({"value": person.social.linkedin, "type": "other", "formattedType": "LinkedIn"})
+    if urls:
+        body["urls"] = urls
 
-    # Notes (received date + card notes)
+    # IM clients — WeChat / LINE.
+    im_clients = []
+    if person.social.wechat:
+        im_clients.append({"username": person.social.wechat, "protocol": "WeChat"})
+    if person.social.line:
+        im_clients.append({"username": person.social.line, "protocol": "LINE"})
+    if im_clients:
+        body["imClients"] = im_clients
+
+    # Events — card received date as a labeled significant date.
+    received = _parse_iso_date(card.received_date) if card.received_date else None
+    if received:
+        body["events"] = [{"date": received, "type": "Card received"}]
+
+    # User-defined custom fields — occasion + received location.
+    user_defined = []
+    if card.occasion_name or card.occasion_location:
+        value = card.occasion_name
+        if card.occasion_location:
+            value = f"{value} ({card.occasion_location})" if value else card.occasion_location
+        user_defined.append({"key": "Occasion", "value": value})
+    if card.received_location:
+        user_defined.append({"key": "Received location", "value": card.received_location})
+    if user_defined:
+        body["userDefined"] = user_defined
+
+    # Relations — introduced_by, colleague, etc.
+    relations = [
+        {"person": r.name, "type": r.type}
+        for r in person.relations
+        if r.name and r.type
+    ]
+    if relations:
+        body["relations"] = relations
+
+    # Notes — English title (if any) plus card notes.
     note_parts = []
-    if card.received_date:
-        note_parts.append(f"Card received: {card.received_date}")
+    english_titles = [pos.title_english for pos in person.positions if pos.title_english]
+    if english_titles:
+        note_parts.append(f"English title: {'; '.join(english_titles)}")
     if card.notes:
         note_parts.append(card.notes)
     if note_parts:
         body["biographies"] = [{"value": "\n".join(note_parts), "contentType": "TEXT_PLAIN"}]
-
-    # Met As (which of the user's businesses this contact was met through)
-    if card.my_company_labels:
-        labels = sorted({label for label in card.my_company_labels if label})
-        if labels:
-            body["userDefined"] = [{"key": "Met As", "value": ", ".join(labels)}]
 
     return body
 
@@ -162,25 +235,48 @@ async def _sync_to_google_once(card: Card, existing_resource: str | None) -> str
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body = _build_person_body(card)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        if card.my_company_labels:
+            labels = sorted({label for label in card.my_company_labels if label})
+            group_resources = []
+            for label in labels:
+                group_resource = await _get_group_resource(client, headers, label)
+                if group_resource:
+                    group_resources.append(group_resource)
+            if group_resources:
+                # Keep the contact in the default "My Contacts" view as well —
+                # memberships[] replaces the whole set, it doesn't add to it.
+                body["memberships"] = [
+                    {"contactGroupMembership": {"contactGroupResourceName": "contactGroups/myContacts"}},
+                    *[{"contactGroupMembership": {"contactGroupResourceName": r}} for r in group_resources],
+                ]
+
         if existing_resource:
             # Google's People API rejects updateContact unless the request
             # includes the contact's current etag ("Request must set
             # person.etag..."), so fetch it first.
-            etag_resp = await client.get(
+            get_resp = await client.get(
                 f"{PEOPLE_API}/{existing_resource}",
                 headers=headers,
                 params={"personFields": "metadata"},
             )
-            etag_resp.raise_for_status()
-            body["etag"] = etag_resp.json()["etag"]
+            get_resp.raise_for_status()
+            body["etag"] = get_resp.json()["etag"]
+
+            # updatePersonFields must match exactly what's in the body — any
+            # field listed there but absent from the body gets cleared
+            # server-side (and Google rejects clearing memberships to empty).
+            # Computed from body.keys() rather than a hardcoded list so a new
+            # field added to _build_person_body can't be silently dropped on
+            # update by forgetting to also add it here.
+            update_fields = ",".join(k for k in body.keys() if k != "etag")
 
             # Update existing contact
             resp = await client.patch(
                 f"{PEOPLE_API}/{existing_resource}:updateContact",
                 headers=headers,
                 json=body,
-                params={"updatePersonFields": "names,nicknames,organizations,phoneNumbers,emailAddresses,addresses,urls,biographies,userDefined"},
+                params={"updatePersonFields": update_fields},
             )
         else:
             resp = await client.post(
@@ -189,7 +285,12 @@ async def _sync_to_google_once(card: Card, existing_resource: str | None) -> str
                 json=body,
             )
 
-        resp.raise_for_status()
+        if resp.is_error:
+            raise httpx.HTTPStatusError(
+                f"{resp.status_code} {resp.reason_phrase} for {resp.request.url}: {resp.text}",
+                request=resp.request,
+                response=resp,
+            )
         result = resp.json()
         resource_name = result.get("resourceName", "")
         logger.info("Google contact synced: %s", resource_name)

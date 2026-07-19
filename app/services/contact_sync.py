@@ -12,7 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.engine import AsyncSessionLocal
-from app.db.models import Card, CardMyCompany, CardSyncHistory, Organization, Person, Position
+from app.db.models import (
+    Card,
+    CardMyCompany,
+    CardSyncHistory,
+    Organization,
+    Person,
+    PersonRelationship,
+    Position,
+)
 from app.services.google_contacts import sync_to_google
 from app.services.legacy_card import build_legacy_card
 
@@ -61,6 +69,12 @@ async def auto_sync_card(card_id: int) -> None:
                         .selectinload(Position.organization)
                         .selectinload(Organization.names),
                     selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
+                    selectinload(Card.occasion),
+                    selectinload(Card.person).selectinload(Person.relationships_from)
+                        .selectinload(PersonRelationship.relationship_type),
+                    selectinload(Card.person).selectinload(Person.relationships_from)
+                        .selectinload(PersonRelationship.to_person)
+                        .selectinload(Person.names),
                 )
             )
             if card is None or card.deleted_at is not None:

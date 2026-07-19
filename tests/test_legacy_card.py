@@ -5,7 +5,7 @@ from app.db.session import get_db
 from app.main import app
 
 
-def test_build_legacy_card_carries_notes_date_and_met_as(client_with_test_db):
+def test_build_legacy_card_carries_notes_date_and_my_company_labels(client_with_test_db):
     from app.db.models import Card, CardMyCompany, MyCompany, Person
     from app.services.legacy_card import build_legacy_card
 
@@ -31,16 +31,19 @@ def test_build_legacy_card_carries_notes_date_and_met_as(client_with_test_db):
             db.add(CardMyCompany(card_id=card.id, my_company_id=nxt.id))
             db.add(CardMyCompany(card_id=card.id, my_company_id=unlabeled.id))
             await db.flush()
-            await db.refresh(card, attribute_names=["my_company_links"])
+            await db.refresh(card, attribute_names=["my_company_links", "occasion"])
             for link in card.my_company_links:
                 await db.refresh(link, attribute_names=["my_company"])
-            await db.refresh(person, attribute_names=["names"])
+            await db.refresh(person, attribute_names=["names", "relationships_from"])
 
             legacy = build_legacy_card(card, person, [], [])
 
             assert legacy.received_date == "2026-07-18"
             assert legacy.notes == "Met at trade show"
             assert sorted(legacy.my_company_labels) == ["NXT", "正康有限公司"]
+            assert legacy.occasion_name == ""
+            assert legacy.received_location == ""
+            assert legacy.person.relations == []
             break
 
     asyncio.run(_run())

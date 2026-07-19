@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 from typing import AsyncIterator, List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
@@ -220,8 +220,13 @@ async def crop_image(
 # ---------------------------------------------------------------------------
 
 @router.post("/{sid}/images/{img_id}/rotate")
-async def rotate_image(sid: str, img_id: int, db: AsyncSession = Depends(get_db)):
-    """Rotate the image 90° clockwise in-place."""
+async def rotate_image(
+    sid: str,
+    img_id: int,
+    direction: str = Query(default="cw", regex="^(cw|ccw)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rotate the image 90° clockwise or counter-clockwise in-place."""
     from PIL import Image as PILImage
     import io as _io
     from app.config import settings as _settings
@@ -239,7 +244,8 @@ async def rotate_image(sid: str, img_id: int, db: AsyncSession = Depends(get_db)
     path = _settings.temp_path / img.image_path
     raw = path.read_bytes()
     pil_img = PILImage.open(_io.BytesIO(raw)).convert("RGB")
-    rotated = pil_img.rotate(-90, expand=True)  # -90 = 90° clockwise
+    degrees = -90 if direction == "cw" else 90
+    rotated = pil_img.rotate(degrees, expand=True)
     buf = _io.BytesIO()
     rotated.save(buf, format="JPEG", quality=95)
     path.write_bytes(buf.getvalue())
@@ -341,6 +347,7 @@ class _Point(BaseModel):
 class DetectCornersRequest(BaseModel):
     x: float  # normalized [0, 1] tap x coordinate
     y: float  # normalized [0, 1] tap y coordinate
+    existing_polygons: list[list[_Point]] = []  # already-defined card outlines to mask out
 
 
 class DetectCornersResponse(BaseModel):
@@ -372,8 +379,12 @@ async def detect_corners(
     if not img:
         raise HTTPException(404, "Image not found in this session")
 
+    existing = [
+        [{"x": p.x, "y": p.y} for p in poly]
+        for poly in body.existing_polygons
+    ]
     corners, confidence = card_detector.detect_corners_from_seed(
-        img.image_path, body.x, body.y
+        img.image_path, body.x, body.y, existing
     )
     return DetectCornersResponse(
         corners=[_Point(x=c["x"], y=c["y"]) for c in corners],
