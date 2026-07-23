@@ -83,6 +83,7 @@ class Person(Base):
     )
     google_resource: Mapped[Optional[str]] = mapped_column(String(128))
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    birthday: Mapped[Optional[str]] = mapped_column(String(16))  # "YYYY-MM-DD" or "--MM-DD"
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
