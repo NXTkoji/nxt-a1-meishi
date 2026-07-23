@@ -566,6 +566,8 @@ git commit -m "feat: add Personal section + birthday i18n strings"
 **Files:**
 - Create: `frontend/src/components/BirthdayField.tsx`
 
+> **IMPORTANT (correction found during browser verification):** the component MUST hold the month/day/year in local `useState`, NOT derive them purely from the serialized `value` prop. A serialized birthday needs BOTH month and day, but the user picks them one dropdown at a time — a stateless component serializes a month-only selection to `""`, stores nothing, then reads month back as empty when the day is picked, making the birthday impossible to set. Keep local state as the source of truth for the controls and re-sync from `value` only on a genuine external change (compare `serializeBirthday(parts)` against `value`). See the shipped `frontend/src/components/BirthdayField.tsx` and commit "fix: BirthdayField must hold local state…" for the final version. The code block below is the original (buggy) draft, kept for context.
+
 - [ ] **Step 1: Create the component with pure serialize/deserialize helpers**
 
 Create `frontend/src/components/BirthdayField.tsx`:
