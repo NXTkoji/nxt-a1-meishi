@@ -85,6 +85,7 @@ _SCHEMA = """\
     }
   ],
   "card_date": "YYYY-MM-DD or null",
+  "birthday": "person's birthday as YYYY-MM-DD, or --MM-DD if only month/day is known, else null",
   "languages_detected": ["ja", "en"],
   "overall_confidence": 0.95
 }"""
@@ -223,6 +224,7 @@ def _build_parsed_card(data: dict) -> ParsedCard:
         positions=positions,
         contact_details=contact_details,
         card_date=data.get("card_date"),
+        birthday=data.get("birthday"),
         languages_detected=data.get("languages_detected", []),
         overall_confidence=float(data.get("overall_confidence", 1.0)),
     )
