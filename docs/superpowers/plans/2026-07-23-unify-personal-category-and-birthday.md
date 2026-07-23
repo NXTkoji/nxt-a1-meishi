@@ -22,7 +22,7 @@
 - `app/db/models.py` — add `birthday` column to the `Person` ORM model.
 - `migrations/versions/e1f2a3b4c5d6_add_birthday_to_persons.py` — new Alembic revision.
 - `app/routers/v2/sessions.py` — persist `parsed.birthday` onto the DB `Person`.
-- `app/routers/v2/export.py` — copy DB `person.birthday` into the export `Person`.
+- `app/services/legacy_card.py` — copy DB `person.birthday` into the export `Person` (shared by manual export + auto-sync).
 - `tests/test_birthday.py` — new pytest module covering schema, parser, and Google body.
 
 **Frontend (TypeScript/React):**
@@ -423,14 +423,16 @@ git commit -m "feat: persist parsed birthday onto Person on card confirm"
 
 ---
 
-## Task 7: Carry birthday into the export `Person` (`export.py`)
+## Task 7: Carry birthday into the export `Person`
 
 **Files:**
-- Modify: `app/routers/v2/export.py:142-151`
+- Modify: `app/services/legacy_card.py` — the `build_legacy_card(...)` function (the DB→legacy conversion).
+
+NOTE: The DB→legacy conversion lives in `app/services/legacy_card.py::build_legacy_card`, not inline in `export.py`. It is the single shared converter called by BOTH the manual export path (`app/routers/v2/export.py`) and the auto-sync path (`app/services/contact_sync.py`), so this one change covers Google sync on card create/update as well.
 
 - [ ] **Step 1: Pass birthday into `LegacyPerson`**
 
-In the DB→legacy conversion, add `birthday` to the `LegacyPerson(...)` construction (line 142):
+In the DB→legacy conversion, add `birthday` to the `LegacyPerson(...)` construction:
 
 ```python
     legacy_person = LegacyPerson(
