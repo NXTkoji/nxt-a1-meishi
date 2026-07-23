@@ -2,7 +2,8 @@
  * Review + edit a ParsedCard after Claude analysis.
  *
  * Layout:
- *   Personal N  ──  full/family/given + personal contacts (mobile, personal email, home, social, relationship)
+ *   Personal        ──  one section: all name variants (nested rows) + shared
+ *                       personal contacts (mobile, personal email, home, social, relationship) + birthday
  *   Organization N  ──  company/title/dept + work contacts (work phone, fax, work email, work address, website)
  *
  * Low-confidence fields (<0.7) are highlighted in yellow.
@@ -10,6 +11,7 @@
  */
 import { useState } from 'react'
 import { ConfidenceBadge } from './ConfidenceBadge'
+import { BirthdayField } from './BirthdayField'
 import { useLang } from '../LangContext'
 import type { ParsedCard, ParsedContactDetail, ParsedName, ParsedPosition } from '../types'
 
@@ -496,45 +498,56 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
   return (
     <div className="space-y-3 text-sm">
 
-      {/* Personal sections (formerly "Names") */}
-      {parsed.names.map((n, i) => (
-        <section key={i} className="rounded-lg border border-gray-200">
-          <div className="bg-gray-50 px-3 py-1.5 flex items-center gap-2">
-            <span className="font-medium text-xs text-gray-600">{t.nameSection(i + 1)}</span>
-            <span className="text-xs bg-gray-200 text-gray-600 rounded px-1">{n.language}</span>
-            <span className="text-xs text-gray-400">{n.name_type}</span>
-            {parsed.names.length > 1 && (
-              <button className="ml-auto text-xs text-red-400 hover:text-red-600" onClick={() => deleteName(i)}>
-                {t.removeLabel}
-              </button>
-            )}
-          </div>
-          <div className="px-3 pt-1">
-            <FieldRow label={t.fieldFullName} value={n.full_name.value} confidence={n.full_name.confidence} onEdit={v => setNameField(i, 'full_name', v)} onCommit={(old, nv) => onCorrection?.({ field_path: `names[${i}].full_name`, claude_value: old, user_value: nv, correction_type: 'field_value' })} />
-            {n.family_name && <FieldRow label={t.fieldFamilyName} value={n.family_name.value} confidence={n.family_name.confidence} onEdit={v => setNameField(i, 'family_name', v)} onCommit={(old, nv) => onCorrection?.({ field_path: `names[${i}].family_name`, claude_value: old, user_value: nv, correction_type: 'field_value' })} />}
-            {n.given_name && <FieldRow label={t.fieldGivenName} value={n.given_name.value} confidence={n.given_name.confidence} onEdit={v => setNameField(i, 'given_name', v)} onCommit={(old, nv) => onCorrection?.({ field_path: `names[${i}].given_name`, claude_value: old, user_value: nv, correction_type: 'field_value' })} />}
+      {/* Personal — one section: name variants + shared personal contacts + birthday */}
+      <section className="rounded-lg border border-gray-200">
+        <div className="bg-gray-50 px-3 py-1.5 flex items-center gap-2">
+          <span className="font-medium text-xs text-gray-600">{t.personalSection}</span>
+        </div>
+        <div className="px-3 pt-1">
 
-            {/* Personal contacts — only under first personal section */}
-            {i === 0 && (
-              <ContactSubSection
-                label={t.personalContactsLabel}
-                sectionKey="personal"
-                contacts={personalContacts}
-                availableTypes={PERSONAL_TYPES}
-                onEdit={setContact}
-                onDelete={deleteContact}
-                onAdd={addContact}
-                onMoveHere={payload => moveContact(payload, 'personal', 0)}
-                onEditCommit={(idx, old, nv) => onCorrection?.({ field_path: `contact_details[${idx}].value`, claude_value: old, user_value: nv, correction_type: 'field_value' })}
-              />
-            )}
-          </div>
-        </section>
-      ))}
+          {/* Name variants */}
+          {parsed.names.map((n, i) => (
+            <div key={i} className="border-b border-gray-100 pb-1 mb-1">
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-xs text-gray-400">{t.nameSection(i + 1)}</span>
+                <span className="text-xs bg-gray-200 text-gray-600 rounded px-1">{n.language}</span>
+                <span className="text-xs text-gray-400">{n.name_type}</span>
+                {parsed.names.length > 1 && (
+                  <button className="ml-auto text-xs text-red-400 hover:text-red-600" onClick={() => deleteName(i)}>
+                    {t.removeLabel}
+                  </button>
+                )}
+              </div>
+              <FieldRow label={t.fieldFullName} value={n.full_name.value} confidence={n.full_name.confidence} onEdit={v => setNameField(i, 'full_name', v)} onCommit={(old, nv) => onCorrection?.({ field_path: `names[${i}].full_name`, claude_value: old, user_value: nv, correction_type: 'field_value' })} />
+              {n.family_name && <FieldRow label={t.fieldFamilyName} value={n.family_name.value} confidence={n.family_name.confidence} onEdit={v => setNameField(i, 'family_name', v)} onCommit={(old, nv) => onCorrection?.({ field_path: `names[${i}].family_name`, claude_value: old, user_value: nv, correction_type: 'field_value' })} />}
+              {n.given_name && <FieldRow label={t.fieldGivenName} value={n.given_name.value} confidence={n.given_name.confidence} onEdit={v => setNameField(i, 'given_name', v)} onCommit={(old, nv) => onCorrection?.({ field_path: `names[${i}].given_name`, claude_value: old, user_value: nv, correction_type: 'field_value' })} />}
+            </div>
+          ))}
 
-      <button className="text-xs text-blue-500 hover:text-blue-700 pl-1" onClick={addName}>
-        {t.addNameLabel}
-      </button>
+          <button className="text-xs text-blue-500 hover:text-blue-700 pl-1" onClick={addName}>
+            {t.addNameLabel}
+          </button>
+
+          {/* Shared personal contacts (rendered once) */}
+          <ContactSubSection
+            label={t.personalContactsLabel}
+            sectionKey="personal"
+            contacts={personalContacts}
+            availableTypes={PERSONAL_TYPES}
+            onEdit={setContact}
+            onDelete={deleteContact}
+            onAdd={addContact}
+            onMoveHere={payload => moveContact(payload, 'personal', 0)}
+            onEditCommit={(idx, old, nv) => onCorrection?.({ field_path: `contact_details[${idx}].value`, claude_value: old, user_value: nv, correction_type: 'field_value' })}
+          />
+
+          {/* Birthday */}
+          <BirthdayField
+            value={parsed.birthday ?? ''}
+            onEdit={v => onChange({ ...parsed, birthday: v || undefined })}
+          />
+        </div>
+      </section>
 
       {/* Organizations */}
       {parsed.positions.map((pos, pi) => (
