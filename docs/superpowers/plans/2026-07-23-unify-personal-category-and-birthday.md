@@ -279,7 +279,7 @@ def _parse_birthday(value: str) -> dict | None:
         return None
     try:
         if value.startswith("--"):
-            _, month, day = value.split("-")  # "" , MM, DD
+            month, day = value[2:].split("-")  # strip leading "--", left with "MM-DD"
             return {"month": int(month), "day": int(day)}
         year, month, day = value.split("-")
         return {"year": int(year), "month": int(month), "day": int(day)}
