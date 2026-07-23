@@ -40,6 +40,7 @@ export interface ParsedCard {
   positions: ParsedPosition[]
   contact_details: ParsedContactDetail[]
   card_date?: string
+  birthday?: string
   notes?: string
   languages_detected: string[]
   overall_confidence: number
