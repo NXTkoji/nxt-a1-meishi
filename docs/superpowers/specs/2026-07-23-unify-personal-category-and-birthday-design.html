@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unify Personal Category + Birthday — Design Spec</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 800px; margin: 48px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.6; }
+    h1 { font-size: 1.6rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 12px; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; color: #111; }
+    h3 { font-size: 1rem; margin-top: 1.5rem; color: #374151; }
+    p { margin: 0.6rem 0; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.875rem; font-family: "SF Mono", monospace; }
+    pre { background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th { background: #f9fafb; text-align: left; padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; }
+    td { padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; vertical-align: top; }
+    ul, ol { padding-left: 1.4rem; margin: 0.5rem 0; }
+    li { margin: 0.3rem 0; }
+    .meta { color: #6b7280; font-size: 0.85rem; }
+    strong { color: #111; }
+  </style>
+</head>
+<body>
+  <h1>Unify "Personal" Category + Add Birthday Field</h1>
+  <p class="meta"><strong>Date:</strong> 2026-07-23 &nbsp;·&nbsp; <strong>Status:</strong> Design approved, pending implementation plan</p>
+
+  <h2>Problem</h2>
+  <p>The card review/edit UI (<code>ParsedCardEditor.tsx</code>) renders <strong>one "Personal N" section per name variant</strong>. A person with a Chinese name and an English name gets "Personal 1", "Personal 2", etc. This is misleading:</p>
+  <ul>
+    <li>The underlying data model already stores personal contacts (mobile, personal email, home address, socials, relationship) as a <strong>flat, person-level <code>contact_details[]</code> list</strong> — not per name.</li>
+    <li>The UI already renders those personal contacts <strong>only under the first name</strong> (<code>i === 0</code>), so "Personal 2" / "Personal 3" are empty name-variant boxes labeled "Personal", which reads as if each name has its own personal category.</li>
+  </ul>
+  <p>Separately, there is <strong>no birthday field</strong> anywhere in the pipeline (schema, models, parser, UI, or sync).</p>
+
+  <h2>Goals</h2>
+  <ol>
+    <li>Present a <strong>single "Personal" category</strong> per person, with the multiple name variants nested inside it and the person-level fields shown once.</li>
+    <li>Add a <strong>birthday</strong> field, stored in the app and synced to <strong>Google Contacts</strong>.</li>
+  </ol>
+
+  <h2>Non-Goals</h2>
+  <ul>
+    <li><strong>Odoo birthday sync.</strong> <code>res.partner</code> has no standard birthday field; we are not adding an <code>x_studio_birthday</code> custom field at this time.</li>
+    <li>No change to the personal/work contact partitioning logic, drag-and-drop between sections, or the Organization sections.</li>
+    <li>No change to how name variants are extracted or matched.</li>
+  </ul>
+
+  <h2>Design</h2>
+
+  <h3>1. UI restructure — <code>frontend/src/components/ParsedCardEditor.tsx</code></h3>
+  <p>This is a <strong>UI-only</strong> change for the unification part; the data model already stores contacts at person-level.</p>
+  <ul>
+    <li>Replace the <code>parsed.names.map(...)</code> block (currently rendering N "Personal N" sections) with <strong>one "Personal" section</strong>.</li>
+    <li>Inside that single section, render name variants as <strong>nested rows</strong>. Each row keeps its existing controls: language chip, <code>name_type</code>, and full/family/given <code>FieldRow</code>s, plus a remove button (shown only when <code>names.length &gt; 1</code>). The <code>+ Add name</code> button stays.</li>
+    <li>Render the personal-contacts <code>ContactSubSection</code> <strong>once</strong>, below the name rows. Remove the <code>i === 0</code> special-case guard.</li>
+    <li>Add a <strong>Birthday</strong> row at the bottom of the section, rendered by a <strong>new dedicated <code>BirthdayField</code> component</strong> (not <code>FieldRow</code> — see §1a), bound to the new top-level <code>parsed.birthday</code> value.</li>
+    <li>Update the header comment block at the top of the file to describe the new single-Personal layout.</li>
+  </ul>
+
+  <h3>1a. Birthday input component — <code>BirthdayField</code></h3>
+  <p><code>FieldRow</code> is a plain free-text <code>&lt;input&gt;</code> with no validation, which is unsuitable for a date. Birthday gets its own small component so invalid values are impossible to enter and the year-less case is supported.</p>
+  <ul>
+    <li><strong>Month</strong> — a <code>&lt;select&gt;</code> dropdown, options 1–12 (display can be localized month names; value is the zero-padded number). Required for a non-empty birthday.</li>
+    <li><strong>Day</strong> — a <code>&lt;select&gt;</code> dropdown, options 1–31. Required for a non-empty birthday. (Day options are <strong>not</strong> narrowed by month; over-long days like Feb 30 are tolerated rather than dynamically pruned — keeps the component simple, and Google's <code>Date</code> accepts them. Optional refinement, not required: narrow day count to the selected month.)</li>
+    <li><strong>Year</strong> — an <strong>optional</strong> numeric text <code>&lt;input&gt;</code> (<code>inputMode="numeric"</code>, digits only, 4-digit). Left blank ⇒ year-unknown.</li>
+    <li><strong>Serialization to <code>parsed.birthday</code>:</strong>
+      <ul>
+        <li>Year present ⇒ <code>YYYY-MM-DD</code>.</li>
+        <li>Year blank ⇒ <code>--MM-DD</code>.</li>
+        <li>Month/Day both empty ⇒ empty string / unset (no birthday).</li>
+      </ul>
+    </li>
+    <li><strong>Deserialization:</strong> parse an incoming <code>YYYY-MM-DD</code> or <code>--MM-DD</code> string back into the three controls; unparseable/empty ⇒ all controls empty.</li>
+    <li><strong>Clear affordance:</strong> a way to reset the field to empty (e.g. an "empty" option at the top of the Month/Day selects, or a small ✕), so a birthday can be removed.</li>
+    <li>Placed in the same file as the editor (or a sibling component file), reusing existing Tailwind styling for visual consistency with <code>FieldRow</code>.</li>
+  </ul>
+
+  <h3>2. i18n — <code>frontend/src/i18n.ts</code></h3>
+  <ul>
+    <li>Replace the numbered <code>nameSection(n)</code> label with a single <strong><code>personalSection</code></strong> label ("個人" / "Personal") for the section header.</li>
+    <li>Keep the per-name-row sub-label showing the name index/type if useful, but the <strong>section</strong> is no longer numbered.</li>
+    <li>Relabel <code>addNameLabel</code> to a name-oriented string ("＋ 名前を追加" / "+ Add name") — it adds a name variant, not a "Personal".</li>
+    <li>Add <strong><code>fieldBirthday</code></strong> ("誕生日" / "Birthday", plus the zh-TW label "生日").</li>
+  </ul>
+
+  <h3>3. Birthday storage</h3>
+  <p>Birthday is a per-person value. It must be persisted in the DB and travel through the same two-representation path the app already uses (<code>ParsedCard</code> for input/editing; the <code>app/models/card.py</code> <code>Card</code>/<code>Person</code> for Google export). The concrete chain:</p>
+  <ol>
+    <li><strong><code>app/schemas/parsed_card.py</code></strong> — add a top-level field to <code>ParsedCard</code>: <code>birthday: Optional[str] = None</code> (<code>YYYY-MM-DD</code>; <strong>year-optional</strong>, stored as <code>--MM-DD</code> when the year is unknown, since a birthday is commonly month/day only).</li>
+    <li><strong><code>frontend/src/types/index.ts</code></strong> — mirror it on the <code>ParsedCard</code> interface: <code>birthday?: string</code>.</li>
+    <li><strong><code>app/db/models.py</code></strong> — add a <code>birthday: Mapped[Optional[str]] = mapped_column(String(16))</code> column to the <code>Person</code> ORM model (<code>persons</code> table). String, not <code>Date</code>, to allow the year-less <code>--MM-DD</code> form.</li>
+    <li><strong>Alembic migration</strong> — new revision under <code>migrations/</code> adding the <code>persons.birthday</code> column (nullable; no backfill needed).</li>
+    <li><strong><code>app/routers/v2/sessions.py</code></strong> — when creating/updating the DB <code>Person</code> (around the <code>Person(...)</code> construction at ~L662 and the upsert path at ~L733), persist <code>draft.parsed.birthday</code> onto <code>person.birthday</code>.</li>
+    <li><strong><code>app/models/card.py</code></strong> — add <code>birthday: str = ""</code> to the pydantic <code>Person</code> model (the representation consumed by Google sync).</li>
+    <li><strong><code>app/routers/v2/export.py</code></strong> — when assembling the <code>LegacyCard</code> from DB records (~L160), copy <code>db_person.birthday</code> into the pydantic <code>Person.birthday</code>.</li>
+  </ol>
+
+  <h3>4. Parser — <code>app/services/claude_parser.py</code></h3>
+  <ul>
+    <li>Add <code>birthday</code> to the Claude extraction prompt/schema so it is captured when printed on a card. This is rare on business cards, so it is low priority — <strong>manual entry in the editor is the primary path</strong> — but including it keeps the pipeline consistent.</li>
+  </ul>
+
+  <h3>5. Google Contacts sync — <code>app/services/google_contacts.py</code></h3>
+  <ul>
+    <li>In <code>_build_person_body</code>, when <code>person.birthday</code> is set, add: <code>body["birthdays"] = [{"date": &lt;Date object&gt;, "text": person.birthday}]</code>.</li>
+    <li>Reuse the existing <code>_parse_iso_date</code> helper, <strong>extended so the year is optional</strong> (the People API accepts a <code>Date</code> with <code>month</code>/<code>day</code> and no <code>year</code>). For a stored <code>--MM-DD</code>, emit <code>{"month": M, "day": D}</code> with no <code>year</code> key.</li>
+    <li>No extra sync wiring needed: <code>updatePersonFields</code> is auto-derived from <code>body.keys()</code> in <code>sync_to_google</code>, so <code>birthdays</code> is included on updates automatically.</li>
+  </ul>
+
+  <h2>Data Flow</h2>
+  <pre><code>Card image / manual entry
+  → claude_parser   (ParsedCard.birthday extracted, or blank)
+  → editor UI       (ParsedCardEditor: single Personal section, birthday field)
+  → sessions.py     (persist ParsedCard.birthday → DB persons.birthday)
+  → export.py       (DB persons.birthday → pydantic Person.birthday in LegacyCard)
+  → google_contacts._build_person_body → body["birthdays"]
+  → People API (create/update)</code></pre>
+
+  <h2>Edge Cases</h2>
+  <ul>
+    <li><strong>Year unknown:</strong> entered by leaving the <code>BirthdayField</code> year input blank; stored as <code>--MM-DD</code>. Google <code>Date</code> emitted without a <code>year</code> key.</li>
+    <li><strong>Invalid input:</strong> prevented at entry — month/day are dropdowns (no free text), year accepts digits only. No separate validation pass needed.</li>
+    <li><strong>No birthday:</strong> field absent from <code>body</code>, so nothing is written/cleared incorrectly (it simply is not among <code>body.keys()</code>).</li>
+    <li><strong>Multiple names, zero names:</strong> the single Personal section renders whatever name rows exist (including none); the <code>+ Add name</code> button always allows adding one.</li>
+    <li><strong>Existing cards without birthday:</strong> <code>Optional</code>/default-empty fields keep them valid; no migration backfill required.</li>
+  </ul>
+
+  <h2>Testing</h2>
+  <ul>
+    <li><strong>UI:</strong> a person with 2+ name variants renders exactly one "Personal" section with all name rows nested and personal contacts shown once; adding/removing name rows works.</li>
+    <li><strong>BirthdayField:</strong> month/day dropdowns reject invalid values by construction; year accepts digits only; full date serializes to <code>YYYY-MM-DD</code>, year-blank to <code>--MM-DD</code>, empty to unset; an existing stored value deserializes back into the three controls; clearing removes the birthday. Round-trips into <code>parsed.birthday</code>.</li>
+    <li><strong>Schema/model:</strong> <code>ParsedCard</code> and both <code>Person</code> representations accept and preserve <code>birthday</code> (full date and year-less).</li>
+    <li><strong>Migration:</strong> Alembic upgrade adds <code>persons.birthday</code> cleanly on the existing DB; a birthday entered in the editor round-trips through DB persistence and back out via <code>export.py</code>.</li>
+    <li><strong>Google sync:</strong> <code>_build_person_body</code> produces a correct <code>birthdays[]</code> entry for both full and year-less dates, and omits it when blank; <code>_parse_iso_date</code> handles the year-optional case.</li>
+    <li><strong>Regression:</strong> no change to work/organization sections, personal↔work drag-and-drop, or contact partitioning.</li>
+  </ul>
+
+  <h2>Files Touched</h2>
+  <table>
+    <thead><tr><th>File</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td><code>frontend/src/components/ParsedCardEditor.tsx</code></td><td>Single Personal section, nested name rows; render <code>BirthdayField</code></td></tr>
+      <tr><td><code>BirthdayField</code> component (in editor file or sibling)</td><td>Month/Day dropdowns + optional numeric Year; serialize <code>YYYY-MM-DD</code> / <code>--MM-DD</code></td></tr>
+      <tr><td><code>frontend/src/i18n.ts</code></td><td><code>personalSection</code>, relabel <code>addNameLabel</code>, add <code>fieldBirthday</code></td></tr>
+      <tr><td><code>frontend/src/types/index.ts</code></td><td><code>birthday?: string</code> on <code>ParsedCard</code></td></tr>
+      <tr><td><code>app/schemas/parsed_card.py</code></td><td><code>birthday: Optional[str]</code> on <code>ParsedCard</code></td></tr>
+      <tr><td><code>app/db/models.py</code></td><td><code>birthday</code> column on <code>Person</code> (<code>persons</code> table)</td></tr>
+      <tr><td><code>migrations/</code></td><td>New Alembic revision adding <code>persons.birthday</code></td></tr>
+      <tr><td><code>app/routers/v2/sessions.py</code></td><td>Persist <code>parsed.birthday</code> onto DB <code>Person</code></td></tr>
+      <tr><td><code>app/models/card.py</code></td><td><code>birthday: str</code> on pydantic <code>Person</code></td></tr>
+      <tr><td><code>app/routers/v2/export.py</code></td><td>Copy <code>db_person.birthday</code> into <code>LegacyCard</code> Person</td></tr>
+      <tr><td><code>app/services/claude_parser.py</code></td><td>Birthday extraction in prompt/schema</td></tr>
+      <tr><td><code>app/services/google_contacts.py</code></td><td><code>birthdays[]</code> in <code>_build_person_body</code>; year-optional <code>_parse_iso_date</code></td></tr>
+    </tbody>
+  </table>
+</body>
+</html>
