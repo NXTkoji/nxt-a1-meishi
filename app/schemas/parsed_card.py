@@ -87,6 +87,8 @@ class ParsedCard(BaseModel):
     contact_details: List[ParsedContactDetail] = Field(default_factory=list)
     # Date printed on the card (e.g. exchange date stamp), YYYY-MM-DD or None
     card_date: Optional[str] = None
+    # Person's birthday: "YYYY-MM-DD", or "--MM-DD" when the year is unknown, else None
+    birthday: Optional[str] = None
     notes: Optional[str] = None
     # Languages detected on the card
     languages_detected: List[str] = Field(default_factory=list)
