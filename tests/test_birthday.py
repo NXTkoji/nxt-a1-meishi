@@ -28,3 +28,10 @@ def test_parser_birthday_absent_is_none():
     from app.services.claude_parser import _build_parsed_card
     card = _build_parsed_card({"names": [], "positions": [], "contact_details": []})
     assert card.birthday is None
+
+
+def test_export_person_has_birthday():
+    from app.models.card import Person
+    p = Person(birthday="1988-12-01")
+    assert p.birthday == "1988-12-01"
+    assert Person().birthday == ""

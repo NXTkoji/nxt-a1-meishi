@@ -62,6 +62,7 @@ class Person(BaseModel):
     website: str = ""
     social: Social = Field(default_factory=Social)
     relations: list[PersonRelation] = Field(default_factory=list)
+    birthday: str = ""  # "YYYY-MM-DD" or "--MM-DD" (year unknown), "" if none
 
 
 class MatchResult(BaseModel):
