@@ -188,6 +188,7 @@ export interface Person {
   id: number
   external_id: string
   notes?: string
+  birthday?: string
   created_at: string
   updated_at: string
   names: PersonName[]

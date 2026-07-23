@@ -71,3 +71,34 @@ def test_build_person_body_omits_blank_birthday():
         names=[PersonName(value="Test Person", type="primary", language="en")],
     ))
     assert "birthdays" not in _build_person_body(card)
+
+
+def test_person_update_schema_birthday():
+    from app.schemas.api import PersonUpdate
+    # explicit value
+    assert PersonUpdate(birthday="--05-20").birthday == "--05-20"
+    # empty string preserved in the set fields (endpoint maps "" -> NULL)
+    body = PersonUpdate(birthday="")
+    assert "birthday" in body.model_dump(exclude_unset=True)
+    # omitted -> not in set fields (no accidental clobber)
+    assert "birthday" not in PersonUpdate().model_dump(exclude_unset=True)
+
+
+def test_person_out_has_birthday():
+    from app.schemas.api import PersonOut
+    from datetime import datetime
+    p = PersonOut(id=1, external_id="x", notes=None, birthday="1990-05-20",
+                  created_at=datetime.now(), updated_at=datetime.now())
+    assert p.birthday == "1990-05-20"
+    # default when omitted
+    p2 = PersonOut(id=1, external_id="x", notes=None,
+                   created_at=datetime.now(), updated_at=datetime.now())
+    assert p2.birthday is None
+
+
+def test_update_person_endpoint_exists():
+    import inspect
+    from app.routers.v2.persons import update_person
+    sig = inspect.signature(update_person)
+    assert "person_ext_id" in sig.parameters
+    assert "body" in sig.parameters

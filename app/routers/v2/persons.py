@@ -36,6 +36,7 @@ from app.schemas.api import (
     PersonListItem,
     PersonNameOut,
     PersonOut,
+    PersonUpdate,
     PositionDetailOut,
     PositionOut,
 )
@@ -117,6 +118,7 @@ async def _load_person_out(db: AsyncSession, person: Person) -> PersonOut:
         id=person.id,
         external_id=person.external_id,
         notes=person.notes,
+        birthday=person.birthday,
         created_at=person.created_at,
         updated_at=person.updated_at,
         names=[n.__dict__ for n in names_rows],  # from_attributes handles this
@@ -195,6 +197,24 @@ async def get_person(person_ext_id: str, db: AsyncSession = Depends(get_db)):
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
     if not person:
         raise HTTPException(404, "Person not found")
+    return await _load_person_out(db, person)
+
+
+@router.patch("/{person_ext_id}", response_model=PersonOut)
+async def update_person(
+    person_ext_id: str,
+    body: PersonUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update person-level fields (currently: birthday)."""
+    person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
+    if not person:
+        raise HTTPException(404, "Person not found")
+    data = body.model_dump(exclude_unset=True)
+    if "birthday" in data:
+        # Empty string clears the birthday (stored as NULL).
+        person.birthday = data["birthday"] or None
+    await db.flush()
     return await _load_person_out(db, person)
 
 

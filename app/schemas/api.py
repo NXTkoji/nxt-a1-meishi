@@ -202,6 +202,7 @@ class PersonOut(BaseModel):
     id: int
     external_id: str
     notes: Optional[str]
+    birthday: Optional[str] = None  # "YYYY-MM-DD" or "--MM-DD" (year unknown)
     created_at: datetime
     updated_at: datetime
     names: List[PersonNameOut] = Field(default_factory=list)
@@ -225,6 +226,12 @@ class PersonListItem(BaseModel):
 class PersonCreate(BaseModel):
     names: List[dict]           # [{language, name_type, family_name, given_name, full_name}]
     notes: Optional[str] = None
+
+
+class PersonUpdate(BaseModel):
+    # Person-level fields editable after creation. birthday: "YYYY-MM-DD",
+    # "--MM-DD" (year unknown), or "" to clear.
+    birthday: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

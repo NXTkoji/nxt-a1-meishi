@@ -6,6 +6,7 @@ import { useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
+  updatePerson,
   updatePersonName,
   addContactDetail,
   updateContactDetail,
@@ -16,6 +17,7 @@ import {
 } from '../api'
 import { useLang } from '../LangContext'
 import { useToast } from './Toast'
+import { BirthdayField } from './BirthdayField'
 import type { Country, Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
 
 // ─── Editable field ───────────────────────────────────────────────────────────
@@ -421,6 +423,9 @@ export function PersonEditor({
   const saveContact = (detail: ContactDetail, value: string) =>
     run(() => updateContactDetail(person.external_id, detail.id, { value }))
 
+  const saveBirthday = (v: string) =>
+    run(() => updatePerson(person.external_id, { birthday: v }))
+
   const saveCountryCode = (detail: ContactDetail, code: string) =>
     run(() => updateContactDetail(person.external_id, detail.id, { country_code: code || undefined }))
 
@@ -468,45 +473,57 @@ export function PersonEditor({
 
   return (
     <div className="space-y-4">
-      {/* Names */}
-      {person.names.filter(n => n.is_current).map(name => (
-        <section key={name.id} className="rounded-lg border border-gray-200">
-          <div className="bg-gray-50 px-3 py-1.5 flex items-center gap-2 rounded-t-lg">
-            <span className="font-medium text-xs text-gray-600">{t.nameSection(1)}</span>
-            <span className="text-xs bg-gray-200 text-gray-600 rounded px-1">{name.language}</span>
-          </div>
-          <div className="px-3 pt-1 pb-2 space-y-1.5">
-            <Row label={t.fieldFullName}>
-              <EditableField value={name.full_name} onSave={v => saveNameField(name, 'full_name', v)} />
-            </Row>
-            {name.family_name !== undefined && (
-              <Row label={t.fieldFamilyName}>
-                <EditableField value={name.family_name ?? ''} onSave={v => saveNameField(name, 'family_name', v)} />
+      {/* Personal — one section: name variants + shared personal contacts + birthday */}
+      <section className="rounded-lg border border-gray-200">
+        <div className="bg-gray-50 px-3 py-1.5 rounded-t-lg">
+          <span className="font-medium text-xs text-gray-600">{t.personalSection}</span>
+        </div>
+        <div className="px-3 pt-1 pb-2 space-y-1.5">
+
+          {/* Name variants */}
+          {person.names.filter(n => n.is_current).map((name, i) => (
+            <div key={name.id} className="border-b border-gray-100 pb-1.5 mb-1.5 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400">{t.nameSection(i + 1)}</span>
+                <span className="text-xs bg-gray-200 text-gray-600 rounded px-1">{name.language}</span>
+              </div>
+              <Row label={t.fieldFullName}>
+                <EditableField value={name.full_name} onSave={v => saveNameField(name, 'full_name', v)} />
               </Row>
-            )}
-            {name.given_name !== undefined && (
-              <Row label={t.fieldGivenName}>
-                <EditableField value={name.given_name ?? ''} onSave={v => saveNameField(name, 'given_name', v)} />
+              {name.family_name !== undefined && (
+                <Row label={t.fieldFamilyName}>
+                  <EditableField value={name.family_name ?? ''} onSave={v => saveNameField(name, 'family_name', v)} />
+                </Row>
+              )}
+              {name.given_name !== undefined && (
+                <Row label={t.fieldGivenName}>
+                  <EditableField value={name.given_name ?? ''} onSave={v => saveNameField(name, 'given_name', v)} />
+                </Row>
+              )}
+              <Row label={honorificLabel(name.language, t.fieldHonorific)}>
+                <EditableField value={name.honorific ?? ''} onSave={v => saveNameField(name, 'honorific', v)} />
               </Row>
-            )}
-            <Row label={honorificLabel(name.language, t.fieldHonorific)}>
-              <EditableField value={name.honorific ?? ''} onSave={v => saveNameField(name, 'honorific', v)} />
-            </Row>
-            <ContactSection
-              label={t.personalContactsLabel}
-              sectionKey="personal"
-              posIdx={0}
-              contacts={personalContacts}
-              onSave={saveContact}
-              onSaveCountryCode={saveCountryCode}
-              onDelete={removeContact}
-              onMove={p => moveContact(p, 'personal', 0)}
-              onAdd={type => addContact(type, 0)}
-              labelMap={t.contactLabels}
-            />
-          </div>
-        </section>
-      ))}
+            </div>
+          ))}
+
+          {/* Shared personal contacts (rendered once) */}
+          <ContactSection
+            label={t.personalContactsLabel}
+            sectionKey="personal"
+            posIdx={0}
+            contacts={personalContacts}
+            onSave={saveContact}
+            onSaveCountryCode={saveCountryCode}
+            onDelete={removeContact}
+            onMove={p => moveContact(p, 'personal', 0)}
+            onAdd={type => addContact(type, 0)}
+            labelMap={t.contactLabels}
+          />
+
+          {/* Birthday */}
+          <BirthdayField value={person.birthday ?? ''} onEdit={saveBirthday} />
+        </div>
+      </section>
 
       {/* Positions / Organizations */}
       {person.positions.map((pos, pi) => (
