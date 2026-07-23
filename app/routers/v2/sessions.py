@@ -664,6 +664,10 @@ async def _confirm_one_card(
         db.add(person)
         await db.flush()
 
+    # 1b. Birthday — set only when the card provides one (never clobber with blank)
+    if draft.parsed.birthday:
+        person.birthday = draft.parsed.birthday
+
     # 2. Names
     await _upsert_person_names(db, person.id, draft.parsed)
 
