@@ -38,6 +38,24 @@ def _parse_iso_date(value: str) -> dict | None:
         return None
 
 
+def _parse_birthday(value: str) -> dict | None:
+    """Parse a birthday string into a People API Date object.
+
+    Accepts a full "YYYY-MM-DD" or a year-less "--MM-DD" (year unknown).
+    The People API accepts a Date with month/day and no year.
+    """
+    if not value:
+        return None
+    try:
+        if value.startswith("--"):
+            month, day = value[2:].split("-")  # strip leading "--", left with "MM-DD"
+            return {"month": int(month), "day": int(day)}
+        year, month, day = value.split("-")
+        return {"year": int(year), "month": int(month), "day": int(day)}
+    except (ValueError, AttributeError):
+        return None
+
+
 async def _get_group_resource(client: httpx.AsyncClient, headers: dict, name: str) -> str | None:
     """Look up a user-created Google Contact Group's resourceName by exact display name."""
     global _group_cache_loaded_at
@@ -167,6 +185,11 @@ def _build_person_body(card: Card) -> dict:
     received = _parse_iso_date(card.received_date) if card.received_date else None
     if received:
         body["events"] = [{"date": received, "type": "Card received"}]
+
+    # Birthday — full date or year-less "--MM-DD".
+    birthday_date = _parse_birthday(person.birthday)
+    if birthday_date:
+        body["birthdays"] = [{"date": birthday_date, "text": person.birthday}]
 
     # User-defined custom fields — occasion + received location.
     user_defined = []
