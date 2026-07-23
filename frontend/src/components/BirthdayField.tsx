@@ -9,7 +9,7 @@
  *   year unknown    -> "--MM-DD"
  *   month/day unset -> ""  (no birthday)
  */
-import { useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import { useLang } from '../LangContext'
 
 // month/day are 1-based strings ("1".."12" / "1".."31"); year is a 4-digit string or "".
@@ -39,8 +39,29 @@ export function BirthdayField({
   onEdit: (v: string) => void
 }) {
   const { t } = useLang()
-  const { year, month, day } = useMemo(() => parseBirthday(value), [value])
-  const update = (y: string, mo: string, d: string) => onEdit(serializeBirthday(y, mo, d))
+  // Local state is the source of truth for the three controls. A serialized
+  // birthday needs BOTH month and day, but the user sets them one dropdown at a
+  // time — so a partial selection (month set, day not yet) must persist locally
+  // even though it serializes to "" and stores nothing on the parent yet.
+  const [parts, setParts] = useState(() => parseBirthday(value))
+  const { year, month, day } = parts
+
+  // Re-sync from the prop only on a genuine external change (e.g. loading an
+  // existing card), not on echoes of our own serialization. When our current
+  // parts already serialize to the incoming value, leave local state alone so a
+  // partial selection isn't wiped.
+  useEffect(() => {
+    if (serializeBirthday(year, month, day) !== (value ?? '')) {
+      setParts(parseBirthday(value))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
+  const update = (next: Partial<{ year: string; month: string; day: string }>) => {
+    const merged = { ...parts, ...next }
+    setParts(merged)
+    onEdit(serializeBirthday(merged.year, merged.month, merged.day))
+  }
 
   const selectCls = 'text-sm border border-gray-200 rounded px-1 py-0.5 bg-white text-gray-700'
 
@@ -48,13 +69,13 @@ export function BirthdayField({
     <div className="flex items-center gap-2 py-1.5 border-b border-gray-100 last:border-0">
       <span className="w-36 shrink-0 text-xs text-gray-400">{t.fieldBirthday}</span>
       <div className="flex flex-1 items-center gap-1">
-        <select className={selectCls} value={month} onChange={e => update(year, e.target.value, day)}>
+        <select className={selectCls} value={month} onChange={e => update({ month: e.target.value })}>
           <option value="">{t.birthdayMonth}</option>
           {Array.from({ length: 12 }, (_, i) => String(i + 1)).map(mo => (
             <option key={mo} value={mo}>{mo}</option>
           ))}
         </select>
-        <select className={selectCls} value={day} onChange={e => update(year, month, e.target.value)}>
+        <select className={selectCls} value={day} onChange={e => update({ day: e.target.value })}>
           <option value="">{t.birthdayDay}</option>
           {Array.from({ length: 31 }, (_, i) => String(i + 1)).map(d => (
             <option key={d} value={d}>{d}</option>
@@ -65,7 +86,7 @@ export function BirthdayField({
           inputMode="numeric"
           placeholder={t.birthdayYear}
           value={year}
-          onChange={e => update(e.target.value.replace(/\D/g, '').slice(0, 4), month, day)}
+          onChange={e => update({ year: e.target.value.replace(/\D/g, '').slice(0, 4) })}
         />
       </div>
     </div>
