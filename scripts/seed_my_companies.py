@@ -28,14 +28,29 @@ from app.db.models import MyCompany, RelationshipType
 
 MY_COMPANIES = [
     {
-        "name": "NXT株式会社",
+        "name": "NXT",
         "google_label": "NXT",
         "notes": "Primary company — uses shared Odoo nxta.co account via top-level .env credentials.",
     },
     {
-        "name": "個人 (Koji)",
-        "google_label": "Personal",
+        "name": "Koji",
+        "google_label": "Koji",
         "notes": "Cards received in a personal capacity (not representing any company).",
+    },
+    {
+        "name": "正康",
+        "google_label": "",
+        "notes": "正康有限公司 — food/health; consulting plus import/export.",
+    },
+    {
+        "name": "Rotary",
+        "google_label": "",
+        "notes": "Rotary Club of Taipei Typhoon — community contacts.",
+    },
+    {
+        "name": "康鑫",
+        "google_label": "",
+        "notes": "康鑫建築集團 — consulting client (interior construction).",
     },
 ]
 
