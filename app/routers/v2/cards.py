@@ -343,7 +343,25 @@ async def promote_card_side_to_front(
             s.side_order = orig + 1
         else:
             s.side_order = orig
-    await db.flush()
+
+    # Keep the file in step with its side_order. The store is laid out as
+    # {card_ext_id}/{side_order}.jpg, so renumbering rows without renaming files
+    # leaves names that no longer mean what they look like.
+    moves: list[tuple[str, str]] = []
+    for s in sides:
+        new_path = f"{card_ext_id}/{s.side_order}.jpg"
+        if s.image_path != new_path:
+            moves.append((s.image_path, new_path))
+            s.image_path = new_path
+            s.image_filename = f"{s.side_order}.jpg"
+
+    await db.commit()
+    try:
+        image_store.relocate_permanent_images(moves)
+    except OSError:
+        # Rows are already committed; a partial move leaves rows pointing at
+        # files that have not been renamed yet, so make it loud.
+        logger.exception("Failed to relocate images for card %s after promote", card_ext_id)
 
 
 @router.delete("/{card_ext_id}/sides/{side_order}", status_code=204)

@@ -118,3 +118,74 @@ def test_add_side_stores_the_file_on_success(card_with_two_sides):
             return (await db.execute(select(CardSide.side_order).order_by(CardSide.side_order))).scalars().all()
 
     assert asyncio.run(_rows()) == [0, 1, 2]
+
+
+# ── promote ────────────────────────────────────────────────────────────────
+# The store is laid out as {card_ext_id}/{side_order}.jpg. Promote used to
+# renumber rows without renaming files, so image_filename stopped matching
+# side_order and the name no longer meant what it looked like.
+
+def _sides(client) -> list[tuple[int, str, str]]:
+    async def _read():
+        async with client.session_maker() as db:
+            return (await db.execute(
+                select(CardSide.side_order, CardSide.image_path, CardSide.image_hash)
+                .order_by(CardSide.side_order)
+            )).all()
+    return [tuple(r) for r in asyncio.run(_read())]
+
+
+def test_promote_renames_files_to_match_side_order(card_with_two_sides):
+    before = {order: sha for order, _, sha in _sides(card_with_two_sides)}
+
+    res = card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/1/promote")
+    assert res.status_code == 204, res.text
+
+    after = _sides(card_with_two_sides)
+    # Every row's path must match its side_order...
+    assert [(o, p) for o, p, _ in after] == [
+        (0, f"{CARD_EXT}/0.jpg"), (1, f"{CARD_EXT}/1.jpg")
+    ]
+    # ...and the file set is unchanged, with no leftovers.
+    assert _files() == {f"{CARD_EXT}/0.jpg", f"{CARD_EXT}/1.jpg"}
+    # The promoted image really moved: side 0 now holds what side 1 held.
+    assert {o: sha for o, _, sha in after}[0] == before[1]
+    assert {o: sha for o, _, sha in after}[1] == before[0]
+
+
+def test_promote_moves_pixels_not_just_names(card_with_two_sides):
+    """The bytes on disk must follow the row, not stay put under a new name."""
+    from app.services import image_store
+    before_front = image_store.read_permanent_image(f"{CARD_EXT}/0.jpg")
+
+    card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/1/promote")
+
+    # What used to be the front is now side 1, byte for byte.
+    assert image_store.read_permanent_image(f"{CARD_EXT}/1.jpg") == before_front
+
+
+def test_promote_with_a_gap_leaves_no_stale_file(card_with_two_sides):
+    """After a delete the orders are not contiguous; the freed name must go."""
+    card_with_two_sides.post(
+        f"/api/v2/cards/{CARD_EXT}/sides",
+        files={"file": ("third.jpg", _jpeg((20, 200, 20)), "image/jpeg")},
+    )
+    assert _files() == {f"{CARD_EXT}/{n}.jpg" for n in (0, 1, 2)}
+
+    # Delete the middle side → orders {0, 2}
+    assert card_with_two_sides.delete(f"/api/v2/cards/{CARD_EXT}/sides/1").status_code == 204
+    assert _files() == {f"{CARD_EXT}/0.jpg", f"{CARD_EXT}/2.jpg"}
+
+    # Promote side 2 → orders {0, 1}; 2.jpg is freed and must not linger.
+    assert card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/2/promote").status_code == 204
+    assert [(o, p) for o, p, _ in _sides(card_with_two_sides)] == [
+        (0, f"{CARD_EXT}/0.jpg"), (1, f"{CARD_EXT}/1.jpg")
+    ]
+    assert _files() == {f"{CARD_EXT}/0.jpg", f"{CARD_EXT}/1.jpg"}
+
+
+def test_promoting_the_front_is_a_no_op(card_with_two_sides):
+    before = _sides(card_with_two_sides)
+    assert card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/0/promote").status_code == 204
+    assert _sides(card_with_two_sides) == before
+    assert _files() == {f"{CARD_EXT}/0.jpg", f"{CARD_EXT}/1.jpg"}

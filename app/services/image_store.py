@@ -199,6 +199,39 @@ def delete_permanent_image(relative_path: str) -> None:
     logger.debug("Deleted permanent image %s", relative_path)
 
 
+def relocate_permanent_images(moves: list[tuple[str, str]]) -> None:
+    """
+    Move permanent images to new relative paths, as one batch.
+
+    The moves are usually a permutation inside one card's directory — promoting
+    a side renumbers its neighbours — so renaming in sequence would clobber a
+    file that a later move still needs. Every source is read first, every
+    destination written second, and only then are sources nothing landed on
+    removed.
+
+    Call only AFTER the rows carrying the new paths are committed. Writing the
+    destinations first would be worse than an orphan: mid-permutation a
+    destination name holds another side's pixels, so a failed commit would leave
+    every row pointing at the wrong image rather than at a missing one.
+    """
+    pending = [(src, dst) for src, dst in moves if src != dst]
+    if not pending:
+        return
+
+    buffers = {src: read_permanent_image(src) for src, _ in pending}
+    for src, dst in pending:
+        target = settings.images_path / dst
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(buffers[src])
+
+    destinations = {dst for _, dst in pending}
+    for src, _ in pending:
+        if src not in destinations:
+            delete_permanent_image(src)
+
+    logger.debug("Relocated %d permanent images", len(pending))
+
+
 def read_permanent_image(relative_path: str) -> bytes:
     return (settings.images_path / relative_path).read_bytes()
 
