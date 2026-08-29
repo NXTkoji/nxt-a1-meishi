@@ -39,17 +39,17 @@ MY_COMPANIES = [
     },
     {
         "name": "正康",
-        "google_label": "",
+        "google_label": "正康",
         "notes": "正康有限公司 — food/health; consulting plus import/export.",
     },
     {
         "name": "Rotary",
-        "google_label": "",
+        "google_label": "Rotary",
         "notes": "Rotary Club of Taipei Typhoon — community contacts.",
     },
     {
         "name": "康鑫",
-        "google_label": "",
+        "google_label": "康鑫",
         "notes": "康鑫建築集團 — consulting client (interior construction).",
     },
 ]
