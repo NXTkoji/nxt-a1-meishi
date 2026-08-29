@@ -34,11 +34,27 @@ def _run_migrations() -> None:
     logger.info("Database migrations up to date.")
 
 
+async def _sweep_stale_sessions() -> None:
+    """
+    Age out scan sessions the user walked away from. Never block startup on
+    housekeeping — log and carry on if it fails.
+    """
+    from app.db.engine import AsyncSessionLocal
+    from app.services.session_janitor import sweep_stale_sessions
+
+    try:
+        async with AsyncSessionLocal() as db:
+            await sweep_stale_sessions(db)
+    except Exception:
+        logger.exception("Stale-session sweep failed; continuing startup")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Run Alembic in a thread — asyncio.run() inside env.py conflicts with uvicorn's loop
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _run_migrations)
+    await _sweep_stale_sessions()
     yield
 
 

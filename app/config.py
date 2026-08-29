@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Local storage — default to ~/.nxt-a1/
     data_dir: Path = Path.home() / ".nxt-a1"
 
+    # Scan sessions left unfinished this long are abandoned and their temp
+    # images reclaimed by the startup sweep (services/session_janitor.py).
+    session_retention_days: int = 30
+
     @property
     def db_path(self) -> Path:
         return self.data_dir / "meishi.db"
