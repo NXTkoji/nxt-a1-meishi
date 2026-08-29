@@ -164,20 +164,18 @@ def test_promote_moves_pixels_not_just_names(card_with_two_sides):
     assert image_store.read_permanent_image(f"{CARD_EXT}/1.jpg") == before_front
 
 
-def test_promote_with_a_gap_leaves_no_stale_file(card_with_two_sides):
-    """After a delete the orders are not contiguous; the freed name must go."""
+def test_promote_after_a_delete_stays_contiguous(card_with_two_sides):
+    """Delete closes the gap, so promote always sees a contiguous 0..n-1 run."""
     card_with_two_sides.post(
         f"/api/v2/cards/{CARD_EXT}/sides",
         files={"file": ("third.jpg", _jpeg((20, 200, 20)), "image/jpeg")},
     )
     assert _files() == {f"{CARD_EXT}/{n}.jpg" for n in (0, 1, 2)}
 
-    # Delete the middle side → orders {0, 2}
     assert card_with_two_sides.delete(f"/api/v2/cards/{CARD_EXT}/sides/1").status_code == 204
-    assert _files() == {f"{CARD_EXT}/0.jpg", f"{CARD_EXT}/2.jpg"}
+    assert [o for o, _, _ in _sides(card_with_two_sides)] == [0, 1]
 
-    # Promote side 2 → orders {0, 1}; 2.jpg is freed and must not linger.
-    assert card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/2/promote").status_code == 204
+    assert card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/1/promote").status_code == 204
     assert [(o, p) for o, p, _ in _sides(card_with_two_sides)] == [
         (0, f"{CARD_EXT}/0.jpg"), (1, f"{CARD_EXT}/1.jpg")
     ]
@@ -189,3 +187,112 @@ def test_promoting_the_front_is_a_no_op(card_with_two_sides):
     assert card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/0/promote").status_code == 204
     assert _sides(card_with_two_sides) == before
     assert _files() == {f"{CARD_EXT}/0.jpg", f"{CARD_EXT}/1.jpg"}
+
+
+# ── promote with more than two sides ───────────────────────────────────────
+# A card is not limited to front/back — add_card_side appends indefinitely.
+
+def _add(client, color) -> int:
+    res = client.post(f"/api/v2/cards/{CARD_EXT}/sides",
+                      files={"file": ("x.jpg", _jpeg(color), "image/jpeg")})
+    assert res.status_code == 201, res.text
+    return res.json()["side_order"]
+
+
+def test_promote_rotates_correctly_with_five_sides(card_with_two_sides):
+    """Promoting side k must rotate 0..k and leave k+1.. alone, for any n."""
+    for color in [(20, 200, 20), (200, 200, 20), (200, 20, 200)]:
+        _add(card_with_two_sides, color)
+    assert [o for o, _, _ in _sides(card_with_two_sides)] == [0, 1, 2, 3, 4]
+
+    before = {o: sha for o, _, sha in _sides(card_with_two_sides)}
+
+    # Promote side 3 → it becomes front; 0,1,2 shift right; 4 stays put.
+    assert card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/3/promote").status_code == 204
+
+    after = {o: sha for o, _, sha in _sides(card_with_two_sides)}
+    assert [o for o, _, _ in _sides(card_with_two_sides)] == [0, 1, 2, 3, 4]
+    assert after[0] == before[3]      # promoted to front
+    assert after[1] == before[0]      # shifted right
+    assert after[2] == before[1]
+    assert after[3] == before[2]
+    assert after[4] == before[4]      # untouched
+
+    # Files follow the rows, with nothing left over.
+    assert [(o, p) for o, p, _ in _sides(card_with_two_sides)] == [
+        (n, f"{CARD_EXT}/{n}.jpg") for n in range(5)
+    ]
+    assert _files() == {f"{CARD_EXT}/{n}.jpg" for n in range(5)}
+
+
+def test_promote_the_last_side_of_many(card_with_two_sides):
+    for color in [(20, 200, 20), (200, 200, 20)]:
+        _add(card_with_two_sides, color)
+    before = {o: sha for o, _, sha in _sides(card_with_two_sides)}
+
+    assert card_with_two_sides.post(f"/api/v2/cards/{CARD_EXT}/sides/3/promote").status_code == 204
+
+    after = {o: sha for o, _, sha in _sides(card_with_two_sides)}
+    assert after[0] == before[3]
+    assert [after[n] for n in (1, 2, 3)] == [before[0], before[1], before[2]]
+    assert _files() == {f"{CARD_EXT}/{n}.jpg" for n in range(4)}
+
+
+def test_repeated_promotes_stay_consistent(card_with_two_sides):
+    """Promote every side in turn; rows and files must never drift apart."""
+    for color in [(20, 200, 20), (200, 200, 20)]:
+        _add(card_with_two_sides, color)
+
+    for target in (3, 2, 1, 3, 2):
+        assert card_with_two_sides.post(
+            f"/api/v2/cards/{CARD_EXT}/sides/{target}/promote").status_code == 204
+        rows = _sides(card_with_two_sides)
+        assert [o for o, _, _ in rows] == [0, 1, 2, 3]
+        assert [(o, p) for o, p, _ in rows] == [
+            (n, f"{CARD_EXT}/{n}.jpg") for n in range(4)
+        ]
+        assert _files() == {f"{CARD_EXT}/{n}.jpg" for n in range(4)}
+        # no image lost or duplicated along the way
+        assert len({sha for _, _, sha in rows}) == 4
+
+
+def test_delete_renumbers_remaining_sides_contiguously(card_with_two_sides):
+    """
+    Deleting a middle side must close the gap. A hole is not just untidy:
+    export resolves "back" as side_order 1, so a card left at orders {0, 2}
+    could not export its second image at all.
+    """
+    for color in [(20, 200, 20), (200, 200, 20)]:
+        _add(card_with_two_sides, color)                     # orders 0,1,2,3
+    before = {o: sha for o, _, sha in _sides(card_with_two_sides)}
+
+    assert card_with_two_sides.delete(f"/api/v2/cards/{CARD_EXT}/sides/1").status_code == 204
+
+    rows = _sides(card_with_two_sides)
+    assert [o for o, _, _ in rows] == [0, 1, 2]
+    assert [(o, p) for o, p, _ in rows] == [(n, f"{CARD_EXT}/{n}.jpg") for n in range(3)]
+    assert _files() == {f"{CARD_EXT}/{n}.jpg" for n in range(3)}
+    # Survivors keep their relative order and their pixels.
+    after = {o: sha for o, _, sha in rows}
+    assert [after[0], after[1], after[2]] == [before[0], before[2], before[3]]
+
+
+def test_delete_the_front_shifts_the_rest_down(card_with_two_sides):
+    _add(card_with_two_sides, (20, 200, 20))                 # orders 0,1,2
+    before = {o: sha for o, _, sha in _sides(card_with_two_sides)}
+
+    assert card_with_two_sides.delete(f"/api/v2/cards/{CARD_EXT}/sides/0").status_code == 204
+
+    after = {o: sha for o, _, sha in _sides(card_with_two_sides)}
+    assert [o for o, _, _ in _sides(card_with_two_sides)] == [0, 1]
+    assert [after[0], after[1]] == [before[1], before[2]]
+    assert _files() == {f"{CARD_EXT}/0.jpg", f"{CARD_EXT}/1.jpg"}
+
+
+def test_back_export_still_works_after_deleting_a_middle_side(card_with_two_sides):
+    """The bug contiguous numbering exists to prevent."""
+    _add(card_with_two_sides, (20, 200, 20))                 # orders 0,1,2
+    assert card_with_two_sides.delete(f"/api/v2/cards/{CARD_EXT}/sides/1").status_code == 204
+
+    assert card_with_two_sides.get(f"/api/v2/export/image/{CARD_EXT}/front").status_code == 200
+    assert card_with_two_sides.get(f"/api/v2/export/image/{CARD_EXT}/back").status_code == 200

@@ -372,25 +372,51 @@ async def delete_card_side(
 ):
     """Remove one image side from a card (not allowed if it's the only side)."""
     card = await _load_card(db, card_ext_id)
-    side = await db.scalar(
-        select(CardSide).where(CardSide.card_id == card.id, CardSide.side_order == side_order)
-    )
+    sides = (await db.execute(
+        select(CardSide).where(CardSide.card_id == card.id)
+    )).scalars().all()
+    side = next((s for s in sides if s.side_order == side_order), None)
     if not side:
         raise HTTPException(404, "Side not found")
-    total = await db.scalar(
-        select(func.count()).select_from(CardSide).where(CardSide.card_id == card.id)
-    )
-    if total <= 1:
+    if len(sides) <= 1:
         raise HTTPException(400, "Cannot delete the only image of a card")
 
-    # Remove the file only once the row deletion is committed. Deleting first
-    # would leave a live row pointing at a missing file if the commit failed;
-    # not deleting at all (the old behaviour) orphaned the file forever, since
-    # add_card_side hands out max(side_order)+1 and never reuses a freed slot.
-    image_path = side.image_path
+    removed_path = side.image_path
+    remaining = sorted((s for s in sides if s.id != side.id), key=lambda s: s.side_order)
+
+    # Close the gap: side_order must stay the contiguous run 0..n-1. Leaving a
+    # hole is not merely untidy — export resolves "back" as side_order 1, so a
+    # card left at orders {0, 2} cannot export its second image at all.
     await db.delete(side)
+    await db.flush()
+    # Park on negative values first: the final numbers overlap the current ones,
+    # and uq_card_side_order is checked per statement, not at commit.
+    for s in remaining:
+        s.side_order = -(s.side_order + 1)
+    await db.flush()
+
+    moves: list[tuple[str, str]] = []
+    for new_order, s in enumerate(remaining):
+        s.side_order = new_order
+        new_path = f"{card_ext_id}/{new_order}.jpg"
+        if s.image_path != new_path:
+            moves.append((s.image_path, new_path))
+            s.image_path = new_path
+            s.image_filename = f"{new_order}.jpg"
+
+    # Touch the filesystem only once the rows are committed: deleting first
+    # would leave a live row pointing at a missing file, and not deleting at all
+    # (the original behaviour) orphaned the file forever, since add_card_side
+    # hands out max(side_order)+1 and never reuses a freed slot.
     await db.commit()
-    image_store.delete_permanent_image(image_path)
+    try:
+        image_store.relocate_permanent_images(moves)
+        # The removed side's own file goes last, and only if the renumbering
+        # did not just write a surviving side into that same name.
+        if removed_path not in {dst for _, dst in moves}:
+            image_store.delete_permanent_image(removed_path)
+    except OSError:
+        logger.exception("Failed to reconcile images for card %s after side delete", card_ext_id)
 
 
 @router.delete("/{card_ext_id}", status_code=204)
