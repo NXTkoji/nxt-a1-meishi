@@ -5,9 +5,10 @@ from pathlib import Path
 
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import IntegrityError
 
 from app.routers import scan, confirm, contacts
 from app.routers.v2 import (
@@ -62,6 +63,20 @@ app.include_router(v2_countries.router)
 app.include_router(v2_corrections.router)
 app.include_router(v2_settings.router)
 app.include_router(v2_export.router)
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    """
+    A violated database constraint is a conflict, not an unknown server fault.
+    Without this the client gets a bare "500 Internal Server Error" with no clue
+    which constraint failed — see the confirm/card_sides duplicate-side_order bug.
+    """
+    logger.exception("Integrity error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=409,
+        content={"detail": f"Database constraint violated: {exc.orig}"},
+    )
 
 
 @app.get("/api/v1/health")

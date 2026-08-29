@@ -22,7 +22,11 @@ settings.data_dir.mkdir(parents=True, exist_ok=True)
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False is essential: migrations run inside the
+    # uvicorn process at startup, and the default (True) would silence every
+    # logger already created — uvicorn.error, uvicorn.access and all app.*
+    # loggers. That is why 500 tracebacks never reached the log file.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

@@ -653,7 +653,14 @@ async def _confirm_one_card(
     db: AsyncSession,
     session: ScanSession,
     draft: CardDraft,
+    pending_images: list[image_store.PreparedImage],
 ) -> ConfirmedCardOut:
+    """
+    Stage one card's rows into the open transaction.
+
+    Permanent images are only PREPARED here and appended to pending_images; the
+    caller writes them to disk after the transaction commits.
+    """
     # 1. Person: find existing or create
     if draft.match_person_id:
         person = await db.get(Person, draft.match_person_id)
@@ -742,20 +749,23 @@ async def _confirm_one_card(
         select(ScanSessionImage).where(
             ScanSessionImage.session_id == session.id,
             ScanSessionImage.temp_card_id == draft.temp_card_id,
-        ).order_by(ScanSessionImage.side_order)
+        ).order_by(ScanSessionImage.side_order, ScanSessionImage.id)
     )
-    for img in imgs.scalars():
-        rel_path, filename, sha, w, h = image_store.move_to_permanent(
-            card_ext_id, img.side_order or 0, img.image_path
-        )
+    # Renumber sides 0..n-1 by position rather than trusting the staged
+    # side_order. Staging rows carry no uniqueness guarantee, while card_sides
+    # has uq_card_side_order — a duplicate staged side_order would otherwise
+    # fail the whole confirm with a bare IntegrityError.
+    for side_order, img in enumerate(imgs.scalars()):
+        prepared = image_store.prepare_permanent(card_ext_id, side_order, img.image_path)
+        pending_images.append(prepared)
         db.add(CardSide(
             card_id=card.id,
-            side_order=img.side_order or 0,
-            image_path=rel_path,
-            image_filename=filename,
-            image_hash=sha,
-            width_px=w,
-            height_px=h,
+            side_order=side_order,
+            image_path=prepared.relative_path,
+            image_filename=prepared.filename,
+            image_hash=prepared.sha256,
+            width_px=prepared.width_px,
+            height_px=prepared.height_px,
         ))
 
     return ConfirmedCardOut(
@@ -779,17 +789,26 @@ async def confirm_session(
         raise HTTPException(400, "Session is not in a confirmable state")
 
     confirmed = []
+    pending_images: list[image_store.PreparedImage] = []
     for draft in body.cards:
-        result = await _confirm_one_card(db, session, draft)
+        result = await _confirm_one_card(db, session, draft, pending_images)
         confirmed.append(result)
 
-    # Mark session done and commit BEFORE deleting temp files.
-    # Temp files are deleted as a background task only after the commit
-    # succeeds — this prevents data loss if the commit fails.
+    # Mark session done and commit BEFORE touching the filesystem.
+    # Permanent images are written and temp files deleted only after the commit
+    # succeeds — this prevents data loss, and orphaned images, if it fails.
     from datetime import datetime
     session.status = "done"
     session.completed_at = datetime.utcnow()
     await db.commit()
+
+    for prepared in pending_images:
+        try:
+            image_store.write_prepared(prepared)
+        except OSError:
+            # The row is already committed; log loudly rather than 500 on a
+            # card the user has been told was saved.
+            logger.exception("Failed to write permanent image %s", prepared.relative_path)
 
     background_tasks.add_task(image_store.delete_temp_session, sid)
     for result in confirmed:

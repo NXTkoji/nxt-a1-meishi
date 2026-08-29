@@ -293,21 +293,22 @@ async def add_card_side(
     side_order = max(existing, default=-1) + 1
 
     data = await file.read()
-    rel_path, filename, sha, w, h = image_store.save_permanent_image(
-        card_ext_id, side_order, data
-    )
+    # Resize/hash in memory, but keep the filesystem untouched until the row is
+    # committed — writing first would strand the file if the insert failed.
+    prepared = image_store.prepare_permanent_bytes(card_ext_id, side_order, data)
 
     side = CardSide(
         card_id=card.id,
         side_order=side_order,
-        image_path=rel_path,
-        image_filename=filename,
-        image_hash=sha,
-        width_px=w,
-        height_px=h,
+        image_path=prepared.relative_path,
+        image_filename=prepared.filename,
+        image_hash=prepared.sha256,
+        width_px=prepared.width_px,
+        height_px=prepared.height_px,
     )
     db.add(side)
-    await db.flush()
+    await db.commit()
+    image_store.write_prepared(prepared)
     await db.refresh(side)
     return side
 
@@ -363,7 +364,15 @@ async def delete_card_side(
     )
     if total <= 1:
         raise HTTPException(400, "Cannot delete the only image of a card")
+
+    # Remove the file only once the row deletion is committed. Deleting first
+    # would leave a live row pointing at a missing file if the commit failed;
+    # not deleting at all (the old behaviour) orphaned the file forever, since
+    # add_card_side hands out max(side_order)+1 and never reuses a freed slot.
+    image_path = side.image_path
     await db.delete(side)
+    await db.commit()
+    image_store.delete_permanent_image(image_path)
 
 
 @router.delete("/{card_ext_id}", status_code=204)

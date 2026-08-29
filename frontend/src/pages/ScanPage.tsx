@@ -78,6 +78,16 @@ function newGroup(tempCardId: string): CardGroup {
   return { tempCardId, images: [], myCompanyIds: [], status: 'pending' }
 }
 
+// Next free side_order for a group.
+// Must be max(side_order) + 1, NOT images.length: a group's side_orders are not
+// always the contiguous run 0..n-1 (swapping front/back, or moving an image out
+// of a 2-sided group, can leave a lone image sitting at side_order 1). Using the
+// count there would hand out an order that is already taken, and confirm would
+// then blow up on the uq_card_side_order constraint when writing card_sides.
+function nextSideOrder(images: SessionImage[]): number {
+  return images.reduce((max, i) => Math.max(max, i.side_order ?? 0), -1) + 1
+}
+
 type SavedGroupState = Pick<
   CardGroup,
   'tempCardId' | 'parsed' | 'status' | 'matchPersonId' | 'matchPersonExtId' | 'matchName' | 'matchConfidence' |
@@ -470,7 +480,7 @@ export function ScanPage() {
         uploaded_at: new Date().toISOString(),
       }
       const grp = groups.find(g => g.tempCardId === groupId)
-      const nextOrder = grp ? grp.images.length : 0
+      const nextOrder = grp ? nextSideOrder(grp.images) : 0
       await updateImageGroup(session.external_id, result.id, groupId, nextOrder)
       setGroups(prev =>
         prev.map(g =>
@@ -492,7 +502,7 @@ export function ScanPage() {
       if (!img) return
       const toGroup = groups.find(g => g.tempCardId === toGroupId)
       if (!toGroup) return
-      const newSideOrder = toGroup.images.length
+      const newSideOrder = nextSideOrder(toGroup.images)
       await updateImageGroup(session.external_id, imgId, toGroupId, newSideOrder)
       setGroups(prev => {
         const updated = prev.map(g => {
@@ -829,7 +839,8 @@ export function ScanPage() {
               onMoveImage={moveImageBetweenGroups}
               onAssignUngrouped={(imgId, toGroupId) => {
                 const img = ungrouped.find(i => i.id === imgId)
-                if (img) assignToGroup(img, toGroupId, groups.find(g => g.tempCardId === toGroupId)?.images.length ?? 0)
+                const target = groups.find(g => g.tempCardId === toGroupId)
+                if (img) assignToGroup(img, toGroupId, target ? nextSideOrder(target.images) : 0)
               }}
               onSwapImages={() => swapImagesInGroup(group.tempCardId)}
               onDeleteGroup={deleteGroup}

@@ -19,6 +19,7 @@ import base64
 import hashlib
 import io
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple
 
@@ -115,61 +116,87 @@ def delete_temp_session(session_ext_id: str) -> None:
 # Permanent storage  (after Confirm)
 # ---------------------------------------------------------------------------
 
-def move_to_permanent(
-    card_ext_id: str,
-    side_order: int,
-    temp_relative_path: str,
-) -> Tuple[str, str, str, int, int]:
+@dataclass(frozen=True)
+class PreparedImage:
     """
-    Copy a temp image into the permanent images directory.
-
-    The image is resized to MAX_DIMENSION on its longest side before saving.
-
-    Returns:
-        (relative_path, filename, sha256_hash, width_px, height_px)
-        relative_path is relative to settings.images_path,
-        e.g. "{card_ext_id}/0.jpg"
+    A temp image already read, resized and hashed, but NOT yet written to
+    permanent storage. See prepare_permanent() for why the two are separate.
     """
-    raw = read_temp_image(temp_relative_path)
-    resized = _resize_bytes(raw)
-    sha = _sha256(resized)
-    w, h = image_size(resized)
-
-    dest_dir = settings.images_path / card_ext_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = f"{side_order}.jpg"
-    dest = dest_dir / filename
-    dest.write_bytes(resized)
-
-    relative = f"{card_ext_id}/{filename}"
-    logger.debug("Saved permanent image %s (%dx%d, sha=%s)", relative, w, h, sha[:8])
-    return relative, filename, sha, w, h
+    relative_path: str      # relative to settings.images_path, e.g. "{card_ext_id}/0.jpg"
+    filename: str           # "{side_order}.jpg"
+    sha256: str
+    width_px: int
+    height_px: int
+    data: bytes             # resized JPEG bytes, held until write_prepared()
 
 
-def save_permanent_image(
+def prepare_permanent_bytes(
     card_ext_id: str,
     side_order: int,
     data: bytes,
-) -> Tuple[str, str, str, int, int]:
+) -> PreparedImage:
     """
-    Save raw image bytes directly to permanent storage (for direct uploads, not from temp).
-    Returns (relative_path, filename, sha256_hash, width_px, height_px).
+    Resize raw image bytes to MAX_DIMENSION and return everything the CardSide
+    row needs — but touch nothing on disk.
+
+    Writing is deferred to write_prepared() so that callers can commit their
+    database transaction FIRST. Writing before the commit means a rolled-back
+    transaction leaves orphaned files behind, and — because the destination path
+    is derived from side_order — a duplicated side_order silently overwrites a
+    sibling side's image.
     """
     resized = _resize_bytes(data)
     sha = _sha256(resized)
     w, h = image_size(resized)
 
-    dest_dir = settings.images_path / card_ext_id
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"{side_order}.jpg"
-    dest = dest_dir / filename
-    dest.write_bytes(resized)
+    return PreparedImage(
+        relative_path=f"{card_ext_id}/{filename}",
+        filename=filename,
+        sha256=sha,
+        width_px=w,
+        height_px=h,
+        data=resized,
+    )
 
-    relative = f"{card_ext_id}/{filename}"
-    logger.debug("Saved permanent image %s (%dx%d, sha=%s)", relative, w, h, sha[:8])
-    return relative, filename, sha, w, h
+
+def prepare_permanent(
+    card_ext_id: str,
+    side_order: int,
+    temp_relative_path: str,
+) -> PreparedImage:
+    """Same as prepare_permanent_bytes(), sourcing the bytes from temp storage."""
+    return prepare_permanent_bytes(card_ext_id, side_order, read_temp_image(temp_relative_path))
+
+
+def write_prepared(prepared: PreparedImage) -> None:
+    """Flush a PreparedImage to permanent storage. Call only after the commit."""
+    dest = settings.images_path / prepared.relative_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(prepared.data)
+    logger.debug(
+        "Saved permanent image %s (%dx%d, sha=%s)",
+        prepared.relative_path, prepared.width_px, prepared.height_px, prepared.sha256[:8],
+    )
+
+
+def delete_permanent_image(relative_path: str) -> None:
+    """
+    Remove one permanent image. Call only after the row referencing it is
+    committed as deleted — otherwise a failed commit leaves a card_sides row
+    pointing at a file that no longer exists.
+
+    The card's directory is left in place: a card always keeps at least one
+    side, so it is never emptied by this call.
+    """
+    root = settings.images_path.resolve()
+    target = (settings.images_path / relative_path).resolve()
+    if not target.is_relative_to(root):
+        # Paths come from our own rows, but never let one escape the store.
+        logger.error("Refusing to delete image outside the image store: %s", relative_path)
+        return
+    target.unlink(missing_ok=True)
+    logger.debug("Deleted permanent image %s", relative_path)
 
 
 def read_permanent_image(relative_path: str) -> bytes:
