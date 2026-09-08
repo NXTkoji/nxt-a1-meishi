@@ -5,17 +5,22 @@ import { useLang } from '../LangContext'
 import type { CardListItem, Country, PersonListItem } from '../types'
 import { MergeModal } from '../components/MergeModal'
 
-const _intlNames = new Intl.DisplayNames(['ja', 'en'], { type: 'region' })
-
-function countryLabel(code: string | undefined, countries: Country[]): string {
+// Fallback country names must follow the UI language, so the DisplayNames instance
+// is built per-locale by the caller rather than pinned at module load.
+function countryLabel(
+  code: string | undefined,
+  countries: Country[],
+  intlNames: Intl.DisplayNames,
+): string {
   if (!code) return '—'
   const registered = countries.find(c => c.code === code)
   if (registered) return registered.name
-  try { return _intlNames.of(code) ?? code } catch { return code }
+  try { return intlNames.of(code) ?? code } catch { return code }
 }
 
 export function CollectionPage() {
-  const { t } = useLang()
+  const { t, lang } = useLang()
+  const intlNames = useMemo(() => new Intl.DisplayNames([lang], { type: 'region' }), [lang])
   const [q, setQ] = useState('')
   const [view, setView] = useState<'cards' | 'persons'>('cards')
   const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set())
@@ -268,7 +273,7 @@ export function CollectionPage() {
           <div className="space-y-2">
             {personsByCountry.map(({ code, persons: group }) => {
               const collapsed = collapsedCountries.has(code)
-              const label = code ? countryLabel(code, countries) : t.unknownCountry ?? 'Unknown'
+              const label = code ? countryLabel(code, countries, intlNames) : t.unknownCountry ?? 'Unknown'
               return (
                 <div key={code || '__none__'}>
                   <button

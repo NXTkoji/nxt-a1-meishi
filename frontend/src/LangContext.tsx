@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { translations } from './i18n'
+import { translations, LANG_CYCLE } from './i18n'
 import type { Lang, Translations } from './i18n'
 
 interface LangContextValue {
@@ -18,7 +18,8 @@ const LangContext = createContext<LangContextValue>({
 export function LangProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(() => {
     const stored = localStorage.getItem('lang')
-    return (stored === 'en' || stored === 'ja') ? stored : 'en'
+    // Validate against LANG_CYCLE so a newly added locale is not silently reset to 'en'
+    return LANG_CYCLE.includes(stored as Lang) ? (stored as Lang) : 'en'
   })
 
   useEffect(() => {
