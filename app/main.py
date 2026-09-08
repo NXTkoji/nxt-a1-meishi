@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -120,6 +121,18 @@ if _FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
+        # Root-level files in dist/ (favicon.svg, icons.svg, ...) live outside the /assets
+        # mount, so without this branch they fall through to the SPA fallback below and are
+        # returned as index.html — which is why the browser tab showed no favicon.
+        # index.html itself is excluded so it keeps the no-cache headers set below.
+        if full_path and full_path != "index.html":
+            candidate = (_FRONTEND_DIST / full_path).resolve()
+            # Reject ../ traversal that would escape dist/.
+            if candidate.is_relative_to(_FRONTEND_DIST.resolve()) and candidate.is_file():
+                media_type, _ = mimetypes.guess_type(candidate.name)
+                return Response(content=candidate.read_bytes(),
+                                media_type=media_type or "application/octet-stream")
+
         # FileResponse uses aiofiles (async I/O) which fails on Google Drive FUSE.
         # Synchronous read_bytes() works reliably on Drive-backed paths.
         content = (_FRONTEND_DIST / "index.html").read_bytes()
