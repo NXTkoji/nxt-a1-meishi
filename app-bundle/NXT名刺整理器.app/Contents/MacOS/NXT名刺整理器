@@ -1,0 +1,31 @@
+#!/bin/bash
+# NXT名刺整理器 — launcher
+# Backend serves both API and frontend. Just ensure it's running and open the browser.
+
+BACKEND_PORT=8000
+PROJECT="/Users/Koji/Library/CloudStorage/GoogleDrive-koji@nxta.co/My Drive/NXT Product Development/NXT-A1 名片整理器/nxt-a1-meishi"
+LOG="$HOME/.nxt-a1/logs/backend.log"
+mkdir -p "$HOME/.nxt-a1/logs"
+
+is_listening() {
+  lsof -ti tcp:"$1" > /dev/null 2>&1
+}
+
+# ── Start backend if not already running ─────────────────────────────────────
+if is_listening $BACKEND_PORT; then
+  echo "Backend already running on :$BACKEND_PORT"
+else
+  cd "$PROJECT" || exit 1
+  nohup /usr/local/bin/python3 -m uvicorn app.main:app --port $BACKEND_PORT \
+    >> "$LOG" 2>&1 &
+  echo "Backend started (pid $!)"
+
+  # Wait up to 10 seconds for it to be ready
+  for i in $(seq 1 10); do
+    is_listening $BACKEND_PORT && break
+    sleep 1
+  done
+fi
+
+# ── Open browser ─────────────────────────────────────────────────────────────
+open "http://localhost:$BACKEND_PORT/collection"
