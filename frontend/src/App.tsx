@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { LangProvider, useLang } from './LangContext'
+import { LANG_CYCLE } from './i18n'
 import { ToastProvider } from './components/Toast'
 import { ScanPage } from './pages/ScanPage'
 import { CollectionPage } from './pages/CollectionPage'
@@ -82,7 +83,7 @@ function Shell() {
           </a>
           <div className="ml-auto">
             <button
-              onClick={() => setLang(lang === 'ja' ? 'en' : 'ja')}
+              onClick={() => setLang(LANG_CYCLE[(LANG_CYCLE.indexOf(lang) + 1) % LANG_CYCLE.length])}
               className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
             >
               {t.langToggle}

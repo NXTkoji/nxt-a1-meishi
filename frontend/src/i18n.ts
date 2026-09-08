@@ -1,4 +1,7 @@
-export type Lang = 'ja' | 'en'
+// Order the nav-bar language button cycles through. Single source of truth for
+// both the union type and the switcher, so adding a language means editing one line.
+export const LANG_CYCLE = ['ja', 'en', 'zh-TW'] as const
+export type Lang = (typeof LANG_CYCLE)[number]
 
 const translations = {
   ja: {
@@ -144,7 +147,7 @@ const translations = {
     personNotFound: '人物が見つかりません',
     linkedCards: '名刺',
     deletePersonBtn: '人物を削除',
-    confirmDeletePerson: 'この人物とそのデータをすべて削除しますか？\\n\\n※ 関連する名刺には影響しません。',
+    confirmDeletePerson: 'この人物とそのデータをすべて削除しますか？\n\n※ 関連する名刺には影響しません。',
     personDeleted: '人物を削除しました',
 
     // Merge
@@ -230,7 +233,7 @@ const translations = {
     navCollection: 'Collection',
     navScan: 'Scan',
     navSettings: 'Settings',
-    langToggle: '日本語',
+    langToggle: '繁體中文',
 
     // ScanPage — stages
     scanTitle: 'Business Card Scan',
@@ -367,7 +370,7 @@ const translations = {
     personNotFound: 'Person not found',
     linkedCards: 'Business Cards',
     deletePersonBtn: 'Delete person',
-    confirmDeletePerson: 'Delete this person and all their data?\\n\\nNote: their business cards will not be deleted.',
+    confirmDeletePerson: 'Delete this person and all their data?\n\nNote: their business cards will not be deleted.',
     personDeleted: 'Person deleted',
 
     // Merge
@@ -446,9 +449,231 @@ const translations = {
     deleteGroupLabel: 'Delete Card',
     deleteGroupDisabledHint: 'Move all images out first to delete',
   },
+  'zh-TW': {
+    // Nav
+    appName: '名片整理器',
+    navCollection: '名片庫',
+    navScan: '掃描',
+    navSettings: '設定',
+    langToggle: '日本語',
+
+    // ScanPage — stages
+    scanTitle: '名片掃描',
+    stageUpload: '上傳',
+    stageGroup: '分組',
+    stageAnalyze: '解析',
+    stageReview: '確認',
+    stageDone: '完成',
+
+    // ScanPage — upload zone
+    dropPrompt: '將名片照片拖曳至此',
+    dropOr: '或 點擊選擇檔案',
+
+    // ScanPage — grouping
+    ungroupedN: (n: number) => `未分組 (${n})`,
+    autoGroup1: '每張一組（單面）',
+    autoGroup2: '兩張一組（雙面）',
+    autoPairByPos: '依位置配對',
+    mixedCropWarning: '部分影像已裁切、部分尚未裁切。使用「依位置配對」前請先裁切所有含多張名片的照片，否則未裁切的影像會各自成為一組。',
+    splitCards: '分割名片',
+    splitting: '偵測中…',
+    splitDone: (n: number) => `已分割成 ${n} 張名片`,
+    splitNone: '僅偵測到 1 張名片',
+    cardGroupsN: (n: number) => `名片組 (${n})`,
+    addGroup: '＋ 新增群組',
+    startAnalysis: '開始解析 →',
+
+    // ScanPage — card group card
+    cardN: (n: number) => `名片 #${n}`,
+    analyzing: '解析中…',
+    existingMatch: (name: string, pct: number) => `既有: ${name} (${pct}%)`,
+    sideLabels: ['正面', '背面'],
+    sideN: (n: number) => `第${n}面`,
+    emptySlot: '空白',
+
+    // ScanPage — review metadata
+    myCompanyLabel: '見面身分',
+    occasionLabel: '場合',
+    occasionAddNew: '＋ 新增場合',
+    occasionNewPlaceholder: '輸入場合名稱…',
+    receivedDateLabel: '收到日期',
+    existingPersonLabel: '既有人物',
+    createNew: '✕ 建立新的',
+    noneOption: '無',
+
+    // ScanPage — actions
+    retryAnalysis: '重新解析 ↺',
+    saveN: (n: number) => `儲存 ${n} 張名片 ✓`,
+    saving: '儲存中…',
+    savedN: (n: number) => `已儲存 ${n} 張名片`,
+    newScan: '新的掃描',
+    viewCollection: '查看名片庫',
+
+    // CollectionPage
+    collectionTitle: '名片庫',
+    newScanBtn: '＋ 新的掃描',
+    tabCards: '名片',
+    tabPersons: '人物',
+    searchPlaceholder: '以姓名搜尋…',
+    loading: '載入中…',
+    emptyMessage: '尚無名片',
+    emptyCta: '掃描第一張名片',
+    noName: '(無姓名)',
+    unknownCountry: '國家不明',
+
+    // ParsedCardEditor
+    nameSection: (n: number) => `姓名 ${n}`,
+    personalSection: '個人',
+    orgSection: (n: number) => `組織 ${n}`,
+    personalContactsLabel: '個人聯絡方式',
+    workContactsLabel: '工作聯絡方式',
+    addFieldLabel: '＋ 新增欄位',
+    addOrgLabel: '＋ 新增組織',
+    addNameLabel: '＋ 新增姓名',
+    addTitleLabel: '＋ 新增職稱',
+    removeLabel: '移除',
+    fieldBirthday: '生日',
+    birthdayMonth: '月',
+    birthdayDay: '日',
+    birthdayYear: '年（選填）',
+    fieldFullName: '全名',
+    fieldFamilyName: '姓',
+    fieldGivenName: '名',
+    fieldHonorific: '敬稱',
+    fieldCompany: (lang: string) => `公司名稱 (${lang})`,
+    fieldTitle: (lang: string) => `職稱 (${lang})`,
+    fieldDept: (lang: string) => `部門 (${lang})`,
+    emptyField: '空白',
+    addImageLabel: '新增影像',
+    swapSidesLabel: '設為正面',
+    notesLabel: '備註',
+    notesPlaceholder: '新增備註…',
+    addPhotoLabel: '新增照片',
+    saveBtn: '儲存',
+    cancelBtn: '取消',
+    contactLabels: {
+      phone_work: '電話（公司）',
+      phone_mobile: '手機',
+      phone_fax: '傳真',
+      email_work: '電子郵件（公司）',
+      email_personal: '電子郵件（個人）',
+      address_work: '地址（公司）',
+      address_home: '地址（住家）',
+      url_website: '網站',
+      gui_number: '統一編號',
+      social_wechat: 'WeChat',
+      social_line: 'LINE',
+      social_linkedin: 'LinkedIn',
+      social_other: '社群',
+      relationship: '關係',
+      personal_title: '稱謂',
+      introducer: '介紹人',
+    },
+
+    // Settings page
+    settingsTitle: '設定',
+    myCompaniesTitle: '見面身分',
+    addCompanyPlaceholder: '輸入名稱…',
+    addCompanyBtn: '＋ 新增',
+    deleteBtn: '刪除',
+    confirmDelete: '確定要刪除嗎？',
+    occasionsTitle: '場合列表',
+    addOccasionPlaceholder: '輸入場合名稱…',
+
+    countriesTitle: '國家列表',
+    addCountryCodePlaceholder: 'JP',
+    addCountryNamePlaceholder: '輸入國家名稱…',
+    countryUnset: '選擇國家…',
+    countryClear: '清除',
+    countryNoneRegistered: '尚未登錄任何國家，請至設定頁新增。',
+
+    // Person detail
+    viewPerson: '查看人物',
+    personNotFound: '找不到此人物',
+    linkedCards: '名片',
+    deletePersonBtn: '刪除人物',
+    confirmDeletePerson: '要刪除此人物及其所有資料嗎？\n\n注意：相關的名片不會被刪除。',
+    personDeleted: '已刪除人物',
+
+    // Merge
+    selectPersonsBtn: '選取',
+    cancelSelectBtn: '取消',
+    selectedN: (n: number) => `已選取 ${n} 筆`,
+    mergeSelectedBtn: (n: number) => `合併 ${n} 筆`,
+    mergeModalTitle: '要保留哪一筆資料？',
+    mergeModalConfirmTitle: (name: string) => `要合併到「${name}」嗎？`,
+    mergeModalConfirmBody: (n: number) => `其他 ${n} 筆資料的名片、姓名與聯絡方式將移至此處，那些資料將被永久刪除。`,
+    mergeConfirmBtn: '確認合併',
+    mergingBtn: '合併中…',
+    mergeSucceeded: '已完成合併',
+    mergeDuplicatesFound: (n: number) => `發現 ${n} 筆重複的聯絡方式 — 請於下方確認`,
+    mergeError: '合併失敗',
+
+    deleteCardBtn: '刪除此名片',
+    confirmDeleteCard: '要刪除此名片嗎？此操作無法復原。',
+
+    thumbnailNameLabel: '縮圖顯示名稱',
+    thumbnailNameAuto: '自動',
+
+    // Feedback toasts
+    savedChanges: '已儲存',
+    saveError: '儲存失敗',
+    deleteConfirmed: '已刪除',
+
+    // Scan — cancel
+    cancelAnalysis: '取消',
+
+    // Scan — back to grouping / start over
+    backToGrouping: '← 返回分組',
+    noCardDataHint: '找不到名片資料。若照片中含有多張名片，請點擊「← 返回分組」後使用 ✂️ 分割，再重新解析。',
+    startOver: '重新開始',
+
+    // Export flow
+    navExport: '匯出',
+    enterManuallyBtn: '＋ 手動輸入',
+    manualEntryTitle: '輸入人物資料',
+    exportBtn: '匯出',
+    exportTitle: '匯出名片',
+    exportSearchPlaceholder: '以姓名、公司、電子郵件、電話搜尋…',
+    exportFilterYear: '年',
+    exportFilterMonth: '月',
+    exportFilterDate: '日期',
+    exportFilterOccasion: '場合',
+    exportFilterMetAs: '見面身分',
+    exportFilterNotExported: '僅顯示未匯出',
+    exportClearFilter: '✕',
+    exportSelectAll: (n: number) => `全選 ${n} 筆`,
+    exportDeselectAll: '取消全選',
+    exportNextBtn: (n: number) => `下一步：選擇匯出目標 (${n} 張) →`,
+    exportDestTitle: '選擇匯出目標',
+    exportDestOdoo: 'Odoo',
+    exportDestGoogle: 'Google Contacts',
+    exportDestNotConfigured: '尚未設定',
+    exportDestSetup: '前往設定 →',
+    exportRunBtn: (n: number, dest: string) => `將 ${n} 張名片匯出至 ${dest}`,
+    exportResultCreated: '✓ 已建立',
+    exportResultUpdated: '✓ 已更新',
+    exportResultError: '✗ 錯誤',
+    exportBackToList: '← 返回名片列表',
+    exportAlreadySynced: '已同步',
+
+    // Duplicate check panel
+    dupPanelTitle: '找到既有的聯絡人',
+    dupExisting: '既有',
+    dupNewCard: '新名片',
+    dupDragHint: '將右欄的欄位拖曳至左欄即可套用',
+    dupNotDuplicate: '並非重複 →',
+    dupDiscard: '捨棄新名片',
+    dupConfirmMerge: '確認合併',
+
+    // ScanPage — move/delete card group
+    moveToCard: (n: number) => `→ #${n}`,
+    deleteGroupLabel: '刪除名片',
+    deleteGroupDisabledHint: '請先將所有影像移出才能刪除',
+  },
 } as const
 
-// Recursively widen string literals so both ja and en satisfy the type
+// Recursively widen string literals so every locale block satisfies the type
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type _Widen<T> = T extends string ? string : T extends readonly (infer U)[] ? readonly _Widen<U>[] : T extends (...args: infer A) => infer R ? (...args: A) => R : T extends object ? { [K in keyof T]: _Widen<T[K]> } : T
 export type Translations = _Widen<typeof translations.ja>

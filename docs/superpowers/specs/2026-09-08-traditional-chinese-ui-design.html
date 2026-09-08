@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Traditional Chinese UI Language — Design Spec</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 800px; margin: 48px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.6; }
+    h1 { font-size: 1.6rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 12px; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; color: #111; }
+    h3 { font-size: 1rem; margin-top: 1.5rem; color: #374151; }
+    p { margin: 0.6rem 0; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.875rem; font-family: "SF Mono", monospace; }
+    pre { background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th { background: #f9fafb; text-align: left; padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; }
+    td { padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; vertical-align: top; }
+    ul, ol { padding-left: 1.4rem; margin: 0.5rem 0; }
+    li { margin: 0.3rem 0; }
+    .meta { color: #6b7280; font-size: 0.85rem; }
+    strong { color: #111; }
+  </style>
+</head>
+<body>
+
+<h1>Traditional Chinese UI language</h1>
+<p class="meta"><strong>Date:</strong> 2026-09-08 &nbsp;·&nbsp; <strong>Branch:</strong> <code>feat/zh-tw-ui-language</code></p>
+
+<h2>Problem</h2>
+<p>The app has two independent notions of "language":</p>
+<ol>
+  <li><strong>Card data language</strong> — <code>ja / zh / zh-TW / en / ko</code>, attached to each
+    <code>PersonName</code>, <code>OrganizationName</code> and <code>PositionDetail</code>. Traditional Chinese was
+    <strong>already fully supported</strong> here: the Claude Vision prompt tags it, the DB stores it, and
+    <code>LANG_OPTIONS</code> in <code>ParsedCardEditor</code> offers it.</li>
+  <li><strong>App UI language</strong> — <code>frontend/src/i18n.ts</code>, which only had <code>ja</code> and
+    <code>en</code>, driven by a two-way toggle button in the nav bar.</li>
+</ol>
+<p>Only the second was missing Traditional Chinese. Most people handling these cards are in Taipei and read
+Chinese more comfortably than Japanese or English.</p>
+
+<h2>Scope</h2>
+<p>Frontend only. No backend, DB, migration or parser changes.</p>
+
+<h2>Design</h2>
+
+<h3><code>frontend/src/i18n.ts</code></h3>
+<ul>
+  <li><code>LANG_CYCLE = ['ja', 'en', 'zh-TW'] as const</code> is exported as the single source of truth for both
+    the switcher order and the <code>Lang</code> union (<code>type Lang = (typeof LANG_CYCLE)[number]</code>).
+    Adding a fourth language means editing one line plus adding a block.</li>
+  <li>A <code>'zh-TW'</code> block with all 165 keys, in Taiwan business Chinese (台灣用語).</li>
+  <li><code>langToggle</code> keeps its existing "name the <em>next</em> language" semantics:
+    <code>ja → 'English'</code>, <code>en → '繁體中文'</code>, <code>zh-TW → '日本語'</code>.</li>
+</ul>
+<p><strong>Key parity is enforced by the compiler, not by discipline.</strong> <code>Translations</code> is derived
+from the <code>ja</code> block, and <code>LangContext</code> assigns <code>translations[lang]</code> to it. A missing
+key in any locale block fails <code>tsc -b</code>. Verified by deliberately deleting <code>mergeError</code> from
+the zh-TW block and confirming the expected error:</p>
+<pre><code>src/LangContext.tsx(35,42): error TS2322: … Property 'mergeError' is missing in type
+'{ … readonly navCollection: "名片庫" … }' but required in type '{ … }'</code></pre>
+
+<h3><code>frontend/src/LangContext.tsx</code></h3>
+<p>The stored-preference check was <code>stored === 'en' || stored === 'ja'</code>, which would silently reset a
+Chinese preference to English. Now validates against <code>LANG_CYCLE</code>.</p>
+<p><code>document.documentElement.lang</code> needed no change — <code>zh-TW</code> is a valid BCP-47 tag, and
+setting it correctly makes the browser pick Traditional Chinese glyph variants rather than Japanese ones for
+shared Han characters.</p>
+
+<h3><code>frontend/src/App.tsx</code></h3>
+<p>Toggle → cycle:</p>
+<pre><code>setLang(LANG_CYCLE[(LANG_CYCLE.indexOf(lang) + 1) % LANG_CYCLE.length])</code></pre>
+<p>Button markup and styling unchanged.</p>
+
+<h3><code>frontend/src/pages/CollectionPage.tsx</code></h3>
+<p><code>const _intlNames = new Intl.DisplayNames(['ja', 'en'], …)</code> was a module-level constant pinned to
+Japanese, used to label country groups for codes not in the <code>countries</code> table. That was already wrong in
+English; a third language made it worse. <code>countryLabel()</code> now takes an <code>Intl.DisplayNames</code>
+and the component builds one with <code>useMemo</code> keyed on <code>lang</code>.</p>
+<p>Note this only affects <strong>unregistered</strong> country codes. Registered ones
+(<code>JP → "Japan"</code>, <code>TW → "Taiwan"</code>, <code>US → "USA"</code>) return the user-entered name from
+the DB and are unaffected by UI language — by design.</p>
+
+<h3>Incidental fix</h3>
+<p><code>confirmDeletePerson</code> contained <code>\\n\\n</code> (an escaped backslash) in both <code>ja</code> and
+<code>en</code>, so the confirm dialog rendered a literal <code>\n\n</code> instead of blank lines. Corrected to
+<code>\n\n</code> in all three locales rather than reproducing the bug in the new one.</p>
+
+<h2>Non-goals</h2>
+<ul>
+  <li><code>honorificLabel()</code> in <code>PersonEditor.tsx</code> is keyed on the <strong>card's</strong> name
+    language and already returns <code>敬稱</code> for <code>zh*</code>. Unchanged.</li>
+  <li>No i18n library. The hand-rolled <code>translations</code> object is fine at this size.</li>
+</ul>
+
+<h2>Verification</h2>
+<ul>
+  <li><code>npm run build</code> — <code>tsc -b</code> clean, vite build clean.</li>
+  <li>Negative test of the type guard (above).</li>
+  <li>Browser, against the live backend on <code>:8000</code>:
+    <ul>
+      <li>Cycle 日本語 → English → 繁體中文 → 日本語 closes correctly; button always names the next language.</li>
+      <li>Preference persists across reload (<code>localStorage.lang === 'zh-TW'</code>).</li>
+      <li><code>document.documentElement.lang</code> tracks the selection.</li>
+      <li>Collection, Scan, Settings, Export and Card Detail all render Chinese, including nested
+        <code>contactLabels</code> (手機 / 傳真 / 地址（公司）/ 網站) and the org labels
+        (公司名稱 / 職稱 / 部門).</li>
+      <li>No console errors.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2>Terminology (confirmed by Koji, 2026-09-08)</h2>
+<table>
+  <tr><th>Key</th><th>Term</th><th>Rejected alternative</th></tr>
+  <tr><td><code>navCollection</code>, <code>collectionTitle</code></td><td>名片庫</td><td>收藏</td></tr>
+  <tr><td><code>myCompanyLabel</code>, <code>exportFilterMetAs</code></td><td>見面身分</td><td>當時身分</td></tr>
+  <tr><td><code>occasionLabel</code></td><td>場合</td><td>場面 / 場景</td></tr>
+  <tr><td><code>stageAnalyze</code></td><td>解析</td><td>分析</td></tr>
+  <tr><td><code>addImageLabel</code></td><td>新增影像</td><td>新增圖片</td></tr>
+  <tr><td><code>dupNotDuplicate</code></td><td>並非重複 →</td><td>不是重複，另存新檔 →</td></tr>
+</table>
+
+</body>
+</html>
