@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Edition — Distribution Design Spec</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 800px; margin: 48px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.6; }
+    h1 { font-size: 1.6rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 12px; }
+    h2 { font-size: 1.2rem; margin-top: 2rem; color: #111; }
+    h3 { font-size: 1rem; margin-top: 1.5rem; color: #374151; }
+    p { margin: 0.6rem 0; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.875rem; font-family: "SF Mono", monospace; }
+    pre { background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th { background: #f9fafb; text-align: left; padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; }
+    td { padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; vertical-align: top; }
+    ul, ol { padding-left: 1.4rem; margin: 0.5rem 0; }
+    li { margin: 0.3rem 0; }
+    .meta { color: #6b7280; font-size: 0.85rem; }
+    strong { color: #111; }
+  </style>
+</head>
+<body>
+
+<h1>Community Edition — Distributing NXT名刺整理器 to Non-Technical Friends</h1>
+<p><strong>Date:</strong> 2026-09-08 <strong>Status:</strong> Design approved, pending implementation plan</p>
+<h2>1. Context</h2>
+<p>The app today is a single-user, local-first tool that only Koji can run. The launcher hardcodes an absolute path into Koji&#x27;s Google Drive folder and calls <code>/usr/local/bin/python3</code>; <code>dist/</code> is gitignored so there is no shippable frontend build; and every outbound integration authenticates as Koji.</p>
+<p>The goal is to hand a working copy to friends in the Taipei community — Rotary, 日本人会, 沖縄県人会, WUB — who complain about their business card piles. This is a goodwill project. There is no revenue, so the design is constrained by two things above all else: <strong>near-zero ongoing cost</strong> and <strong>near-zero support burden</strong>.</p>
+<p><strong>The primary value of this app is retrieval, not capture.</strong> Scanning is the cost of entry; being able to find the right contact later is the reason to keep using it. That judgement drives several decisions below that would otherwise look like scope creep — search breadth, pagination, and backup in particular.</p>
+<p>A second motive shapes the design: Koji is introducing these friends to Claude. Sitting with someone to create their Anthropic account is therefore part of the point rather than an onboarding tax, which is what makes bring-your-own-key viable for an audience that could not complete that signup alone.</p>
+<h2>2. Decisions</h2>
+<p>Each of these was a real fork in the road. Recording the reasoning so a future reader does not relitigate them.</p>
+<table>
+<tr><th>Decision</th><th>Choice</th><th>Why</th></tr>
+<tr><td>What &quot;sharing&quot; means</td><td>Distribute the app itself</td><td>Not contact-sharing, not team collaboration, not a digital business card</td></tr>
+<tr><td>Audience</td><td>Community friends</td><td>Non-technical, mixed platform, no shared infrastructure, no support appetite</td></tr>
+<tr><td>Payload</td><td>The whole collection app</td><td>Not just photo→vCard. Scan, browse, search, dedupe, organize</td></tr>
+<tr><td>Where data lives</td><td>Entirely on the friend&#x27;s own machine</td><td>No hosting cost, no custody of other people&#x27;s contacts, no Taiwan PDPA exposure</td></tr>
+<tr><td>Hosting</td><td>None</td><td>Golden-Zeus is a laptop that sleeps, so self-hosting was never viable</td></tr>
+<tr><td>Platform for v1</td><td>macOS only</td><td>Halves the work. The launcher, <code>lsof</code>, <code>open</code>, and paths are all POSIX-shell today</td></tr>
+<tr><td>Claude API access</td><td>Each friend uses their own Anthropic account; Koji sets it up with them in person</td><td>Koji is also promoting Claude adoption in the community, so the account signup is a feature of the visit, not a cost of it. A Claude Pro/Max subscription grants <strong>no</strong> API access — the friend needs a console.anthropic.com organisation with its own billing. The objection to this (a non-technical person cannot self-serve that flow) is answered by Koji being present</td></tr>
+<tr><td>Scan model</td><td>Default <code>claude-sonnet-5</code>, changeable via a picker populated live from the Models API</td><td>Current generation, and ~26% cheaper per card than the <code>claude-sonnet-4-6</code> pinned in <code>app/config.py:11</code> today ($2/$10 versus $3/$15 per MTok). A <strong>hardcoded</strong> model string is a time bomb: with no auto-update, the day that model retires every install breaks at once and the only repair is shipping a new <code>.dmg</code> to everybody. The picker exists for survivability, not for choice</td></tr>
+<tr><td>Google Contacts sync</td><td>Deferred, but the button stays visible and explains itself</td><td>Auth is a refresh token baked into <code>.env</code> (<a href="../../../app/services/google_contacts.py">google_contacts.py:93</a>). No in-app OAuth flow exists, and the OAuth client is unverified against a sensitive scope — every friend would need manual test-user allowlisting and would still see Google&#x27;s warning screen. Keeping the button advertises the capability and creates a natural moment for the friend to contact Koji, rather than hiding a feature that does exist</td></tr>
+<tr><td>Backup</td><td>Local zip of <code>~/.nxt-a1/</code>, with restore</td><td>Local-only storage plus &quot;retrieval is the primary value&quot; means one dead laptop loses the entire collection. A non-technical friend will not have Time Machine configured</td></tr>
+<tr><td>Gatekeeper</td><td>Apple Developer Program, US$99/yr</td><td>The only option compatible with zero support. Unsigned distribution means walking non-technical friends through Terminal or System Settings, in three languages, with behaviour that varies by macOS version</td></tr>
+</table>
+<h3>Multi-tenancy was considered and rejected</h3>
+<p>A hosted multi-tenant service would have required an <code>owner_id</code> on persons, organizations, cards, contact_details, scan_sessions, occasions, and my_companies, with every query filtered. One missed <code>WHERE</code> clause is a privacy incident among friends. Local-only sidesteps the entire class of bug.</p>
+<h2>3. Non-goals for v1</h2>
+<ul>
+<li>Windows or Linux</li>
+<li>Odoo, OneDrive, and Google Drive sync (absent)</li>
+<li>Google Contacts OAuth and app verification (deferred — the button ships, explaining itself; see W5)</li>
+<li>Auto-update</li>
+<li>Multi-user, accounts, or any server component</li>
+<li>Sharing contacts *between* friends&#x27; installs</li>
+</ul>
+<h2>4. What already works in our favour</h2>
+<ul>
+<li><code>app/config.py:36</code> already resolves the database, images, and temp directory under <code>~/.nxt-a1/</code>. Per-user local storage is largely solved.</li>
+<li>Odoo, Google, and OneDrive services already no-op when their credentials are blank (e.g. <code>google_contacts.py:230</code>).</li>
+<li>The UI already ships ja / en / zh-TW (<code>frontend/src/i18n.ts:3</code>), which is exactly the language mix of the target audience.</li>
+<li><code>my_companies</code> has no seeded rows in migrations, so a fresh <code>~/.nxt-a1/meishi.db</code> starts empty rather than pre-loaded with NXT / 正康 / 智原.</li>
+</ul>
+<h2>5. Architecture</h2>
+<p>A <code>.app</code> bundle containing a PyInstaller-frozen backend (uvicorn, FastAPI, opencv, alembic), the built <code>frontend/dist</code>, and <code>migrations/</code>. Double-clicking it starts the backend on a free port and opens the default browser at the collection page. The <code>.app</code> owns the process and appears in the Dock; quitting it stops the server.</p>
+<p>Expect roughly 150 MB from opencv and numpy. Acceptable for a Drive link.</p>
+<p>This is <strong>not a fork</strong>. It is the same repository with a new packaging target and a first-run path. Distribution-specific behaviour is achieved by runtime detection of absent credentials, never by a build-time <code>COMMUNITY_EDITION</code> flag.</p>
+<h2>6. Phasing</h2>
+<p>The work splits along a line that matters: most of it makes the app usable by somebody who is not Koji, and only a minority is macOS packaging.</p>
+<p><strong>Phase A — usable by someone else.</strong> W3, W4, W5, W6, W7, W10, W11, W12. Every one is verifiable in the existing development tree with the app running as it does today. No bundle, no signing, no Apple Developer membership required.</p>
+<p><strong>Phase B — ship it.</strong> W1, W2, W8, W9, W13. Bundling, Gatekeeper, notarization, the install guide, and clean-room verification.</p>
+<p>Three reasons for this order:</p>
+<ol>
+<li><strong>Phase A is dogfoodable.</strong> Better search, backup, and a model picker improve Koji&#x27;s own daily use immediately. If the audience-validation risk in §10 bites and no friend ever installs this, Phase A was still worth building.</li>
+<li><strong>It defers the money.</strong> The US$99 Apple Developer fee is only needed for Phase B, so it is spent after the app has proven itself rather than before.</li>
+<li><strong>It separates the unfamiliar risk.</strong> Hardened Runtime and PyInstaller failures are the least predictable part of this project. Isolating them keeps them from blocking work that carries no such uncertainty.</li>
+</ol>
+<p>Phase B depends on Phase A only in that W13&#x27;s checklist verifies Phase A features. Nothing in Phase A depends on Phase B.</p>
+<h2>7. Work items</h2>
+<h3>W1 · Phase B — Bundle-safe path resolution</h3>
+<p>Three paths are resolved relative to the source tree or the working directory and will break inside a frozen bundle:</p>
+<ul>
+<li><code>app/main.py:117</code> — <code>_FRONTEND_DIST = Path(__file__).parent.parent / &quot;frontend&quot; / &quot;dist&quot;</code></li>
+<li><code>app/main.py:33</code> — <code>AlembicConfig(&quot;alembic.ini&quot;)</code></li>
+<li>the Alembic <code>script_location</code> pointing at <code>migrations/</code></li>
+</ul>
+<p>Introduce one <code>resource_path()</code> helper that is aware of <code>sys._MEIPASS</code> when frozen and falls back to the source tree otherwise. Apply it to all three.</p>
+<h3>W2 · Phase B — Delete the Docker launcher, choose a free port</h3>
+<p><code>frontend/src/App.tsx:12</code> defines <code>LAUNCHER = &#x27;http://127.0.0.1:8001&#x27;</code>, posts to it to &quot;start Docker,&quot; sends a <code>/stop</code> beacon on <code>beforeunload</code>, and shows the user &quot;Check that Docker is running&quot; on timeout. None of this applies to a distributed bundle. Remove the launcher client, the beacon, and the Docker copy — do not adapt them.</p>
+<p>Port 8000 may be occupied on a friend&#x27;s Mac. Bind an ephemeral free port at launch, pass it to uvicorn, and open the browser at whatever was obtained. Remove the fixed-port assumption from the launcher and the frontend.</p>
+<p>Note that Koji&#x27;s own machine runs two supervisors for this app (the <code>co.nxta.nxt-a1-backend</code> LaunchAgent and <code>~/.nxt-a1/launcher.py</code>). Neither ships. The distributed bundle is self-supervising.</p>
+<h3>W3 · Phase A — Config store with source precedence</h3>
+<p>Add <code>~/.nxt-a1/config.json</code>, written by the first-run wizard and readable by <code>app/config.py</code>. Precedence, highest first:</p>
+<ol>
+<li>environment variables / <code>.env</code> — Koji&#x27;s development machine</li>
+<li><code>~/.nxt-a1/config.json</code> — a friend&#x27;s install</li>
+<li>defaults</li>
+</ol>
+<p>Keys a distributed install needs: <code>anthropic_api_key</code> and <code>claude_model</code>. Odoo, Google, and Microsoft keys stay absent, which is what drives the runtime gating in W5.</p>
+<p><code>claude_model</code> defaults to <code>claude-sonnet-5</code> and is changeable from Settings via the live picker described in W10. It is not offered during the wizard — a friend setting up for the first time has no basis to choose, and the default is right.</p>
+<p>Changing the default from the <code>claude-sonnet-4-6</code> currently pinned at <code>app/config.py:11</code> also applies to Koji&#x27;s own install: it is the current generation and cheaper per card. Note that <code>claude_parser.py:284</code> only sends <code>thinking: {&quot;type&quot;: &quot;adaptive&quot;}</code> when the model name contains <code>opus</code>, so the Sonnet path is unaffected by the switch.</p>
+<p>UI language is deliberately <strong>not</strong> stored here. It already persists in <code>localStorage</code> via <code>frontend/src/LangContext.tsx:30</code>, and the wizard simply uses that existing setter.</p>
+<h3>W4 · Phase A — First-run setup wizard</h3>
+<p>Shown when <code>config.json</code> is missing. Steps:</p>
+<ol>
+<li>Choose language (ja / en / zh-TW), through the existing <code>LangContext</code> setter</li>
+<li><strong>Prerequisites checklist.</strong> Before asking for anything, show what the whole setup will require, so nobody starts and stalls halfway: - an email address - a credit card (for the Anthropic account) - an internet connection - roughly 20 minutes - and the cost, stated plainly: *about US$5 covers a 300-card shoebox*</li>
+</ol>
+<p>This screen exists specifically to defuse the &quot;friend stalls at the billing step&quot; risk in §10. It is the first thing they see, not a footnote.</p>
+<ol>
+<li>Paste the Claude API key. <strong>Validate it with one cheap API call before accepting</strong> so a typo or a bad paste fails during setup, not during the friend&#x27;s first scan.</li>
+<li>Add the first <code>my_company</code> entry</li>
+<li>Done — land on the collection page</li>
+</ol>
+<h3>W5 · Phase A — Three states for integration destinations</h3>
+<p><code>frontend/src/components/ExportDestinationSelector.tsx:26-29</code> hardcodes four destinations with <code>configured: true</code>. Drive that flag from a backend capability response derived from which credentials are actually present, and give each destination one of <strong>three</strong> states rather than two:</p>
+<table>
+<tr><th>State</th><th>Destinations</th><th>Behaviour</th></tr>
+<tr><td>Configured</td><td>Everything on Koji&#x27;s install</td><td>Works as today</td></tr>
+<tr><td>Deferred</td><td>Google Contacts, on a distributed install</td><td>Button stays <strong>visible</strong>. Pressing it opens a dialog in the user&#x27;s language: this feature needs additional setup, please contact Koji. Styled as information, <strong>not</strong> as an error — nothing has gone wrong</td></tr>
+<tr><td>Not applicable</td><td>Odoo, on a distributed install</td><td>Hidden entirely. Odoo is Koji&#x27;s ERP and is meaningless to a friend</td></tr>
+</table>
+<p>The same three-state treatment applies to the Odoo and Google sections of <code>SettingsPage</code>, and to the Google Contacts auto-sync that fires on card confirm — auto-sync is silently inactive when unconfigured, since a dialog on every card confirm would be intolerable.</p>
+<p>Keeping the Google button visible is deliberate: it advertises a capability that genuinely exists and gives the friend a reason to get back in touch, which is also when Koji learns whether demand justifies the OAuth verification project.</p>
+<h3>W6 · Phase A — vCard export (new feature)</h3>
+<p>An interoperability escape hatch, not the product&#x27;s payoff — retrieval inside the app is the payoff (§1). vCard matters because it gets contacts onto a phone and because it means the friend is never locked in. It needs no OAuth.</p>
+<p>Add <code>GET /api/v2/export/vcard</code> returning a <code>.vcf</code> for a card selection or the whole collection. Double-clicking a <code>.vcf</code> on macOS imports directly into Contacts, which syncs onward to the friend&#x27;s iPhone.</p>
+<p>Note this is <strong>not</strong> the backup mechanism — vCard loses card images, occasions, relationships, and merge history. Backup is W11.</p>
+<p>Requirements:</p>
+<ul>
+<li><strong>vCard 3.0</strong>, which macOS Contacts handles most reliably</li>
+<li>UTF-8 throughout — CJK names are the common case, not the edge case</li>
+<li>Multiple <code>TEL</code> and <code>EMAIL</code> entries per person</li>
+<li><code>ORG</code>, <code>TITLE</code>, <code>ADR</code>, <code>BDAY</code></li>
+<li>Optionally embed the front-side card image as <code>PHOTO</code></li>
+</ul>
+<h3>W7 · Phase A — Comprehensible quota and key errors</h3>
+<p>A friend&#x27;s prepaid credit balance will eventually run out, and a key can be revoked or mistyped. When the Anthropic call fails on authentication or on an exhausted balance, the scan path must surface a plain-language message in the user&#x27;s chosen language — &quot;your Claude credit has run out; top it up at console.anthropic.com&quot; — not a raw API error.</p>
+<p>Because the friend owns the account, this error is <strong>self-serve</strong>: the message should tell them exactly what to do rather than tell them to contact Koji. Every case where it fails to do so becomes a support call, which is what the whole design is trying to avoid. Distinguish at minimum: invalid key, exhausted credit, and rate limit.</p>
+<h3>W8 · Phase B — Build, sign, notarize</h3>
+<p><code>scripts/build-app.sh</code>, one command on Koji&#x27;s Mac:</p>
+<ol>
+<li><code>npm run build</code> in <code>frontend/</code></li>
+<li>PyInstaller freeze of the backend</li>
+<li>Assemble the <code>.app</code></li>
+<li><strong>Sign every nested binary first.</strong> PyInstaller bundles dozens of <code>.so</code> and <code>.dylib</code> files from numpy, opencv, and Pillow. Inner binaries are signed before the outer bundle.</li>
+<li><code>codesign --options runtime --timestamp</code> with the Developer ID Application identity</li>
+<li><code>xcrun notarytool submit --wait</code></li>
+<li><code>xcrun stapler staple</code></li>
+<li>Package as a <code>.dmg</code></li>
+</ol>
+<p><strong>Entitlements.</strong> Notarization requires the Hardened Runtime, which breaks CPython bundles by default. The app needs:</p>
+<ul>
+<li><code>com.apple.security.cs.allow-unsigned-executable-memory</code></li>
+<li><code>com.apple.security.cs.disable-library-validation</code> — opencv and numpy load unsigned shared objects at import time</li>
+</ul>
+<p>Getting this wrong produces a bundle that launches correctly on the build machine and dies instantly on a friend&#x27;s Mac, so it carries an explicit verification step in W13.</p>
+<p><strong>Credentials never enter the repository.</strong> Team ID, signing identity, and the notarytool app-specific password or API key live in Koji&#x27;s Keychain and are read by the script at build time.</p>
+<p>Notarization must be re-run for every build that is handed out.</p>
+<h3>W9 · Phase B — Install guide</h3>
+<p>One page in ja / zh-TW / en. With a notarized build this is roughly four lines: download the <code>.dmg</code>, drag to Applications, double-click, paste the key you were given.</p>
+<h3>W10 · Phase A — Model selection that survives model retirement</h3>
+<p>The distributed build has no auto-update, so a hardcoded model string is a latent outage: on the day that model is retired, every install fails at once and the only repair is redistributing a <code>.dmg</code>. Three pieces:</p>
+<ol>
+<li><strong>Live picker.</strong> Settings shows a &quot;Scan model&quot; control populated by <code>client.models.list()</code> using the friend&#x27;s own key, so the list is always whatever their account can actually reach. Default <code>claude-sonnet-5</code>.</li>
+<li><strong>Estimated cost per card beside each option.</strong> Computed from the token figures in §8 and the model&#x27;s own pricing tier. Without this, the picker invites an expensive mistake — see the warning below.</li>
+<li><strong>Graceful failure.</strong> When a scan fails because the configured model is unavailable, catch it specifically and route the user to the picker with a plain-language explanation, rather than surfacing a raw API error.</li>
+</ol>
+<p><strong>Cost warning to encode.</strong> <code>app/services/claude_parser.py:284</code> turns on adaptive thinking with <code>if &quot;opus&quot; in settings.claude_model</code>. Selecting any Opus model therefore both moves to a higher price tier and adds thinking tokens — a several-fold cost increase from one dropdown change. The string match is also fragile against future model naming. Surface the estimated cost in the picker, and treat that <code>in</code> test as something to make explicit rather than inherit.</p>
+<h3>W11 · Phase A — Backup and restore</h3>
+<p>Local-only storage is the right privacy answer, but combined with &quot;retrieval is the primary value&quot; it means a friend&#x27;s entire collection sits on one laptop with no copy, and a non-technical user will not have Time Machine configured.</p>
+<ul>
+<li><strong>Back up:</strong> write a zip of <code>~/.nxt-a1/</code> — <code>meishi.db</code> plus the <code>images/</code> tree — to a folder the user chooses (Desktop or iCloud Drive being the obvious targets). Exclude <code>temp/</code>.</li>
+<li><strong>Restore:</strong> read such a zip back. Restore <strong>replaces</strong> the current collection rather than merging, and must say so unambiguously before proceeding — merge semantics are a different and much larger feature.</li>
+<li>Respect the DB-commit-before-filesystem convention already used elsewhere in the project, and validate the archive before destroying anything.</li>
+</ul>
+<p>No cloud service, no new dependency, no change to the privacy story.</p>
+<h3>W12 · Phase A — Search breadth and pagination</h3>
+<p>Both halves of this are blockers under §1, not enhancements.</p>
+<p><strong>Pagination.</strong> <code>app/routers/v2/persons.py:133</code> caps results at 50 by default and 200 maximum, and <code>CollectionPage</code> fetches <code>listCards({limit: 200})</code> then filters client-side. A friend who scans a genuine shoebox of 300+ cards silently cannot reach most of their own collection. Remove the ceiling for browsing — paginate or virtualize the list — and make sure search is not bounded by a page of results either.</p>
+<p><strong>Breadth.</strong> <code>persons.py:141-147</code> matches only current person names and current organization names. Extend the same union-of-<code>person_id</code> approach to cover:</p>
+<table>
+<tr><th>Field</th><th>Path</th></tr>
+<tr><td>Job title, department</td><td><code>Position</code> → <code>PositionDetail.title</code> / <code>.department</code></td></tr>
+<tr><td>Email, phone, address, URL, social</td><td><code>ContactDetail.value</code> and <code>.label</code> — one clause covers all of them, since every type shares the column</td></tr>
+<tr><td>Free-text notes</td><td><code>Person.notes</code></td></tr>
+<tr><td>Occasion</td><td><code>Card.occasion_id</code> → <code>Occasion.name</code> / <code>.location</code> / <code>.notes</code>, joined back to the person via the card</td></tr>
+</table>
+<p>Occasion is the one to get right: *&quot;the person from the Rotary dinner in March&quot;* is the query this audience actually has, the data already exists, and today it is unreachable.</p>
+<p>Start with <code>ILIKE</code> clauses matching the existing style. Only introduce SQLite FTS if measurement on a realistic collection shows it is needed — a few hundred rows on local SQLite will not need it, and FTS brings tokenizer problems with CJK text that are not worth inheriting unprompted.</p>
+<h3>W13 · Phase B — Clean-room verification</h3>
+<p>None of the above is provable in Koji&#x27;s development tree, where Python, dependencies, <code>.env</code>, and a populated <code>~/.nxt-a1/</code> all already exist.</p>
+<p>The realistic clean room is <strong>a fresh macOS user account</strong> — new home directory, no <code>~/.nxt-a1</code>, no development tools on <code>PATH</code>, and a <code>.dmg</code> downloaded through a browser so that quarantine genuinely applies. It costs nothing and needs no VM.</p>
+<p>Verification checklist:</p>
+<ul>
+<li>The <code>.dmg</code> opens and the app launches with no Gatekeeper prompt of any kind</li>
+<li>The Hardened Runtime does not kill the process at opencv or numpy import</li>
+<li>Migrations run and create a fresh <code>~/.nxt-a1/meishi.db</code></li>
+<li>The setup wizard appears, rejects a deliberately malformed key, and accepts a valid one</li>
+<li>A scan completes end to end using a key from a freshly created Anthropic account</li>
+<li>A revoked or exhausted key produces the plain-language message from W7, in the selected UI language — not a raw API error</li>
+<li>Odoo and Google Contacts are absent from the UI, not present-and-failing</li>
+<li>The scan runs on <code>claude-sonnet-5</code>, confirmed from <code>config.json</code> rather than assumed from the default</li>
+<li>vCard export produces a file that imports into macOS Contacts with CJK names intact</li>
+<li>Quitting the app stops the backend and frees the port</li>
+<li>A collection of 300+ cards browses fully — nothing is cut off at 50 or 200 (W12)</li>
+<li>Search finds a person by job title, by email fragment, by phone fragment, by a word from their notes, and by occasion name (W12)</li>
+<li>The Google Contacts button is present and opens the informational dialog in the selected language; Odoo is absent entirely (W5)</li>
+<li>The Settings model picker lists models from the friend&#x27;s own account, and a deliberately invalid <code>claude_model</code> in <code>config.json</code> routes to the picker with a readable message rather than an API error (W10)</li>
+<li>Backup produces a zip that, restored into a fresh install, reproduces the collection including card images (W11)</li>
+</ul>
+<h2>8. Operations — the setup session</h2>
+<p>Not app code. A procedure Koji runs with each friend, in person, once. It is also the Claude introduction, so it is worth doing unhurried.</p>
+<ol>
+<li>Create the friend&#x27;s Anthropic account at console.anthropic.com</li>
+<li>Create an organisation and add a payment method</li>
+<li>Purchase an initial credit balance</li>
+<li>Create an API key</li>
+<li>Install the <code>.dmg</code>, run the setup wizard, paste the key</li>
+<li>Scan two or three of their own cards together, and export a <code>.vcf</code> into their Contacts so they have seen the whole loop work</li>
+</ol>
+<h3>What a scan actually costs</h3>
+<p>Measured against the app&#x27;s real <code>SYSTEM_PROMPT</code>, <code>_RULES</code>, and <code>_SCHEMA</code> with an image at the app&#x27;s own <code>MAX_DIMENSION</code> of 1568px. Input tokens are measured via <code>messages.count_tokens</code>; output is assumed at roughly 600 tokens, which is the one figure not measured.</p>
+<table>
+<tr><th>Model</th><th>Input tokens, 1 side</th><th>Input tokens, 2 sides</th><th>Cost per 2-sided card</th><th>Cards per US$5</th></tr>
+<tr><td><code>claude-sonnet-4-6</code> (today&#x27;s pin)</td><td>2,673</td><td>4,243</td><td>~2.2¢</td><td>~230</td></tr>
+<tr><td><strong><code>claude-sonnet-5</code> (chosen)</strong></td><td>3,210</td><td>5,013</td><td><strong>~1.6¢</strong></td><td><strong>~310</strong></td></tr>
+<tr><td><code>claude-haiku-4-5</code></td><td>2,672</td><td>4,242</td><td>~0.7¢</td><td>~690</td></tr>
+</table>
+<p>The sentence to say out loud during setup: <strong>about US$5 covers a 300-card shoebox.</strong> Confirm Anthropic&#x27;s current minimum credit purchase during the first session; it is not recorded here because it was not verified.</p>
+<p>A fresh install has no <code>FieldCorrection</code> rows, so the few-shot block is empty and these are floor numbers. Prompt size grows as a friend corrects fields.</p>
+<h2>9. Costs</h2>
+<table>
+<tr><th>Item</th><th>Who pays</th><th>Cost</th><th>Notes</th></tr>
+<tr><td>Apple Developer Program</td><td>Koji</td><td><strong>US$99/year, recurring</strong></td><td>Required for Developer ID signing and notarization. Ties the build to Koji&#x27;s Apple ID. The only recurring cost in the project</td></tr>
+<tr><td>Claude API usage</td><td>Each friend</td><td>~1.6–2.2¢ per card</td><td>Their own account, their own prepaid credit. Koji&#x27;s exposure is zero</td></tr>
+<tr><td>Hosting</td><td>—</td><td>$0</td><td>There is none</td></tr>
+<tr><td>Distribution</td><td>Koji</td><td>$0</td><td>Google Drive link</td></tr>
+</table>
+<p>Koji&#x27;s total ongoing cost is therefore US$99/year, independent of how many friends install it or how many cards they scan.</p>
+<h2>10. Risks</h2>
+<ul>
+<li><strong>Hardened Runtime versus PyInstaller</strong> is the most likely source of a &quot;works on my machine&quot; failure. Mitigated by W13.</li>
+<li><strong>Bundle size</strong> of roughly 150 MB may be awkward over a slow connection. Acceptable for now.</li>
+<li><strong>No auto-update.</strong> A bug fix means Koji redistributes a <code>.dmg</code> and asks people to reinstall. Acceptable at community scale; revisit if the population grows. The sharpest consequence of this — a retired model bricking every install simultaneously — is addressed by W10; other bugs remain manual.</li>
+<li><strong>Restore is destructive.</strong> W11 replaces rather than merges. A friend who restores an old backup over a newer collection loses the difference. The confirmation copy is the only guard, so it has to be unambiguous.</li>
+<li><strong>Friends may want Google Contacts sync</strong> once they see vCard export is manual. The answer for v1 is no; the path forward would be OAuth plus Google verification, a project of its own.</li>
+<li><strong>The audience was never asked.</strong> This design assumes Rotary friends want the whole collection app because Koji does. Worth validating with two or three people before building all of it.</li>
+</ul>
+<h2>11. Deferred</h2>
+<ul>
+<li>Windows support</li>
+<li>Google Contacts OAuth and app verification</li>
+<li>Auto-update, e.g. Sparkle — notarized signing makes this cleanly possible later</li>
+<li>Any form of sharing contacts between installs</li>
+</ul>
+
+</body>
+</html>
