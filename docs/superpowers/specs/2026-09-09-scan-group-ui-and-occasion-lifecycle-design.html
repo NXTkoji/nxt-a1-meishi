@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scan Group UI &amp; Occasion Lifecycle — Design Spec</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans TC", sans-serif; max-width: 860px; margin: 48px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.65; }
+    h1 { font-size: 1.6rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 12px; }
+    h2 { font-size: 1.2rem; margin-top: 2.4rem; color: #111; border-bottom: 1px solid #f0f0f0; padding-bottom: 6px; }
+    h3 { font-size: 1rem; margin-top: 1.6rem; color: #374151; }
+    p { margin: 0.6rem 0; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.875rem; font-family: "SF Mono", ui-monospace, monospace; }
+    pre { background: #f3f4f6; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+    pre code { background: none; padding: 0; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th { background: #f9fafb; text-align: left; padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; }
+    td { padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 0.85rem; vertical-align: top; }
+    ul, ol { padding-left: 1.4rem; margin: 0.5rem 0; }
+    li { margin: 0.3rem 0; }
+    blockquote { border-left: 3px solid #d1d5db; margin: 1rem 0; padding: 0.4rem 0 0.4rem 14px; color: #4b5563; background: #fafafa; }
+    hr { border: none; border-top: 1px solid #e5e7eb; margin: 2.4rem 0; }
+    strong { color: #111; }
+  </style>
+</head>
+<body>
+<h1 id="scan-group-ui-overhaul-and-occasion-lifecycle">Scan → Group UI overhaul, and Occasion lifecycle</h1>
+<p><strong>Date:</strong> 2026-09-09
+<strong>Status:</strong> Approved for planning
+<strong>Scope:</strong> <code>frontend/src/pages/ScanPage.tsx</code>, <code>frontend/src/components/{DropZone,CardOutlineSelector}.tsx</code>,
+<code>frontend/src/pages/SettingsPage.tsx</code>, <code>frontend/src/i18n.ts</code>, <code>app/routers/v2/{cards,occasions}.py</code>,
+<code>app/schemas/api.py</code>, <code>app/db/models.py</code>, <code>app/services/legacy_card.py</code>, one Alembic migration.</p>
+<hr />
+<h2 id="1-why">1. Why</h2>
+<p>Two unrelated problems, batched because both surfaced in the same review.</p>
+<p><strong>The Group stage is unguided.</strong> A new user (and the Community Edition will have them) is shown
+three grouping buttons with no way to know which applies, icon buttons too small to hit reliably,
+and a <code>Start analysis</code> button that silently discards any image left ungrouped. Rotation appears
+not to work. The outline screen gives no instructions at all.</p>
+<p><strong>Occasions accumulate and deleting one loses data.</strong> The live database
+(<code>~/.nxt-a1/meishi.db</code>) holds 21 occasions created between March and July 2026 — roughly
+50 per year — presented in a flat <code>&lt;select&gt;</code>. 20 of the 21 have cards attached; <code>RI Convention</code>
+alone has 48. Deleting an occasion silently nulls <code>cards.occasion_id</code>, and the occasion name is
+not recoverable or searchable afterwards.</p>
+<h2 id="2-non-goals">2. Non-goals</h2>
+<ul>
+<li>No occasion <strong>filter UI</strong> on the Collection page. Text search covers the need; a clickable
+  occasion chip is a separate feature.</li>
+<li>No change to the corner-detection CV pipeline, to analysis, review, or export.</li>
+<li>No change to how <code>event_date</code> is captured. It stays optional and mostly unset; grouping
+  works around that (§6.2).</li>
+<li>No new frontend test runner. <code>frontend/</code> has no test harness and this spec does not add one.</li>
+</ul>
+<hr />
+<h2 id="3-upload-drop-target">3. Upload — drop target</h2>
+<p><strong>Problem.</strong> <code>DropZone</code> is <code>min-h-[360px]</code> ([DropZone.tsx:33]). Dragging files from another
+window onto a 360px strip is fiddly.</p>
+<p><strong>Change.</strong> <code>DropZone</code> gains a <code>compact?: boolean</code> prop.</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Height</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No images uploaded yet</td>
+<td><code>min-h-[720px]</code></td>
+<td>The whole job at this stage is hitting the target. Double, as requested.</td>
+</tr>
+<tr>
+<td>One or more images uploaded (<code>compact</code>)</td>
+<td><code>min-h-[200px]</code></td>
+<td>Still larger than today's 360px is <em>useful</em>, but does not push card groups off-screen.</td>
+</tr>
+</tbody>
+</table>
+<p><code>ScanPage</code> renders <code>&lt;DropZone compact={ungrouped.length &gt; 0 || groups.length &gt; 0} /&gt;</code>.
+(Note <code>separated</code> is a <em>subset</em> of <code>ungrouped</code> per §4.2 — it must not be added to it.)</p>
+<p><strong>Acceptance:</strong> with an empty session the drop zone fills the viewport; after the first upload it
+shrinks and the Ungrouped row is visible without scrolling.</p>
+<hr />
+<h2 id="4-group-stage-layout-and-copy">4. Group stage — layout and copy</h2>
+<h3 id="41-instruction-panel">4.1 Instruction panel</h3>
+<p>New collapsible panel, rendered above the Ungrouped row whenever <code>stage === 'grouping'</code>.
+Open by default; collapsed state persisted in <code>localStorage</code> under <code>scan.help.collapsed</code> so a
+returning user is not re-lectured.</p>
+<p>Content (i18n, all three languages):</p>
+<blockquote>
+<p><strong>How this works</strong>
+✂️ <strong>Split</strong> — for a photo holding several cards, cut it into one image per card.
+Every multi-card photo must be split before analysis.
+↺ ↻ <strong>Rotate</strong> — turn an image upright so the text reads left to right.</p>
+</blockquote>
+<h3 id="42-two-rows">4.2 Two rows</h3>
+<p><code>ungrouped</code> is partitioned for display only, by filename. No new state.</p>
+<pre><code class="language-ts">// Images produced by the scissors carry a _cardN suffix (see getCardPos).
+const separated = ungrouped.filter(i =&gt; getCardPos(i.image_filename) !== null)
+const unsplit   = ungrouped.filter(i =&gt; getCardPos(i.image_filename) === null)
+</code></pre>
+<p>Render order: <strong>Ungrouped</strong> (whole photos), then <strong>Separated cards</strong>, then <strong>Card groups</strong>.
+A row with no images is not rendered.</p>
+<h3 id="43-grouping-buttons-move-to-the-row-they-apply-to">4.3 Grouping buttons move to the row they apply to</h3>
+<p>This is the streamlining. The user is never asked to choose between two strategies whose
+preconditions they cannot see.</p>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>Buttons</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ungrouped</td>
+<td><code>1 per card (single-sided)</code>, <code>Pairs of 2 (double-sided)</code></td>
+<td><code>Pair by position</code> is impossible here — these files have no <code>_cardN</code>.</td>
+</tr>
+<tr>
+<td>Separated cards</td>
+<td><strong><code>Pair by position</code></strong> (primary), <code>1 per card (single-sided)</code></td>
+<td>Matches the confirmed workflow: shoot all fronts in one photo, flip in place, shoot all backs.</td>
+</tr>
+</tbody>
+</table>
+<p><code>Pair by position</code> is the primary (blue) button on the Separated row, with a one-line subtitle:
+<em>"Card #1 of each photo pairs with card #1 of the next photo, as front and back."</em></p>
+<p><code>autoGroup1</code>, <code>autoGroup2</code> and <code>autoPairByPosition</code> are parameterised to take an
+<code>images: SessionImage[]</code> argument instead of closing over the whole <code>ungrouped</code> array.
+Behaviour is otherwise unchanged, including <code>autoPairByPosition</code>'s handling of a lone trailing
+prefix (each of its positions becomes a single-sided card) — which is what makes
+<code>Pair by position</code> correct for a fronts-only batch too.</p>
+<p><code>hasMixedCropState</code> keeps its warning but is reworded to point at the row:
+<em>"Some photos in Ungrouped have not been split yet. Split them before pairing by position,
+or the pairing will be wrong."</em></p>
+<h3 id="44-readiness-gate">4.4 Readiness gate</h3>
+<p><strong>Problem.</strong> Two behaviours silently lose work:</p>
+<ol>
+<li><code>Start analysis</code> is enabled when <code>groups.some(g =&gt; g.images.length &gt; 0)</code>. Any image still
+   sitting in Ungrouped or Separated is dropped from the analysis without warning.</li>
+<li>The <code>Start analysis</code> shortcut in the Ungrouped header ([ScanPage.tsx:713]) runs
+   <code>autoGroup1()</code> first, silently making the whole batch single-sided.</li>
+</ol>
+<p><strong>Change.</strong></p>
+<ul>
+<li><strong>Remove</strong> the shortcut button at [ScanPage.tsx:713]. Grouping becomes an explicit act.</li>
+<li><code>Start analysis</code> is <strong>disabled</strong> while <code>ungrouped.length &gt; 0</code>, with the reason rendered
+  beside it rather than hidden in a tooltip:</li>
+</ul>
+<blockquote>
+<p>⚠ <strong>2 images are not in a card group yet.</strong> Split any photo holding more than one card,
+then use the grouping buttons above.</p>
+</blockquote>
+<ul>
+<li>It stays disabled if every group is empty, as today.</li>
+</ul>
+<p>Both <code>Start analysis</code> buttons (header and footer of the Card groups section) share one
+<code>analysisBlockedReason</code> value so they cannot disagree.</p>
+<h3 id="45-tips">4.5 Tips</h3>
+<p>The existing tip line ([ScanPage.tsx:807]) is moved into the Card groups section header area and
+extended to three lines, shown whenever <code>stage === 'grouping'</code> and <code>groups.length &gt; 0</code>:</p>
+<ul>
+<li>Drag an image from one card into another to pair them as front and back.</li>
+<li><strong>The side showing the name and contact details should be the Front.</strong> Use ⇅ Swap to change it.</li>
+<li><strong>When every card is positioned correctly, press Start analysis.</strong></li>
+</ul>
+<h3 id="46-icon-size-and-layout-stability">4.6 Icon size and layout stability</h3>
+<p><strong>Problem A — icons too small.</strong> Split/rotate/crop buttons are <code>text-xs px-1.5 py-0.5</code>,
+roughly 18px. Below any reasonable target size.</p>
+<p><strong>Problem B — the rotate button moves.</strong> Images render <code>h-24 w-auto</code> (Ungrouped) and
+<code>h-28 w-auto</code> (group). Rotating 90° swaps the aspect ratio, so the tile's width changes, the
+button row below it re-lays out, and every sibling after it shifts. Clicking ↻ twice in a row
+requires re-aiming.</p>
+<p><strong>Change.</strong> Both rows use a <strong>fixed <code>w-32 h-32</code> tile</strong> with <code>object-contain</code>. A landscape card
+fills the width, a portrait card fills the height; the tile's footprint never changes, so nothing
+below or after it moves. Icon buttons become <code>h-9 min-w-9 text-lg</code> (~36px).</p>
+<p><strong>Acceptance:</strong> clicking ↻ four times in succession without moving the mouse rotates the image
+four times.</p>
+<hr />
+<h2 id="5-card-outline-screen">5. Card outline screen</h2>
+<p><code>CardOutlineSelector</code> is currently hardcoded English while the rest of the app is ja/en/zh-TW.
+Since this section adds user-facing copy, the whole component is moved onto <code>useLang()</code> —
+roughly a dozen strings × 3 languages, including the existing <code>Cancel</code>, <code>Undo</code>, <code>Crop N cards</code>,
+<code>Detecting corners…</code>, <code>That card is already outlined</code>, <code>Corner detection failed — try again</code>.</p>
+<p>New copy:</p>
+<table>
+<thead>
+<tr>
+<th>Position</th>
+<th>Text</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sub-header, tap mode</td>
+<td>Click the centre of a card once — its 4 corners are found automatically. Then drag any corner to adjust.</td>
+</tr>
+<tr>
+<td><code>Undo</code> button <code>title</code></td>
+<td>Removes the last card you outlined.</td>
+</tr>
+<tr>
+<td>Footer, before any outline</td>
+<td>Click the centre of each business card.</td>
+</tr>
+<tr>
+<td>Footer, once ≥1 outlined</td>
+<td>Above the green button: <em>When every card is outlined, press the green button below.</em></td>
+</tr>
+</tbody>
+</table>
+<p>An amber (<code>confidence === 0</code>) outline already renders dashed with a ⚠ marker; the sub-header
+gains a conditional line when any amber polygon exists: <em>"A dashed amber outline means the
+corners are a guess — drag them onto the card edges."</em></p>
+<p>No behavioural change. The <code>cornerDragRef</code> fix and touch handling are untouched.</p>
+<hr />
+<h2 id="6-occasions">6. Occasions</h2>
+<h3 id="61-preserve-the-label-on-delete">6.1 Preserve the label on delete</h3>
+<p><strong>Current behaviour (verified empirically, not inferred):</strong> <code>db.delete(occ)</code> causes SQLAlchemy
+to load <code>Occasion.cards</code> and set each <code>occasion_id</code> to <code>NULL</code>. Cards survive; the occasion name
+is gone.</p>
+<p><strong>Change.</strong> New nullable column:</p>
+<pre><code class="language-python"># app/db/models.py — Card
+# Plain-text occasion name, stamped in when the linked Occasion is deleted so the
+# card keeps a human-readable record of where it came from. Only consulted when
+# occasion_id is NULL — a live link always wins, so renames still propagate.
+occasion_label: Mapped[Optional[str]] = mapped_column(String(256))
+</code></pre>
+<p><code>DELETE /api/v2/occasions/{id}</code> stamps before deleting:</p>
+<pre><code class="language-python">await db.execute(
+    update(Card)
+    .where(Card.occasion_id == occasion_id, Card.occasion_label.is_(None))
+    .values(occasion_label=occ.name)
+)
+await db.delete(occ)
+</code></pre>
+<p><strong>Resolution rule, applied everywhere an occasion name is displayed or exported:</strong></p>
+<ol>
+<li><code>occasion_id</code> set → the live <code>Occasion.name</code> (renames propagate)</li>
+<li>else <code>occasion_label</code> set → that text</li>
+<li>else empty</li>
+</ol>
+<p>[legacy_card.py:110] already derives an <code>occasion_name</code> field for the Google Contacts sync;
+it becomes:</p>
+<pre><code class="language-python">occasion_name = db_card.occasion.name if db_card.occasion else (db_card.occasion_label or &quot;&quot;)
+</code></pre>
+<p>so exported contacts keep their occasion after a delete. <code>occasion_location</code> has no snapshot
+and correctly becomes empty — location is a property of the occasion, not of the card.</p>
+<p><strong>Migration</strong> <code>f2a3b4c5d6e7_add_occasion_label_to_cards</code>, <code>down_revision = 'e1f2a3b4c5d6'</code>.
+Adds one nullable column. No backfill: existing cards all have live links.</p>
+<p><strong>Confirm dialog</strong> gains the count and states the consequence plainly:</p>
+<blockquote>
+<p>Delete "RI Convention"?
+<strong>48 cards use this occasion.</strong> They will keep "RI Convention" as a plain text label,
+but will no longer be linked to an occasion you can rename or filter by.</p>
+</blockquote>
+<p><code>OccasionOut</code> gains <code>card_count: int</code>, computed in <code>list_occasions</code> with a correlated scalar
+subquery over <code>cards</code> where <code>deleted_at IS NULL</code>.</p>
+<h3 id="62-group-the-occasion-lists-by-year-and-month">6.2 Group the occasion lists by year and month</h3>
+<p><strong>Constraint discovered in the data:</strong> only 1 of 21 occasions has <code>event_date</code> set, because both
+creation paths call <code>createOccasion({ name })</code> with no date
+([ScanPage.tsx:1004], [SettingsPage.tsx:284]). Grouping on <code>event_date</code> alone would put 20 of 21
+into an "undated" bucket.</p>
+<p><strong>Grouping key is therefore <code>event_date ?? created_at</code>.</strong> In the live data <code>created_at</code> tracks
+the real event well (<code>3481地區年會</code> → 2026-04-20, <code>RI Convention</code> → 2026-06-14). A shared helper:</p>
+<pre><code class="language-ts">// frontend/src/lib/occasionGrouping.ts
+// event_date is optional and rarely set in practice, so fall back to created_at,
+// which in practice tracks when the event was scanned.
+export function occasionPeriod(o: Occasion): { year: number; month: number }
+export function groupOccasionsByMonth(os: Occasion[]): { year, month, occasions }[]  // newest first
+</code></pre>
+<p>Used in both places:</p>
+<ul>
+<li><strong>Scan picker</strong> (<code>OccasionPicker</code>) — one <code>&lt;optgroup&gt;</code> per month, replacing today's
+  "Recent (3) / All" split. Label format <code>2026年7月</code> / <code>2026-07</code> / <code>2026年7月</code>
+  per language. <code>なし</code> stays first.</li>
+<li><strong>Settings</strong> — collapsible year → month tree matching the idiom already in
+  [CollectionPage.tsx:223], with each occasion's <code>card_count</code> shown. <strong>The current year is
+  expanded; earlier years are collapsed by default</strong>, so the list stays roughly one screen
+  regardless of how many years accumulate.</li>
+</ul>
+<p>Rows within a month keep their existing ordering (<code>event_date desc, created_at desc</code>).</p>
+<h3 id="63-make-occasions-searchable">6.3 Make occasions searchable</h3>
+<p><strong>Current behaviour:</strong> <code>q</code> searches person names, contact values, position titles/departments
+and organisation names ([cards.py:112]). Occasion names are searched <strong>nowhere</strong> — an occasion is
+reachable only via the exact <code>occasion_id</code> filter, which the Collection page never sends. So
+even a live occasion is not findable by typing its name.</p>
+<p>Without this piece, §6.1's stamped label would be visible but unfindable.</p>
+<p><strong>Change.</strong> Add a fourth branch to the <code>q</code> <code>or_()</code>:</p>
+<pre><code class="language-python"># Occasion — matches the linked occasion's name, or the label stamped onto the
+# card when that occasion was deleted. Covers both sides of the link so a search
+# returns the same cards before and after an occasion is removed.
+occasion_clause = or_(
+    exists(
+        select(Occasion.id).where(
+            Occasion.id == Card.occasion_id,
+            Occasion.name.ilike(like),
+        )
+    ),
+    Card.occasion_label.ilike(like),
+)
+</code></pre>
+<p><strong>Placeholder copy.</strong> <code>searchPlaceholder</code> ([i18n.ts:72]) already understates search — it says
+"by name" while covering company and phone number. Widened:</p>
+<table>
+<thead>
+<tr>
+<th>Lang</th>
+<th>New value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ja</td>
+<td><code>名前・会社・場面で検索…</code></td>
+</tr>
+<tr>
+<td>en</td>
+<td><code>Search name, company, occasion…</code></td>
+</tr>
+<tr>
+<td>zh-TW</td>
+<td><code>搜尋姓名、公司、場合…</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-i18n">7. i18n</h2>
+<p>Every new string goes in all three blocks of <code>i18n.ts</code>. <code>tsc -b</code> enforces key parity across
+<code>ja</code> / <code>en</code> / <code>zh-TW</code> — a missing key is a compile error, so parity does not need a separate check.</p>
+<p>New key groups: <code>scanHelp*</code> (§4.1), <code>pairByPosHint</code> (§4.3), <code>analysisBlocked*</code> (§4.4),
+<code>tipFrontSide</code> / <code>tipStartAnalysis</code> (§4.5), <code>outline*</code> (§5, including the twelve strings being
+migrated off hardcoded English), <code>occasionDeleteWarn(name, n)</code> (§6.1), <code>monthLabel(y, m)</code> (§6.2).</p>
+<hr />
+<h2 id="8-testing">8. Testing</h2>
+<p><strong>Backend — real data-backed tests</strong> using the existing <code>client_with_test_db</code> fixture, which
+runs against a throwaway SQLite file (<code>tests/conftest.py</code>). Not the signature-only smoke style
+of <code>test_cards_filter.py</code>; the delete path has 48 real cards riding on it.</p>
+<p><code>tests/test_occasion_lifecycle.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>test_delete_stamps_label_onto_cards</code></td>
+<td>after <code>DELETE</code>, each card has <code>occasion_id IS NULL</code> and <code>occasion_label == "&lt;name&gt;"</code></td>
+</tr>
+<tr>
+<td><code>test_delete_does_not_delete_cards</code></td>
+<td>card count unchanged, cards still readable</td>
+</tr>
+<tr>
+<td><code>test_delete_preserves_existing_label</code></td>
+<td>a card with a label already set is not overwritten</td>
+</tr>
+<tr>
+<td><code>test_list_returns_card_count</code></td>
+<td><code>card_count</code> correct, and excludes soft-deleted cards</td>
+</tr>
+<tr>
+<td><code>test_search_matches_linked_occasion</code></td>
+<td><code>?q=Convention</code> returns cards whose live occasion matches</td>
+</tr>
+<tr>
+<td><code>test_search_matches_orphaned_label</code></td>
+<td>same query returns the same cards after the occasion is deleted</td>
+</tr>
+<tr>
+<td><code>test_legacy_card_falls_back_to_label</code></td>
+<td><code>occasion_name</code> in the DTO survives deletion</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Frontend.</strong> No test runner exists and this spec does not add one. Verification is
+<code>cd frontend &amp;&amp; npm run build</code> (which runs <code>tsc -b</code>) plus browser verification of the
+stateful paths, per the project's standing rule that a <code>tsc</code> pass is not evidence that
+stateful UI works. Browser checks:</p>
+<ol>
+<li>Rotate an image in the Ungrouped row → run <code>Pair by position</code> → <strong>the grouped card shows
+   the rotated image.</strong> This is the §9 bug and cannot be caught by <code>tsc</code>.</li>
+<li>Click ↻ four times without moving the mouse → four rotations.</li>
+<li>Leave one image ungrouped → <code>Start analysis</code> disabled, reason shown.</li>
+<li>Split a photo → its crops appear in <strong>Separated cards</strong>, not Ungrouped.</li>
+<li>Delete an occasion with cards → dialog shows the count; afterwards the card still displays
+   the name and is still returned by search.</li>
+</ol>
+<p>Remember: after <code>npm run build</code>, hard-refresh (Cmd+Shift+R) — the bundle is content-hashed and
+the browser will otherwise serve the old one. Backend changes need the LaunchAgent reloaded
+(<code>launchctl unload</code> then <code>load</code>).</p>
+<hr />
+<h2 id="9-bug-rotation-not-visible-after-grouping">9. Bug: rotation not visible after grouping</h2>
+<p><strong>Reported as:</strong> "even though I have rotated the card during scissoring, after <code>Pair by position</code>
+the card image is not rotated — the app seems to know it is rotated but the display is not."</p>
+<p><strong>Confirmed as a display-only bug.</strong> The backend rotates the file <strong>in place</strong> on disk
+([sessions.py:248]), so the stored image is genuinely rotated and analysis sees the rotated
+version. The display is stale because there are <strong>two independent cache-bust maps</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Owner</th>
+<th>State</th>
+<th>Bumped by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ScanPage</code></td>
+<td><code>imgCacheBust</code> ([ScanPage.tsx:467])</td>
+<td>rotations in the <strong>Ungrouped</strong> row</td>
+</tr>
+<tr>
+<td><code>CardGroupCard</code></td>
+<td><code>localCacheBust</code> ([ScanPage.tsx:1107]), starts <code>{}</code></td>
+<td>rotations <strong>inside that group</strong></td>
+</tr>
+</tbody>
+</table>
+<p><code>CardGroupCard</code> is never given <code>imgCacheBust</code>. When an image that was rotated while ungrouped
+moves into a group, its <code>&lt;img src&gt;</code> is emitted with <strong>no <code>?t=</code> parameter</strong>, so the browser serves
+its cached pre-rotation copy.</p>
+<p><strong>Fix.</strong> Delete <code>localCacheBust</code>. Pass <code>ScanPage</code>'s <code>imgCacheBust</code> down as a prop and use it for
+every image URL. <code>onRotateImage</code> already bumps it ([ScanPage.tsx:467]), so the group's own
+rotate buttons keep working through the same single source of truth.
+<code>LightboxImage</code> forwards <code>src</code> to both the thumbnail and the full-screen view, so the fix
+propagates to the lightbox for free.</p>
+<hr />
+<h2 id="10-order-of-work">10. Order of work</h2>
+<ol>
+<li>Backend: migration, <code>occasion_label</code>, delete-stamps-label, <code>card_count</code>, search branch,
+   <code>legacy_card</code> fallback + tests. Self-contained and independently verifiable.</li>
+<li>§9 cache-bust fix. One-line-ish, unblocks confident manual testing of everything else.</li>
+<li>§4.6 tile sizing and icon size.</li>
+<li>§4.2/4.3 row split and per-row buttons.</li>
+<li>§4.1/4.4/4.5 copy, readiness gate, tips.</li>
+<li>§5 outline screen i18n + copy.</li>
+<li>§3 drop zone.</li>
+<li>§6.2 occasion grouping in both pickers.</li>
+</ol>
+<p>Steps 1–2 are the correctness work; 3–8 are presentation and can be reviewed together.</p>
+</body>
+</html>
