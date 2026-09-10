@@ -7,12 +7,12 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import and_, exists, extract, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import verify_api_key
-from app.db.models import Card, CardMyCompany, CardSide, Person, PersonName
+from app.db.models import Card, CardMyCompany, CardSide, CardSyncHistory, Person, PersonName
 from app.db.session import get_db
 from app.schemas.api import CardListItem, CardOut, CardSideOut
 from app.services import image_store
@@ -41,20 +41,23 @@ def _apply_card_filters(
 ):
     """Apply the shared Collection/Export filter set to a Card select.
 
-    Single owner of two rules that list_cards, count_cards and card_facets must agree on:
+    Single owner of four rules that list_cards, count_cards and card_facets must agree on:
       * date bucketing — received_date, falling back to created_at when null
-      * what ?q= matches
+      * what ?q= matches — current person name, contact details, position title/department
+        and current organization name
+      * not_exported — a card counts as exported only when it has sync history to
+        "odoo" or "google_contacts" whose result is "created" or "updated"
+      * soft-deleted cards are excluded — this helper owns that predicate, so callers
+        must NOT repeat it on their own select
     If these three ever disagree, a month header count will not match the cards that
     appear when it is expanded.
     """
     from datetime import date as date_type
 
-    from sqlalchemy import and_, exists, extract, or_
+    from app.db.models import ContactDetail, Organization, OrganizationName, Position, PositionDetail
 
-    from app.db.models import (
-        CardMyCompany, CardSyncHistory, ContactDetail, Organization,
-        OrganizationName, PersonName as PersonNameModel, Position, PositionDetail,
-    )
+    # Soft-deleted cards are never visible through any of these endpoints.
+    stmt = stmt.where(Card.deleted_at.is_(None))
 
     if person_id:
         stmt = stmt.where(Card.person_id == person_id)
@@ -111,10 +114,10 @@ def _apply_card_filters(
     # Full-text search across person data
     if q:
         like = f"%{q}%"
-        text_subq = select(PersonNameModel.person_id).where(
-            PersonNameModel.person_id == Card.person_id,
-            PersonNameModel.is_current == True,  # noqa: E712
-            PersonNameModel.full_name.ilike(like),
+        text_subq = select(PersonName.person_id).where(
+            PersonName.person_id == Card.person_id,
+            PersonName.is_current == True,  # noqa: E712
+            PersonName.full_name.ilike(like),
         )
         contact_subq = select(ContactDetail.person_id).where(
             ContactDetail.person_id == Card.person_id,
@@ -167,12 +170,9 @@ async def list_cards(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    # CardSyncHistory is still needed below for the per-card sync-history lookup.
-    from app.db.models import CardSyncHistory
-
+    # _apply_card_filters owns the soft-delete predicate — do not repeat it here.
     stmt = (
         select(Card)
-        .where(Card.deleted_at.is_(None))
         .order_by(Card.created_at.desc())
         .limit(limit)
         .offset(offset)
