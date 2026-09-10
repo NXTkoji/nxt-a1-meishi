@@ -1638,9 +1638,14 @@ In `CollectionPage.tsx`, replace the placeholder `const debouncedQ = q` from Tas
         listCards({ q: debouncedQ, limit: SEARCH_PAGE, offset: pageParam }),
       initialPageParam: 0,
       // The /count total stays the authority on whether more remain.
-      getNextPageParam: (_last, all) => {
+      getNextPageParam: (last, all) => {
         const loaded = all.reduce((n, page) => n + page.length, 0)
-        return loaded < (searchTotal?.total ?? 0) ? loaded : undefined
+        // Known total: stop exactly at it. Unknown total (the count query is still in
+        // flight, or failed): a full last page means more may exist, so keep offering the
+        // next offset. Defaulting the total to 0 here would disable Load more entirely.
+        const total = searchTotal?.total
+        if (total !== undefined) return loaded < total ? loaded : undefined
+        return last.length === SEARCH_PAGE ? loaded : undefined
       },
       enabled: view === 'cards' && debouncedQ.length > 0,
     })
@@ -1676,7 +1681,7 @@ In the cards-tab JSX, branch on `debouncedQ`:
             </div>
             <LoadMore
               loaded={searchResults.length}
-              total={searchTotal?.total ?? searchResults.length}
+              total={searchTotal?.total}
               isLoading={searchFetching}
               onLoadMore={() => fetchMoreResults()}
             />
@@ -1734,9 +1739,12 @@ Replace the `persons` query:
     queryFn: ({ pageParam }) =>
       listPersons(debouncedQ || undefined, PERSON_PAGE, pageParam),
     initialPageParam: 0,
-    getNextPageParam: (_last, all) => {
+    getNextPageParam: (last, all) => {
       const loaded = all.reduce((n, page) => n + page.length, 0)
-      return loaded < (personTotal?.total ?? 0) ? loaded : undefined
+      // Same unknown-total rule as the card search above.
+      const total = personTotal?.total
+      if (total !== undefined) return loaded < total ? loaded : undefined
+      return last.length === PERSON_PAGE ? loaded : undefined
     },
     enabled: view === 'persons',
   })
@@ -1756,7 +1764,7 @@ At the end of the persons-tab JSX, after the country groups:
 ```tsx
           <LoadMore
             loaded={persons.length}
-            total={personTotal?.total ?? persons.length}
+            total={personTotal?.total}
             isLoading={personsFetching}
             onLoadMore={() => fetchMorePersons()}
           />
