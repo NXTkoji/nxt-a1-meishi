@@ -666,6 +666,37 @@ git commit -m "feat: add card facets and count endpoints"
 
 ---
 
+## Decisions carried forward from Task 2 review
+
+**Declined: extracting the shared `Query(...)` block into a `CardFilters` dependency.**
+Three endpoints declare the same five filters verbatim. Attempted and reverted, for two
+reasons found in the attempt:
+
+1. `cards.py` has `from __future__ import annotations`, so every annotation is a string.
+   FastAPI resolves a dependency's forward refs from `call.__globals__`, and a *class* has
+   none — `app.openapi()` raises `PydanticUserError`. It needs a factory function
+   (`def card_filters(...) -> CardFilters` with `Depends(card_filters)`), not a bare dataclass.
+2. `tests/test_cards_filter.py` asserts `'q' in inspect.signature(list_cards).parameters`.
+   Moving params into a dependency fails it.
+
+The duplication is five `Query(...)` lines across three endpoints. Task 4's persons router
+shares only `q`, so it will not copy this block — the "it'll be duplicated a fourth time"
+argument does not hold. Not worth the machinery. **Leave it.**
+
+**Known weakness, not yet addressed: `tests/test_cards_filter.py` tests nothing.**
+All five of its tests assert only that query params appear in the function signature or
+OpenAPI schema — they still pass with the filter bodies deleted. Two separate reviewers
+flagged this. It is not in any task's scope; consider it during final review. If it is ever
+rewritten, assert against the OpenAPI parameter list rather than `inspect.signature`, which
+tests the actual contract and would also unblock the dependency extraction above.
+
+**Note on `?q=` and occasions.** `_apply_card_filters` searches person names, contact values,
+position titles/departments and organisation names — **not** occasion names. Occasion search
+arrives with the sibling plan (`2026-09-09-scan-group-ui-and-occasion-lifecycle.md` Task 4).
+Do not describe `q` as covering occasions until that lands.
+
+---
+
 ## Task 3: Batch the card-name lookup
 
 `_get_name` runs 1-2 queries per card inside the result loop — 10,000-20,000 sequential
