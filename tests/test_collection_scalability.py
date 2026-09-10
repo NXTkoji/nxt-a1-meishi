@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Card
+from app.db.models import Card, Person
 from app.db.session import get_db
 from app.main import app
 from app.routers.v2.cards import _pick_name
@@ -363,7 +363,7 @@ def test_nonpositive_limit_is_rejected(client_with_test_db, limit):
     ).status_code == 422
 
 
-def _seed_person_with_names(person_ext_id, names, cards):
+def _seed_person_with_names(person_ext_id, names, cards=(), contact_details=()):
     """Seed one person carrying several PersonNames, plus cards pointing at them.
 
     _seed_cards cannot express this shape — it gives every named card its own person
@@ -374,12 +374,16 @@ def _seed_person_with_names(person_ext_id, names, cards):
     `names` is a list of (language, full_name, is_current) in INSERTION order, and that
     order is load-bearing: PersonName.id ascending is the resolver's tiebreak, so the
     first current entry is the fallback name.
-    `cards` is a list of (external_id, display_name_language).
+    `cards` is a list of (external_id, display_name_language); it defaults to empty
+    because the persons endpoint does not need cards to exist at all.
+    `contact_details` is a list of (detail_type, country_code) in INSERTION order, and
+    that order is load-bearing too: ContactDetail.id ascending is the persons list's
+    tiebreak once detail_type has been compared.
 
     Returns the cards' external_ids in the order given.
     """
     async def _run():
-        from app.db.models import Card, Person, PersonName
+        from app.db.models import Card, ContactDetail, Person, PersonName
 
         async for db in app.dependency_overrides[get_db]():
             person = Person(external_id=person_ext_id)
@@ -395,6 +399,17 @@ def _seed_person_with_names(person_ext_id, names, cards):
                     is_current=is_current,
                 ))
             await db.flush()
+
+            # Inserted one at a time with a flush between, so the ids ascend in the
+            # order given — the ordering the country preference rule tiebreaks on.
+            for detail_type, country_code in contact_details:
+                db.add(ContactDetail(
+                    person_id=person.id,
+                    detail_type=detail_type,
+                    value=f"{detail_type} value",
+                    country_code=country_code,
+                ))
+                await db.flush()
 
             created = [
                 Card(external_id=ext, person_id=person.id, display_name_language=lang)
@@ -529,3 +544,257 @@ def test_pick_name_empty_match_falls_through_to_the_fallback():
     """
     candidates = [("ja", "山田太郎"), ("en", ""), ("en", "Taro Yamada")]
     assert _pick_name(candidates, "en") == "山田太郎"
+
+
+# ---------------------------------------------------------------------------
+# Persons list. The Persons tab of the Collection page reads GET /api/v2/persons,
+# whose search branch used to apply neither LIMIT, OFFSET nor ORDER BY — it returned
+# every match in whatever order SQLite felt like. Browse was capped at 200, below the
+# live person count, so the tail was unreachable.
+# ---------------------------------------------------------------------------
+
+
+def _seed_persons(n, name_prefix="Tester", prefix=None):
+    """Seed n persons, each with exactly one current PersonName.
+
+    An adapter over _seed_cards rather than a third seeder: its named-spec form
+    already creates one Person plus one current PersonName per spec, which is exactly
+    the shape these tests need. Keeping one place that knows how a named person is
+    built means a schema change lands in one seeder, not three.
+
+    The cards it also creates are irrelevant here — the persons endpoint never looks
+    at them.
+    """
+    _seed_cards(
+        [(None, datetime(2026, 9, 1, 0, i % 60), f"{name_prefix} {i}") for i in range(n)],
+        prefix=prefix,
+    )
+
+
+def test_persons_search_is_bounded(client_with_test_db):
+    """A query matching more than `limit` persons returns `limit`, not everything.
+
+    The search branch built `select(Person).where(Person.id.in_(all_ids))` bare, so
+    ?q= ignored the limit entirely: 60 seeded persons came back for limit=10.
+    """
+    _seed_persons(60)
+
+    rows = client_with_test_db.get("/api/v2/persons", params={"q": "Tester", "limit": 10}).json()
+    assert len(rows) == 10
+
+
+def test_persons_search_is_ordered(client_with_test_db):
+    """Two identical requests return the same rows in the same order."""
+    _seed_persons(30)
+
+    a = client_with_test_db.get("/api/v2/persons", params={"q": "Tester", "limit": 10}).json()
+    b = client_with_test_db.get("/api/v2/persons", params={"q": "Tester", "limit": 10}).json()
+    assert [r["id"] for r in a] == [r["id"] for r in b]
+
+
+def test_persons_search_paginates(client_with_test_db):
+    """Two adjacent pages of one search share no rows — offset must be honoured."""
+    _seed_persons(30)
+
+    p1 = client_with_test_db.get(
+        "/api/v2/persons", params={"q": "Tester", "limit": 10, "offset": 0}
+    ).json()
+    p2 = client_with_test_db.get(
+        "/api/v2/persons", params={"q": "Tester", "limit": 10, "offset": 10}
+    ).json()
+    assert len(p1) == len(p2) == 10
+    assert not ({r["id"] for r in p1} & {r["id"] for r in p2})
+
+
+def test_persons_ordering_is_total(client_with_test_db, monkeypatch):
+    """The ORDER BY list_persons emits must end in a unique column.
+
+    Same argument as test_list_ordering_is_total for cards, and the same reason it has
+    to be structural: every person seeded in one batch shares a created_at to the
+    microsecond, and SQLite happens to return such ties in rowid order, so a paging
+    test cannot observe a missing tiebreaker. Without persons.id in the ORDER BY,
+    LIMIT/OFFSET paging over tied created_at values may repeat or skip rows.
+
+    Asserted against the statement the endpoint actually executes, not a rebuilt one.
+    """
+    _seed_persons(3)
+
+    captured = []
+    original_execute = AsyncSession.execute
+
+    async def _spy_execute(self, statement, *args, **kwargs):
+        captured.append(statement)
+        return await original_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "execute", _spy_execute)
+
+    assert client_with_test_db.get("/api/v2/persons", params={"limit": 2}).status_code == 200
+
+    # One request fires three statements: the person page, the batched name lookup and
+    # the batched country lookup. Only the first selects Person entities, which is how
+    # it is picked out without matching on SQL text.
+    person_selects = [
+        s for s in captured
+        if getattr(s, "column_descriptions", None)
+        and s.column_descriptions[0].get("entity") is Person
+        and s._order_by_clauses
+    ]
+    assert person_selects, "no ordered Person select was executed by GET /api/v2/persons"
+
+    order_by_sql = [
+        str(clause.compile(dialect=sqlite_dialect()))
+        for clause in person_selects[-1]._order_by_clauses
+    ]
+    assert any("persons.id" in clause for clause in order_by_sql), (
+        f"ORDER BY {order_by_sql} has no unique column — LIMIT/OFFSET paging is unsound"
+    )
+
+
+def test_persons_limit_accepts_500(client_with_test_db):
+    """The cap was 200; the Collection page needs to match cards at 500.
+
+    202 persons live meant the last two were unreachable at any limit.
+    """
+    _seed_persons(5)
+
+    assert client_with_test_db.get("/api/v2/persons", params={"limit": 500}).status_code == 200
+
+
+@pytest.mark.parametrize("limit", [-1, 0])
+def test_persons_nonpositive_limit_is_rejected(client_with_test_db, limit):
+    """?limit=-1 must be a 422, not the entire table.
+
+    SQLite reads `LIMIT -1` as "no limit", so without `ge=1` this returns every person
+    with a 200 — and an unbounded IN (...) in both batched lookups behind it.
+    """
+    assert client_with_test_db.get(
+        "/api/v2/persons", params={"limit": limit}
+    ).status_code == 422
+
+
+def test_persons_count_matches_search(client_with_test_db):
+    """/count and the list agree on what a search matches.
+
+    They share _person_ids_matching precisely so they cannot drift apart; this is the
+    test that would catch them being given separate copies of the rule.
+
+    The second cohort exists so the answer is not simply "every person in the table" —
+    a /count that ignored ?q= would otherwise agree by accident.
+    """
+    _seed_persons(12)
+    _seed_persons(5, name_prefix="Bystander")
+
+    total = client_with_test_db.get(
+        "/api/v2/persons/count", params={"q": "Tester"}
+    ).json()["total"]
+    rows = client_with_test_db.get(
+        "/api/v2/persons", params={"q": "Tester", "limit": 500}
+    ).json()
+    assert total == len(rows) == 12
+
+
+def test_persons_count_matches_unfiltered_list(client_with_test_db):
+    """With no ?q=, /count is the total the pager needs to size itself."""
+    _seed_persons(7)
+
+    total = client_with_test_db.get("/api/v2/persons/count").json()["total"]
+    rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
+    assert total == len(rows) == 7
+
+
+def test_persons_count_of_nothing_is_zero(client_with_test_db):
+    """A search matching no person is 0, not a NULL leaking through as None."""
+    _seed_persons(3)
+
+    assert client_with_test_db.get(
+        "/api/v2/persons/count", params={"q": "nobody-by-that-name"}
+    ).json()["total"] == 0
+
+
+def test_persons_country_prefers_home_over_work(client_with_test_db):
+    """country_code takes the home address when both kinds exist.
+
+    The rule is expressed as ORDER BY detail_type ASC, which only produces
+    "home before work" because "address_home" < "address_work" alphabetically. The
+    work address is inserted FIRST here so a lower ContactDetail.id cannot be what
+    makes this pass — only the detail_type ordering can.
+    """
+    _seed_person_with_names(
+        "p-country",
+        names=[("en", "Home And Work", True)],
+        contact_details=[("address_work", "US"), ("address_home", "JP")],
+    )
+
+    rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
+    by_ext = {r["external_id"]: r["country_code"] for r in rows}
+    assert by_ext["p-country"] == "JP"
+
+
+def test_persons_country_ignores_non_address_details(client_with_test_db):
+    """A country_code on a phone or email row is never shown.
+
+    Falls back to the work address rather than to the phone row seeded before it.
+    """
+    _seed_person_with_names(
+        "p-nonaddress",
+        names=[("en", "Phone First", True)],
+        contact_details=[("phone_work", "FR"), ("address_work", "TW")],
+    )
+
+    rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
+    by_ext = {r["external_id"]: r["country_code"] for r in rows}
+    assert by_ext["p-nonaddress"] == "TW"
+
+
+def test_persons_country_skips_null_country_codes(client_with_test_db):
+    """An address with no country_code is skipped, not returned as the answer.
+
+    The NULL home address sorts first on every key, so a batch fold that kept the
+    first row per person without filtering NULLs out in SQL would report None here.
+    """
+    _seed_person_with_names(
+        "p-nullcountry",
+        names=[("en", "Null Home", True)],
+        contact_details=[("address_home", None), ("address_work", "JP")],
+    )
+
+    rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
+    by_ext = {r["external_id"]: r["country_code"] for r in rows}
+    assert by_ext["p-nullcountry"] == "JP"
+
+
+def test_persons_name_is_lowest_id_current_name(client_with_test_db):
+    """primary_name/family_name come from the lowest-id CURRENT name.
+
+    Unlike cards, the persons list takes no per-row language preference — the rule is
+    just "first current name by id", so the batch fold has to keep the first row under
+    ORDER BY person_id, id. The non-current name is seeded first, with the lowest id,
+    so a fold that forgot the is_current filter would pick it.
+    """
+    _seed_person_with_names(
+        "p-names-order",
+        names=[
+            ("ja", "旧姓名", False),      # lowest id, but not current
+            ("en", "Current One", True),  # the expected answer
+            ("ja", "山田太郎", True),      # current but higher id
+        ],
+    )
+
+    rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
+    by_ext = {r["external_id"]: r["primary_name"] for r in rows}
+    assert by_ext["p-names-order"] == "Current One"
+
+
+def test_persons_with_no_name_or_country_are_still_listed(client_with_test_db):
+    """A bare person still appears, with primary_name and country_code null.
+
+    A batched lookup that inner-joined names would drop this row entirely.
+    """
+    _seed_person_with_names("p-bare", names=[])
+
+    rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
+    bare = [r for r in rows if r["external_id"] == "p-bare"]
+    assert len(bare) == 1
+    assert bare[0]["primary_name"] is None
+    assert bare[0]["family_name"] is None
+    assert bare[0]["country_code"] is None

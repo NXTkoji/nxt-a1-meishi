@@ -29,6 +29,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.schemas.api import (
     ContactDetailOut,
+    CountOut,
     MergeRequest,
     MergeResult,
     OrgNameOut,
@@ -127,69 +128,143 @@ async def _load_person_out(db: AsyncSession, person: Person) -> PersonOut:
     )
 
 
+async def _person_ids_matching(db: AsyncSession, q: str) -> set[int]:
+    """Person ids whose current name or current organisation name matches q.
+
+    Shared by list_persons and count_persons so the two cannot disagree — a pager
+    sized from /count that does not match the rows the list returns is worse than no
+    pager at all.
+
+    The ids are materialised into a Python set and fed to an `IN (...)`, which is
+    bounded by the number of persons in the database, not by `limit`. That is fine at
+    the scale this app runs at (hundreds); if the person table ever reaches the tens
+    of thousands this should become a correlated subquery instead.
+    """
+    like = f"%{q}%"
+    # Current person names.
+    matched_name_ids = (await db.execute(
+        select(PersonName.person_id)
+        .where(PersonName.is_current == True, PersonName.full_name.ilike(like))  # noqa: E712
+    )).scalars().all()
+    # Current organisation names, reached through the person's positions.
+    matched_org_ids = (await db.execute(
+        select(Position.person_id)
+        .join(OrganizationName, OrganizationName.org_id == Position.org_id)
+        .where(OrganizationName.is_current == True, OrganizationName.name.ilike(like))  # noqa: E712
+    )).scalars().all()
+    return set(matched_name_ids) | set(matched_org_ids)
+
+
 @router.get("", response_model=List[PersonListItem])
 async def list_persons(
-    q: Optional[str] = Query(None, description="Search by name"),
-    limit: int = Query(50, le=200),
+    q: Optional[str] = Query(None, description="Search by name or organisation"),
+    # ge=1 is not cosmetic: SQLite reads LIMIT -1 as "no limit", so ?limit=-1 used to
+    # return every row. The 500 cap matches GET /api/v2/cards and is what bounds the
+    # two batched lookups below — both the IN (...) parameter count and the rows held
+    # in memory. It was 200, which is under the live person count, so the tail of the
+    # collection was unreachable at any offset the frontend asked for.
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
+    stmt = select(Person)
     if q:
-        # Search in current person names
-        matched_name_ids = (await db.execute(
-            select(PersonName.person_id)
-            .where(PersonName.is_current == True, PersonName.full_name.ilike(f"%{q}%"))  # noqa: E712
-        )).scalars().all()
-        # Also search in org names (via Position → OrganizationName)
-        matched_org_ids = (await db.execute(
-            select(Position.person_id)
-            .join(OrganizationName, OrganizationName.org_id == Position.org_id)
-            .where(OrganizationName.is_current == True, OrganizationName.name.ilike(f"%{q}%"))  # noqa: E712
-        )).scalars().all()
-        all_ids = set(matched_name_ids) | set(matched_org_ids)
-        stmt = select(Person).where(Person.id.in_(all_ids))
-    else:
-        stmt = select(Person).order_by(Person.created_at.desc()).limit(limit).offset(offset)
+        stmt = stmt.where(Person.id.in_(await _person_ids_matching(db, q)))
+
+    # Both branches order and paginate identically. The search branch previously did
+    # neither — it built a bare `select(Person).where(...)`, so ?q= returned every
+    # match in whatever order the query plan happened to produce.
+    #
+    # ORDER BY has to be a *total* order or LIMIT/OFFSET paging is unsound: rows that
+    # tie on created_at (every person from one import batch does) may come back in a
+    # different order per query, so page 2 can repeat or skip a row from page 1.
+    # Person.id breaks every tie.
+    stmt = stmt.order_by(Person.created_at.desc(), Person.id.desc()).limit(limit).offset(offset)
 
     persons = (await db.execute(stmt)).scalars().all()
+    person_ids = [p.id for p in persons]
+    if not person_ids:
+        # Nothing to look up; also keeps the two `IN ()` statements below off the wire.
+        return []
 
-    items = []
-    for p in persons:
-        name_row = (await db.execute(
-            select(PersonName.full_name, PersonName.family_name)
-            .where(PersonName.person_id == p.id, PersonName.is_current == True)  # noqa: E712
-            .order_by(PersonName.id.asc())
-            .limit(1)
-        )).first()
-        primary_name = name_row[0] if name_row else None
-        family_name = name_row[1] if name_row else None
+    # Names for the whole page in ONE query. This used to be a per-person SELECT ...
+    # LIMIT 1 inside the item loop, costing one sequential round trip per row.
+    #
+    # The ORDER BY is the entire correctness argument: `person_id, id` means the first
+    # row seen for a person is its lowest-id current name, which is exactly the row the
+    # old LIMIT 1 returned. `setdefault` keeps that first row and ignores the rest.
+    # Unlike the cards list there is no per-row language preference to apply here, so
+    # this is a plain fold rather than a picker function.
+    name_rows = (await db.execute(
+        select(PersonName.person_id, PersonName.full_name, PersonName.family_name)
+        .where(
+            PersonName.person_id.in_(person_ids),
+            PersonName.is_current == True,  # noqa: E712
+        )
+        .order_by(PersonName.person_id.asc(), PersonName.id.asc())
+    )).all()
+    names_by_person: dict[int, tuple[Optional[str], Optional[str]]] = {}
+    for pid, full, family in name_rows:
+        names_by_person.setdefault(pid, (full, family))
 
-        # Country: home address first, then work address
-        country_row = (await db.execute(
-            select(ContactDetail.country_code)
-            .where(
-                ContactDetail.person_id == p.id,
-                ContactDetail.detail_type.in_(["address_home", "address_work"]),
-                ContactDetail.country_code.isnot(None),
-            )
-            .order_by(
-                # address_home sorts before address_work
-                ContactDetail.detail_type.asc(),
-                ContactDetail.id.asc(),
-            )
-            .limit(1)
-        )).first()
-        country_code = country_row[0] if country_row else None
+    # Countries for the whole page in ONE query — same story, same fold.
+    #
+    # The preference is "home address, else work address", and it is encoded as
+    # `detail_type ASC`. That works only because "address_home" sorts before
+    # "address_work" alphabetically: renaming either detail_type (to "address_office",
+    # say) silently changes which country a person shows. NULL country codes are
+    # filtered out in SQL rather than skipped in the fold, because a NULL home address
+    # would otherwise sort first and win.
+    country_rows = (await db.execute(
+        select(ContactDetail.person_id, ContactDetail.country_code)
+        .where(
+            ContactDetail.person_id.in_(person_ids),
+            ContactDetail.detail_type.in_(["address_home", "address_work"]),
+            ContactDetail.country_code.isnot(None),
+        )
+        .order_by(
+            ContactDetail.person_id.asc(),
+            ContactDetail.detail_type.asc(),
+            ContactDetail.id.asc(),
+        )
+    )).all()
+    country_by_person: dict[int, str] = {}
+    for pid, code in country_rows:
+        country_by_person.setdefault(pid, code)
 
-        items.append(PersonListItem(
+    return [
+        PersonListItem(
             id=p.id,
             external_id=p.external_id,
-            primary_name=primary_name,
-            family_name=family_name,
-            country_code=country_code,
+            # A person with no current name at all keeps both fields null, exactly as
+            # the old `if name_row else None` did.
+            primary_name=names_by_person.get(p.id, (None, None))[0],
+            family_name=names_by_person.get(p.id, (None, None))[1],
+            country_code=country_by_person.get(p.id),
             created_at=p.created_at,
-        ))
-    return items
+        )
+        for p in persons
+    ]
+
+
+# MUST precede GET /{person_ext_id} below, or FastAPI matches "count" as a person
+# external ID and this endpoint becomes unreachable.
+@router.get("/count", response_model=CountOut)
+async def count_persons(
+    q: Optional[str] = Query(None, description="Search by name or organisation"),
+    db: AsyncSession = Depends(get_db),
+):
+    """How many persons match ?q=, without fetching any rows.
+
+    Takes the same filter as list_persons minus limit/offset, so the caller can size a
+    pager before requesting a page.
+    """
+    stmt = select(func.count(Person.id))
+    if q:
+        stmt = stmt.where(Person.id.in_(await _person_ids_matching(db, q)))
+    # COUNT(...) with no GROUP BY always yields a row holding an integer, so the
+    # `or 0` is belt-and-braces against a driver returning None, not a real NULL case.
+    return CountOut(total=await db.scalar(stmt) or 0)
 
 
 @router.get("/{person_ext_id}", response_model=PersonOut)
