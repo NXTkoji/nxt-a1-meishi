@@ -7,14 +7,14 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import and_, exists, extract, func, or_, select
+from sqlalchemy import Integer, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import verify_api_key
 from app.db.models import Card, CardMyCompany, CardSide, CardSyncHistory, Person, PersonName
 from app.db.session import get_db
-from app.schemas.api import CardListItem, CardOut, CardSideOut
+from app.schemas.api import CardFacet, CardListItem, CardOut, CardSideOut, CountOut
 from app.services import image_store
 from app.services.contact_sync import auto_sync_card
 
@@ -25,6 +25,32 @@ router = APIRouter(
     tags=["cards"],
     dependencies=[Depends(verify_api_key)],
 )
+
+
+def _bucket_date():
+    """The date a card is filed under: received_date, or created_at when it is NULL.
+
+    Every date rule in this module derives from this one expression, so a card can
+    never land in one bucket for the facets query and a different one for ?month=.
+    """
+    return func.coalesce(Card.received_date, Card.created_at)
+
+
+def _bucket_year():
+    """Year of the bucket date, as a real Python int. Spec §3.
+
+    strftime + cast, not extract: extract() returns a float on SQLite, and coalesce
+    across a Date and a DateTime column needs a consistent text form. strftime('%Y', …)
+    yields a zero-padded string that casts cleanly to Integer and works on both column
+    types. This is the ONLY encoding of the bucketing rule — both the month/year
+    filters below and the facets GROUP BY use it, so they cannot disagree.
+    """
+    return func.cast(func.strftime('%Y', _bucket_date()), Integer)
+
+
+def _bucket_month():
+    """Month (1-12) of the bucket date, as a real Python int. See _bucket_year."""
+    return func.cast(func.strftime('%m', _bucket_date()), Integer)
 
 
 def _apply_card_filters(
@@ -49,8 +75,8 @@ def _apply_card_filters(
         "odoo" or "google_contacts" whose result is "created" or "updated"
       * soft-deleted cards are excluded — this helper owns that predicate, so callers
         must NOT repeat it on their own select
-    If these three ever disagree, a month header count will not match the cards that
-    appear when it is expanded.
+    If list_cards, count_cards and card_facets ever disagree on any of these rules, a
+    month header count will not match the cards that appear when it is expanded.
     """
     from datetime import date as date_type
 
@@ -67,37 +93,18 @@ def _apply_card_filters(
         mc_subq = select(CardMyCompany.card_id).where(CardMyCompany.my_company_id == my_company_id)
         stmt = stmt.where(Card.id.in_(mc_subq))
 
-    # Date filters (prefer received_date, fall back to created_at)
+    # Date filters. All three go through the _bucket_* expressions, which are the
+    # single encoding of "received_date, falling back to created_at" — the same
+    # expressions card_facets groups by, so a facet count and its ?month= query
+    # match by construction rather than by coincidence.
     if date:
         d = date_type.fromisoformat(date)
-        stmt = stmt.where(
-            or_(
-                func.date(Card.received_date) == d,
-                and_(Card.received_date.is_(None), func.date(Card.created_at) == d),
-            )
-        )
+        stmt = stmt.where(func.date(_bucket_date()) == d)
     elif month:
         y, m = int(month[:4]), int(month[5:7])
-        stmt = stmt.where(
-            or_(
-                and_(
-                    extract('year', Card.received_date) == y,
-                    extract('month', Card.received_date) == m,
-                ),
-                and_(
-                    Card.received_date.is_(None),
-                    extract('year', Card.created_at) == y,
-                    extract('month', Card.created_at) == m,
-                ),
-            )
-        )
+        stmt = stmt.where(and_(_bucket_year() == y, _bucket_month() == m))
     elif year:
-        stmt = stmt.where(
-            or_(
-                extract('year', Card.received_date) == year,
-                and_(Card.received_date.is_(None), extract('year', Card.created_at) == year),
-            )
-        )
+        stmt = stmt.where(_bucket_year() == year)
 
     # not_exported: no successful sync history to odoo or google_contacts
     if not_exported:
@@ -241,6 +248,72 @@ async def list_cards(
             synced_destinations=sorted(synced_map.get(card.id, set())),
         ))
     return items
+
+
+# ---------------------------------------------------------------------------
+# Facets and count. MUST be declared before GET /{card_ext_id}, or FastAPI
+# matches "facets" and "count" as card external IDs.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/facets", response_model=List[CardFacet])
+async def card_facets(
+    person_id: Optional[int] = Query(None),
+    occasion_id: Optional[int] = Query(None),
+    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
+    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
+    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Year/month buckets with counts, newest first.
+
+    One GROUP BY — the response stays small however many cards exist, which is what
+    lets the Collection tree be complete at any scale.
+
+    Deliberately takes no year/month/date filter: this endpoint *produces* the date
+    buckets that those filters consume.
+    """
+    y = _bucket_year().label("year")
+    m = _bucket_month().label("month")
+
+    # No deleted_at filter here — _apply_card_filters owns it.
+    stmt = select(y, m, func.count(Card.id).label("count"))
+    stmt = _apply_card_filters(
+        stmt,
+        person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
+        q=q, not_exported=not_exported,
+    )
+    stmt = stmt.group_by(y, m).order_by(y.desc(), m.desc())
+
+    rows = (await db.execute(stmt)).all()
+    return [CardFacet(year=r.year, month=r.month, count=r.count) for r in rows]
+
+
+@router.get("/count", response_model=CountOut)
+async def count_cards(
+    person_id: Optional[int] = Query(None),
+    occasion_id: Optional[int] = Query(None),
+    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
+    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
+    year: Optional[int] = Query(None),
+    month: Optional[str] = Query(None, description="YYYY-MM"),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
+    db: AsyncSession = Depends(get_db),
+):
+    """How many cards match a filter set, without fetching any rows.
+
+    Takes the same filters as list_cards minus limit/offset, so the caller can size a
+    pager before requesting a page.
+    """
+    # _apply_card_filters owns the soft-delete predicate — do not repeat it here.
+    stmt = select(func.count(Card.id))
+    stmt = _apply_card_filters(
+        stmt,
+        person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
+        q=q, year=year, month=month, date=date, not_exported=not_exported,
+    )
+    return CountOut(total=await db.scalar(stmt) or 0)
 
 
 async def _load_card(db: AsyncSession, card_ext_id: str) -> Card:

@@ -139,6 +139,22 @@ class CardListItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CardFacet(BaseModel):
+    """One year/month bucket and how many cards fall in it.
+
+    Returned by GET /api/v2/cards/facets. The Collection tree is built from these,
+    so `count` must equal what GET /api/v2/cards?month=YYYY-MM actually returns.
+    """
+    year: int
+    month: int
+    count: int
+
+
+class CountOut(BaseModel):
+    """Total number of cards matching a filter set, with no rows fetched."""
+    total: int
+
+
 # ---------------------------------------------------------------------------
 # Persons
 # ---------------------------------------------------------------------------
