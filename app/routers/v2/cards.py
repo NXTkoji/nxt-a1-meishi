@@ -27,35 +27,33 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=List[CardListItem])
-async def list_cards(
-    person_id: Optional[int] = Query(None),
-    occasion_id: Optional[int] = Query(None),
-    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
-    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
-    year: Optional[int] = Query(None),
-    month: Optional[str] = Query(None, description="YYYY-MM"),
-    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
-    limit: int = Query(50, le=500),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
+def _apply_card_filters(
+    stmt,
+    *,
+    person_id: Optional[int] = None,
+    occasion_id: Optional[int] = None,
+    my_company_id: Optional[int] = None,
+    q: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[str] = None,
+    date: Optional[str] = None,
+    not_exported: bool = False,
 ):
-    from datetime import date as date_type
-    from sqlalchemy import exists, or_, and_, extract
-    from app.db.models import (
-        CardMyCompany, ContactDetail, Organization, OrganizationName,
-        PersonName as PersonNameModel, Position, PositionDetail,
-        CardSyncHistory,
-    )
+    """Apply the shared Collection/Export filter set to a Card select.
 
-    stmt = (
-        select(Card)
-        .where(Card.deleted_at.is_(None))
-        .order_by(Card.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-        .options(selectinload(Card.sides))
+    Single owner of two rules that list_cards, count_cards and card_facets must agree on:
+      * date bucketing — received_date, falling back to created_at when null
+      * what ?q= matches
+    If these three ever disagree, a month header count will not match the cards that
+    appear when it is expanded.
+    """
+    from datetime import date as date_type
+
+    from sqlalchemy import and_, exists, extract, or_
+
+    from app.db.models import (
+        CardMyCompany, CardSyncHistory, ContactDetail, Organization,
+        OrganizationName, PersonName as PersonNameModel, Position, PositionDetail,
     )
 
     if person_id:
@@ -113,20 +111,14 @@ async def list_cards(
     # Full-text search across person data
     if q:
         like = f"%{q}%"
-        text_subq = (
-            select(PersonNameModel.person_id)
-            .where(
-                PersonNameModel.person_id == Card.person_id,
-                PersonNameModel.is_current == True,  # noqa: E712
-                PersonNameModel.full_name.ilike(like),
-            )
+        text_subq = select(PersonNameModel.person_id).where(
+            PersonNameModel.person_id == Card.person_id,
+            PersonNameModel.is_current == True,  # noqa: E712
+            PersonNameModel.full_name.ilike(like),
         )
-        contact_subq = (
-            select(ContactDetail.person_id)
-            .where(
-                ContactDetail.person_id == Card.person_id,
-                ContactDetail.value.ilike(like),
-            )
+        contact_subq = select(ContactDetail.person_id).where(
+            ContactDetail.person_id == Card.person_id,
+            ContactDetail.value.ilike(like),
         )
         pos_subq = (
             select(PositionDetail.position_id)
@@ -157,6 +149,40 @@ async def list_cards(
                 exists(org_subq),
             )
         )
+
+    return stmt
+
+
+@router.get("", response_model=List[CardListItem])
+async def list_cards(
+    person_id: Optional[int] = Query(None),
+    occasion_id: Optional[int] = Query(None),
+    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
+    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
+    year: Optional[int] = Query(None),
+    month: Optional[str] = Query(None, description="YYYY-MM"),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
+    limit: int = Query(50, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    # CardSyncHistory is still needed below for the per-card sync-history lookup.
+    from app.db.models import CardSyncHistory
+
+    stmt = (
+        select(Card)
+        .where(Card.deleted_at.is_(None))
+        .order_by(Card.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .options(selectinload(Card.sides))
+    )
+    stmt = _apply_card_filters(
+        stmt,
+        person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
+        q=q, year=year, month=month, date=date, not_exported=not_exported,
+    )
 
     rows = (await db.execute(stmt)).scalars().all()
 
