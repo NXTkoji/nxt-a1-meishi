@@ -151,9 +151,8 @@ implementation time.
 |---|---|---|
 | `cards` | `person_id` | every list row joins to a person |
 | `cards` | `occasion_id` | occasion filter + the other spec's search branch |
-| `cards` | `created_at` | default ordering and the year/month fallback |
-| `cards` | `received_date` | primary date filter |
 | `cards` | `deleted_at` | on every query as `IS NULL` |
+| `cards` | `(deleted_at, coalesce(received_date, created_at) DESC, id DESC)` | the hot path: default list ordering and facets bucketing. Single-column indexes on `created_at` or `received_date` serve nothing — every date path is the `coalesce` expression — and the index must lead with `deleted_at` or the planner never picks it. |
 | `person_names` | `person_id` | name batch lookup and `q` |
 | `contact_details` | `person_id` | country lookup and `q` |
 | `positions` | `person_id` | title/org search |

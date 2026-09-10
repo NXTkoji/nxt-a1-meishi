@@ -1172,8 +1172,12 @@ depends_on: Union[str, Sequence[str], None] = None
 _INDEXES = [
     ("ix_cards_person_id", "cards", ["person_id"]),
     ("ix_cards_occasion_id", "cards", ["occasion_id"]),
-    ("ix_cards_created_at", "cards", ["created_at"]),
-    ("ix_cards_received_date", "cards", ["received_date"]),
+    # NOT single-column indexes on created_at / received_date. Every date path — the
+    # list ORDER BY, the ?year=/?month=/?date= filters, and the facets GROUP BY — is
+    # built from coalesce(received_date, created_at), and no single-column index can
+    # serve an expression. This one must also LEAD with deleted_at: see the note below.
+    ("ix_cards_filing_date", "cards",
+     [sa.text("deleted_at"), sa.text("coalesce(received_date, created_at) DESC"), sa.text("id DESC")]),
     ("ix_cards_deleted_at", "cards", ["deleted_at"]),
     # Composite, not single-column: the batched lookups in Tasks 3 and 4 filter on
     # person_id AND is_current / detail_type together. Verified on live data that the
@@ -1194,6 +1198,23 @@ def downgrade() -> None:
     for name, table, _ in reversed(_INDEXES):
         op.drop_index(name, table_name=table)
 ```
+
+**Why the filing-date index leads with `deleted_at`, and the verification trap behind it.**
+
+`_apply_card_filters` adds `deleted_at IS NULL` to every list, count and facets query.
+`ix_cards_deleted_at` exists, and `sqlite_stat1` averages over distinct values — so it never
+learns that `IS NULL` matches ~98% of rows. The planner always estimates that seek as cheap,
+takes it, and then sorts in a temp B-tree. A bare `coalesce(...) DESC, id DESC` index is
+*matchable* but never *chosen*: forcing it with `INDEXED BY` measured 12x faster, yet the
+planner ignored it at 208 rows and at 5,200.
+
+An `EXPLAIN QUERY PLAN` probe on a hand-built table suggested the bare index would win, because
+that table had no `ix_cards_deleted_at`. **Probe the real schema, using the SQL the endpoint
+actually emits** — compile the statement rather than hand-writing an approximation.
+
+`ix_cards_deleted_at` becomes a strict prefix of this index and is redundant for everything
+except the bare `/cards/count`, where it is still measurably better as the narrower covering
+index. Keep it; drop it if `/cards/count` ever gains filters.
 
 - [ ] **Step 3: Confirm every table and column named actually exists**
 
