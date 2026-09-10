@@ -268,10 +268,13 @@ launchctl unload ~/Library/LaunchAgents/co.nxta.nxt-a1-backend.plist
 launchctl load  ~/Library/LaunchAgents/co.nxta.nxt-a1-backend.plist
 sleep 3
 curl -s -G localhost:8000/api/v2/cards --data-urlencode "limit=500" | venv/bin/python3 -c "import json,sys; print(len(json.load(sys.stdin)),'cards')"
-curl -s -G localhost:8000/api/v2/cards --data-urlencode "q=Rotary" | venv/bin/python3 -c "import json,sys; print(len(json.load(sys.stdin)),'for q=Rotary')"
-curl -s -G localhost:8000/api/v2/cards --data-urlencode "month=2026-06" | venv/bin/python3 -c "import json,sys; print(len(json.load(sys.stdin)),'for month=2026-06')"
+curl -s -G localhost:8000/api/v2/cards --data-urlencode "q=Rotary" --data-urlencode "limit=500" | venv/bin/python3 -c "import json,sys; print(len(json.load(sys.stdin)),'for q=Rotary')"
+curl -s -G localhost:8000/api/v2/cards --data-urlencode "month=2026-06" --data-urlencode "limit=500" | venv/bin/python3 -c "import json,sys; print(len(json.load(sys.stdin)),'for month=2026-06')"
 ```
-Expected: `205 cards`, and non-zero counts for the other two. Record the `month=2026-06` number — Task 2 asserts facets agree with it.
+Expected: `205 cards`, `85 for q=Rotary`, `78 for month=2026-06`.
+
+**Pass `limit=500` on every one of these.** Without it the endpoint applies its default
+`limit=50` and you will read 50 as the answer for anything with more than 50 matches.
 
 - [ ] **Step 7: Commit**
 
@@ -474,26 +477,74 @@ class CountOut(BaseModel):
 
 - [ ] **Step 4: Add both endpoints**
 
-In `app/routers/v2/cards.py`, **immediately after `list_cards` and before the
-`@router.get("/{card_ext_id}")` at line ~231** — declaration order decides matching:
+**Housekeeping while you are in the docstring:** its closing sentence reads "If these three
+ever disagree" — "three" means the three caller functions, but the bullet list above it is now
+four rules, so the antecedent is hard to find. Reword to name the callers explicitly.
+
+**First, move the bucketing rule into one expression.** `_apply_card_filters` currently
+encodes "received_date else created_at" with `extract` + an `is_(None)` fallback, and the
+facets endpoint below would encode the same rule with `strftime` + `coalesce`. Two independent
+encodings of the one rule the spec calls load-bearing is exactly the drift this design is
+meant to prevent — and it would make `test_facets_counts_match_month_query` pass by
+coincidence rather than by construction.
+
+Define the bucket helpers **above `_apply_card_filters`** (not next to the endpoints), and
+have the filter's own date branches use them:
+
+```python
+def _bucket_year(col_recv=None, col_created=None):
+    """Year of received_date, falling back to created_at when it is NULL. Spec §3.
+
+    strftime + cast, not extract: extract() returns a float on SQLite, and coalesce
+    across a Date and a DateTime needs a consistent text form. This is the ONLY
+    encoding of the bucketing rule — both the month/year filters and the facets
+    GROUP BY use it, so they cannot disagree.
+    """
+    return func.cast(
+        func.strftime('%Y', func.coalesce(col_recv or Card.received_date,
+                                          col_created or Card.created_at)), Integer
+    )
+
+
+def _bucket_month(col_recv=None, col_created=None):
+    return func.cast(
+        func.strftime('%m', func.coalesce(col_recv or Card.received_date,
+                                          col_created or Card.created_at)), Integer
+    )
+```
+
+Then replace the three date branches inside `_apply_card_filters` with:
+
+```python
+    if date:
+        d = date_type.fromisoformat(date)
+        stmt = stmt.where(
+            func.date(func.coalesce(Card.received_date, Card.created_at)) == d
+        )
+    elif month:
+        y, m = int(month[:4]), int(month[5:7])
+        stmt = stmt.where(and_(_bucket_year() == y, _bucket_month() == m))
+    elif year:
+        stmt = stmt.where(_bucket_year() == year)
+```
+
+This changes the SQL for an existing, working endpoint, so **verify it against live data
+before moving on** — Task 1 recorded `month=2026-06` → 78 cards, id-checksum 10572:
+
+```bash
+curl -s -G localhost:8000/api/v2/cards --data-urlencode "month=2026-06" --data-urlencode "limit=500" \
+  | venv/bin/python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d), sum(c['id'] for c in d))"
+```
+Expected: `78 10572`. A different checksum means the rewrite changed which cards match.
+
+**Now add the endpoints.** In `app/routers/v2/cards.py`, **immediately after `list_cards` and
+before the `@router.get("/{card_ext_id}")`** — declaration order decides matching:
 
 ```python
 # ---------------------------------------------------------------------------
 # Facets and count. MUST be declared before GET /{card_ext_id}, or FastAPI
 # matches "facets" and "count" as card external IDs.
 # ---------------------------------------------------------------------------
-
-def _bucket_year(col_recv, col_created):
-    """Year of received_date, falling back to created_at. See spec §3."""
-    return func.cast(
-        func.strftime('%Y', func.coalesce(col_recv, col_created)), Integer
-    )
-
-
-def _bucket_month(col_recv, col_created):
-    return func.cast(
-        func.strftime('%m', func.coalesce(col_recv, col_created)), Integer
-    )
 
 
 @router.get("/facets", response_model=List[CardFacet])
@@ -510,10 +561,11 @@ async def card_facets(
     One GROUP BY — the response stays small however many cards exist, which is what
     lets the Collection tree be complete at any scale.
     """
-    y = _bucket_year(Card.received_date, Card.created_at).label("year")
-    m = _bucket_month(Card.received_date, Card.created_at).label("month")
+    y = _bucket_year().label("year")
+    m = _bucket_month().label("month")
 
-    stmt = select(y, m, func.count(Card.id).label("count")).where(Card.deleted_at.is_(None))
+    # No deleted_at filter here — _apply_card_filters owns it.
+    stmt = select(y, m, func.count(Card.id).label("count"))
     stmt = _apply_card_filters(
         stmt,
         person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
@@ -537,7 +589,7 @@ async def count_cards(
     not_exported: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(func.count(Card.id)).where(Card.deleted_at.is_(None))
+    stmt = select(func.count(Card.id))
     stmt = _apply_card_filters(
         stmt,
         person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
