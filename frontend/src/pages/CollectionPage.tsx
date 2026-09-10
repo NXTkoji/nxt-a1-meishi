@@ -4,7 +4,8 @@ import { listCardFacets, listCards, listPersons, listCountries } from '../api'
 import { useLang } from '../LangContext'
 import type { CardFacet, CardListItem, Country, PersonListItem } from '../types'
 import { MergeModal } from '../components/MergeModal'
-import { MonthSection } from '../components/MonthSection'
+import { MonthSection, monthKey } from '../components/MonthSection'
+import { LoadError } from '../components/LoadMore'
 
 // Fallback country names must follow the UI language, so the DisplayNames instance
 // is built per-locale by the caller rather than pinned at module load.
@@ -33,7 +34,16 @@ export function CollectionPage() {
   // Browse mode: one small request describing every year/month bucket in the whole
   // collection. The page no longer fetches a fixed slab of cards and groups it in the
   // browser — that slab silently dropped everything past its limit.
-  const { data: facets = [], isLoading: facetsLoading } = useQuery<CardFacet[]>({
+  // `isError` matters as much as `data`: a failed request leaves `facets` at its `[]`
+  // default, which would otherwise fall through to the "scan your first card" empty
+  // state and tell a user with hundreds of cards that their collection is empty.
+  const {
+    data: facets = [],
+    isLoading: facetsLoading,
+    isError: facetsError,
+    isFetching: facetsFetching,
+    refetch: refetchFacets,
+  } = useQuery<CardFacet[]>({
     queryKey: ['cards', 'facets'],
     queryFn: () => listCardFacets(),
     enabled: view === 'cards' && !debouncedQ,
@@ -42,18 +52,33 @@ export function CollectionPage() {
   // Search mode: still the old client-side filter over one page of cards. Task 7
   // replaces this with a server-side search; until then it stays working so the app is
   // never broken between commits. Only fetched while a search is active.
-  const { data: cards = [], isLoading: cardsLoading } = useQuery<CardListItem[]>({
+  const {
+    data: cards = [],
+    isLoading: cardsLoading,
+    isError: cardsError,
+    isFetching: cardsFetching,
+    refetch: refetchCards,
+  } = useQuery<CardListItem[]>({
     queryKey: ['cards'],
     queryFn: () => listCards({ limit: 200 }),
     enabled: view === 'cards' && !!debouncedQ,
   })
 
-  const { data: persons = [], isLoading: personsLoading } = useQuery<PersonListItem[]>({
-    queryKey: ['persons', q],
+  // Every query key and request below reads `debouncedQ`, never raw `q`, so that when
+  // Task 7 makes the debounce real, no request fires per keystroke. (Only the search
+  // input's own `value` uses `q`.)
+  const {
+    data: persons = [],
+    isLoading: personsLoading,
+    isError: personsError,
+    isFetching: personsFetching,
+    refetch: refetchPersons,
+  } = useQuery<PersonListItem[]>({
+    queryKey: ['persons', debouncedQ],
     // 500 is the endpoint's cap; passing it explicitly is load-bearing, since
     // listPersons now defaults to the API's own default of 50. Task 8 gives this list
     // a real pager.
-    queryFn: () => listPersons(q || undefined, 500),
+    queryFn: () => listPersons(debouncedQ || undefined, 500),
     enabled: view === 'persons',
   })
 
@@ -64,13 +89,30 @@ export function CollectionPage() {
   })
 
   // Cross-search: when searching cards, also fetch persons matching q to find cards by person
-  const { data: searchPersons = [] } = useQuery<PersonListItem[]>({
-    queryKey: ['persons-search', q],
+  // It feeds matchingPersonIds → filteredCards, so it must follow the same debounced
+  // term as the card list; reading raw `q` here would defeat the debounce for the
+  // expensive half of the search.
+  const {
+    data: searchPersons = [],
+    isError: searchPersonsError,
+    isFetching: searchPersonsFetching,
+    refetch: refetchSearchPersons,
+  } = useQuery<PersonListItem[]>({
+    queryKey: ['persons-search', debouncedQ],
     // Explicit 500 for the same reason as above: a person matched only by organisation
     // name must not fall off the Cards tab because the default page size hid them.
-    queryFn: () => listPersons(q, 500),
-    enabled: view === 'cards' && q.length > 0,
+    queryFn: () => listPersons(debouncedQ, 500),
+    enabled: view === 'cards' && debouncedQ.length > 0,
   })
+
+  // Search results are built from BOTH the card list and the cross-search, so either
+  // one failing makes the results incomplete. Treat that as an error, not as
+  // "no results" (or as a silently shorter list).
+  const searchError = cardsError || searchPersonsError
+  const retrySearch = () => {
+    if (cardsError) refetchCards()
+    if (searchPersonsError) refetchSearchPersons()
+  }
 
   const matchingPersonIds = useMemo(
     () => new Set(searchPersons.map(p => p.id)),
@@ -89,8 +131,10 @@ export function CollectionPage() {
   // The three most recent months open on load. Facets arrive newest-first, so those are
   // simply the first three entries — no date arithmetic, and no assumption that "recent"
   // means the current calendar month.
+  // Keys go through the shared monthKey() so they cannot drift from the format the
+  // MonthSection keys below are built with.
   const eagerMonths = useMemo(
-    () => new Set(facets.slice(0, 3).map(f => `${f.year}-${f.month}`)),
+    () => new Set(facets.slice(0, 3).map(f => monthKey(f.year, f.month))),
     [facets],
   )
 
@@ -223,6 +267,12 @@ export function CollectionPage() {
           // Search mode (temporary shape; Task 7 makes this a server-side search).
           cardsLoading ? (
             <div className="text-center text-gray-400 py-12">{t.loading}</div>
+          ) : searchError ? (
+            // Checked before the empty check: a failed request is not "no results".
+            <LoadError
+              onRetry={retrySearch}
+              isRetrying={cardsFetching || searchPersonsFetching}
+            />
           ) : filteredCards.length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-12">{t.noResults(debouncedQ)}</p>
           ) : (
@@ -241,6 +291,9 @@ export function CollectionPage() {
           // only the expanded months are fetched.
           facetsLoading ? (
             <div className="text-center text-gray-400 py-12">{t.loading}</div>
+          ) : facetsError ? (
+            // Must come before the `facets.length === 0` check — see the query above.
+            <LoadError onRetry={() => refetchFacets()} isRetrying={facetsFetching} />
           ) : facets.length === 0 ? (
             <EmptyState />
           ) : (
@@ -253,22 +306,28 @@ export function CollectionPage() {
                     <button
                       className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 py-1 hover:text-blue-600 text-left"
                       onClick={() => toggleYear(year)}
+                      aria-expanded={!yearCollapsed}
                     >
-                      <span className="text-xs text-gray-400">{yearCollapsed ? '▶' : '▼'}</span>
+                      <span className="text-xs text-gray-400" aria-hidden="true">{yearCollapsed ? '▶' : '▼'}</span>
                       <span>{year}</span>
                       <span className="text-xs text-gray-400">({yearCount})</span>
                     </button>
 
-                    {!yearCollapsed && months.map(f => (
-                      <MonthSection
-                        key={`${f.year}-${f.month}`}
-                        year={f.year}
-                        month={f.month}
-                        count={f.count}
-                        defaultExpanded={eagerMonths.has(`${f.year}-${f.month}`)}
-                        renderCard={card => <CardThumbnail key={card.id} card={card} />}
-                      />
-                    ))}
+                    {/* Hidden, not unmounted: each MonthSection owns its own `expanded`
+                        state, which unmounting would throw away. Collapsing a year and
+                        reopening it must bring every month back as the user left it. */}
+                    <div className={yearCollapsed ? 'hidden' : ''}>
+                      {months.map(f => (
+                        <MonthSection
+                          key={monthKey(f.year, f.month)}
+                          year={f.year}
+                          month={f.month}
+                          count={f.count}
+                          defaultExpanded={eagerMonths.has(monthKey(f.year, f.month))}
+                          renderCard={card => <CardThumbnail key={card.id} card={card} />}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )
               })}
@@ -281,6 +340,9 @@ export function CollectionPage() {
       {view === 'persons' && (
         personsLoading ? (
           <div className="text-center text-gray-400 py-12">{t.loading}</div>
+        ) : personsError ? (
+          // Same rule as the facets tree: a failed request must not render EmptyState.
+          <LoadError onRetry={() => refetchPersons()} isRetrying={personsFetching} />
         ) : persons.length === 0 ? (
           <EmptyState />
         ) : (
@@ -293,8 +355,9 @@ export function CollectionPage() {
                   <button
                     className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 py-1 hover:text-blue-600 text-left"
                     onClick={() => toggleCountry(code)}
+                    aria-expanded={!collapsed}
                   >
-                    <span className="text-xs text-gray-400">{collapsed ? '▶' : '▼'}</span>
+                    <span className="text-xs text-gray-400" aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
                     <span>{label}</span>
                     <span className="text-xs text-gray-400 font-normal">({group.length})</span>
                   </button>

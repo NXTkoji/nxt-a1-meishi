@@ -31,7 +31,9 @@ export function PersonDetailPage() {
 
   const { data: cards = [] } = useQuery<CardListItem[]>({
     queryKey: ['cards', { person_id: person?.id }],
-    queryFn: () => listCards({ person_id: person!.id }),
+    // Explicit 500 (the endpoint's cap, as ExportPage uses): without it the backend
+    // default of 50 silently truncates a person's card list with no indication.
+    queryFn: () => listCards({ person_id: person!.id, limit: 500 }),
     enabled: !!person?.id,
   })
 

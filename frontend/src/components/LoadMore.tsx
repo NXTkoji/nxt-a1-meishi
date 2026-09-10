@@ -4,8 +4,12 @@ interface Props {
   /** How many rows are on screen right now. */
   loaded: number
   /** How many exist in total for this query — from a /count or /facets response,
-   *  never from the length of what happens to have been fetched. */
-  total: number
+   *  never from the length of what happens to have been fetched.
+   *
+   *  `undefined` means "not known yet" (the count query is still in flight, or it
+   *  failed). That is NOT the same as zero: the pager must stay usable, because
+   *  hiding it would strand the user with no way to load the rest. */
+  total?: number
   onLoadMore: () => void
   isLoading?: boolean
 }
@@ -20,17 +24,56 @@ interface Props {
  */
 export function LoadMore({ loaded, total, onLoadMore, isLoading }: Props) {
   const { t } = useLang()
-  if (loaded >= total) return null
+  // Only a *known* total can prove everything is loaded. With an unknown total we
+  // keep the button, since "more may exist" is the only safe assumption.
+  if (total !== undefined && loaded >= total) return null
 
   return (
     <div className="flex flex-col items-center gap-1 py-3">
-      <p className="text-xs text-gray-400">{t.showingNofM(loaded, total)}</p>
+      {/* "Showing n of m" needs a real m — omit the line rather than print "of 0". */}
+      {total !== undefined && (
+        <p className="text-xs text-gray-400">{t.showingNofM(loaded, total)}</p>
+      )}
       <button
         onClick={onLoadMore}
         disabled={isLoading}
         className="btn-secondary text-sm disabled:opacity-50"
       >
         {isLoading ? t.loading : t.loadMore}
+      </button>
+    </div>
+  )
+}
+
+interface LoadErrorProps {
+  /** Re-run the failed request — typically TanStack's `refetch` or `fetchNextPage`. */
+  onRetry: () => void
+  /** True while the retry is in flight, so the button cannot be double-fired. */
+  isRetrying?: boolean
+}
+
+/**
+ * The counterpart to LoadMore for a request that failed.
+ *
+ * It exists so a failed fetch is never rendered as ordinary UI — an empty grid, "no
+ * results", or the "scan your first card" empty state would all tell the user their
+ * data is missing when it is only unreachable. It always offers a retry rather than
+ * a dead end.
+ *
+ * It lives beside LoadMore because the same list views (month sections, and later the
+ * search results and the Persons tab) need both.
+ */
+export function LoadError({ onRetry, isRetrying }: LoadErrorProps) {
+  const { t } = useLang()
+  return (
+    <div role="alert" className="flex flex-col items-center gap-2 py-6">
+      <p className="text-sm text-red-600">{t.loadError}</p>
+      <button
+        onClick={onRetry}
+        disabled={isRetrying}
+        className="btn-secondary text-sm disabled:opacity-50"
+      >
+        {isRetrying ? t.loading : t.retry}
       </button>
     </div>
   )
