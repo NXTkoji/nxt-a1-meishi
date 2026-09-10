@@ -1622,25 +1622,29 @@ In `CollectionPage.tsx`, replace the placeholder `const debouncedQ = q` from Tas
 
 ```tsx
   const debouncedQ = useDebounced(q, 300)
-  const [searchPages, setSearchPages] = useState(1)
 
   // Reset paging whenever the query changes, or page 2 of an old query leaks in.
-  useEffect(() => { setSearchPages(1) }, [debouncedQ])
 
   const SEARCH_PAGE = 50
 
-  const { data: searchResults = [], isFetching: searchFetching } = useQuery<CardListItem[]>({
-    queryKey: ['cards', 'search', debouncedQ, searchPages],
-    queryFn: async () => {
-      const batches = await Promise.all(
-        Array.from({ length: searchPages }, (_, i) =>
-          listCards({ q: debouncedQ, limit: SEARCH_PAGE, offset: i * SEARCH_PAGE }),
-        ),
-      )
-      return batches.flat()
-    },
-    enabled: view === 'cards' && debouncedQ.length > 0,
-  })
+  // useInfiniteQuery, NOT a useQuery whose key contains the page count. Keying on the
+  // page count makes every "Load more" a fresh cache entry: it re-requests every earlier
+  // page (n(n+1)/2 requests to reach page n), keeps overlapping copies, and blanks the
+  // grid while the new entry is empty. The page count belongs in the cache, not in state.
+  const { data: searchData, isFetching: searchFetching, fetchNextPage: fetchMoreResults } =
+    useInfiniteQuery({
+      queryKey: ['cards', 'search', debouncedQ],
+      queryFn: ({ pageParam }) =>
+        listCards({ q: debouncedQ, limit: SEARCH_PAGE, offset: pageParam }),
+      initialPageParam: 0,
+      // The /count total stays the authority on whether more remain.
+      getNextPageParam: (_last, all) => {
+        const loaded = all.reduce((n, page) => n + page.length, 0)
+        return loaded < (searchTotal?.total ?? 0) ? loaded : undefined
+      },
+      enabled: view === 'cards' && debouncedQ.length > 0,
+    })
+  const searchResults = searchData?.pages.flat() ?? []
 
   const { data: searchTotal } = useQuery<{ total: number }>({
     queryKey: ['cards', 'search-count', debouncedQ],
@@ -1674,7 +1678,7 @@ In the cards-tab JSX, branch on `debouncedQ`:
               loaded={searchResults.length}
               total={searchTotal?.total ?? searchResults.length}
               isLoading={searchFetching}
-              onLoadMore={() => setSearchPages(p => p + 1)}
+              onLoadMore={() => fetchMoreResults()}
             />
           </div>
         )
@@ -1720,24 +1724,23 @@ git commit -m "feat: server-side debounced paginated card search"
 Replace the `persons` query:
 
 ```tsx
-  const [personPages, setPersonPages] = useState(1)
   const PERSON_PAGE = 50
 
-  useEffect(() => { setPersonPages(1) }, [debouncedQ])
 
-  const { data: persons = [], isLoading: personsLoading, isFetching: personsFetching } =
-    useQuery<PersonListItem[]>({
-      queryKey: ['persons', debouncedQ, personPages],
-      queryFn: async () => {
-        const batches = await Promise.all(
-          Array.from({ length: personPages }, (_, i) =>
-            listPersons(debouncedQ || undefined, PERSON_PAGE, i * PERSON_PAGE),
-          ),
-        )
-        return batches.flat()
-      },
-      enabled: view === 'persons',
-    })
+  // useInfiniteQuery for the same reason as the card search above.
+  const { data: personsData, isLoading: personsLoading, isFetching: personsFetching,
+          fetchNextPage: fetchMorePersons } = useInfiniteQuery({
+    queryKey: ['persons', debouncedQ],
+    queryFn: ({ pageParam }) =>
+      listPersons(debouncedQ || undefined, PERSON_PAGE, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (_last, all) => {
+      const loaded = all.reduce((n, page) => n + page.length, 0)
+      return loaded < (personTotal?.total ?? 0) ? loaded : undefined
+    },
+    enabled: view === 'persons',
+  })
+  const persons = personsData?.pages.flat() ?? []
 
   const { data: personTotal } = useQuery<{ total: number }>({
     queryKey: ['persons-count', debouncedQ],
@@ -1755,7 +1758,7 @@ At the end of the persons-tab JSX, after the country groups:
             loaded={persons.length}
             total={personTotal?.total ?? persons.length}
             isLoading={personsFetching}
-            onLoadMore={() => setPersonPages(p => p + 1)}
+            onLoadMore={() => fetchMorePersons()}
           />
 ```
 
