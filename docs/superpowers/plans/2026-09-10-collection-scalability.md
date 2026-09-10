@@ -492,25 +492,32 @@ Define the bucket helpers **above `_apply_card_filters`** (not next to the endpo
 have the filter's own date branches use them:
 
 ```python
-def _bucket_year():
-    """Year of received_date, falling back to created_at when it is NULL. Spec §3.
+def _filing_date() -> ColumnElement:
+    """The date a card is filed under: received_date, or created_at when it is NULL.
 
-    strftime + cast, not extract: extract() returns a float on SQLite, and coalesce
-    across a Date and a DateTime needs a consistent text form. This is the ONLY
-    encoding of the bucketing rule — both the month/year filters and the facets
-    GROUP BY use it, so they cannot disagree.
+    Every date filter and the facets GROUP BY are built from this one expression,
+    so a month header count cannot disagree with the cards that month returns.
+    Spec: docs/superpowers/specs/2026-09-09-collection-scalability-design.md §3
     """
-    return func.cast(func.strftime('%Y', _bucket_date()), Integer)
-
-
-def _bucket_month():
-    return func.cast(func.strftime('%m', _bucket_date()), Integer)
-
-
-def _bucket_date():
-    """The coalesced date every bucketing expression is built from."""
     return func.coalesce(Card.received_date, Card.created_at)
+
+
+def _filing_year() -> ColumnElement:
+    return func.extract('year', _filing_date())
+
+
+def _filing_month() -> ColumnElement:
+    return func.extract('month', _filing_date())
 ```
+
+**Use `extract`, not a hand-rolled `strftime` + `cast`.** An earlier draft of this plan claimed
+`extract()` returns a float on SQLite and cannot span a `Date` and a `DateTime`. That is false
+on this stack — verified on SQLAlchemy 2.0.36, `func.extract('year', coalesce(...))` compiles
+to exactly `CAST(STRFTIME('%Y', coalesce(...)) AS INTEGER)` and returns a Python `int`. The two
+forms emit identical SQL, so use the shorter idiomatic one and drop the `Integer` import.
+
+The real improvement here is `coalesce` replacing the previous OR-of-two-branches — that is
+what collapses the rule to a single expression.
 
 **Take no column arguments.** An earlier draft had these as `_bucket_year(col_recv=None,
 col_created=None)` with a `col_recv or Card.received_date` body. That is broken: SQLAlchemy's
@@ -525,9 +532,9 @@ Then replace the three date branches inside `_apply_card_filters` with:
         stmt = stmt.where(func.date(_bucket_date()) == d)
     elif month:
         y, m = int(month[:4]), int(month[5:7])
-        stmt = stmt.where(and_(_bucket_year() == y, _bucket_month() == m))
+        stmt = stmt.where(and_(_filing_year() == y, _filing_month() == m))
     elif year:
-        stmt = stmt.where(_bucket_year() == year)
+        stmt = stmt.where(_filing_year() == year)
 ```
 
 This changes the SQL for an existing, working endpoint, so **verify it against live data
@@ -563,8 +570,8 @@ async def card_facets(
     One GROUP BY — the response stays small however many cards exist, which is what
     lets the Collection tree be complete at any scale.
     """
-    y = _bucket_year().label("year")
-    m = _bucket_month().label("month")
+    y = _filing_year().label("year")
+    m = _filing_month().label("month")
 
     # No deleted_at filter here — _apply_card_filters owns it.
     stmt = select(y, m, func.count(Card.id).label("count"))
@@ -609,9 +616,9 @@ from sqlalchemy import Integer, func, select
 from app.schemas.api import CardFacet, CardListItem, CardOut, CardSideOut, CountOut
 ```
 
-**Why `strftime` and not `extract`:** `extract('year', …)` on SQLite returns a float, and
-`coalesce` across a `Date` and a `DateTime` needs a consistent text form. `strftime('%Y', …)`
-gives a zero-padded string that casts cleanly to `Integer`, and works on both column types.
+**On `extract`:** it compiles to `CAST(STRFTIME('%Y', …) AS INTEGER)` on SQLite and returns a
+Python `int`, including across a `coalesce` of a `Date` and a `DateTime`. Verified on
+SQLAlchemy 2.0.36.
 
 - [ ] **Step 5: Run the tests**
 
@@ -1731,8 +1738,9 @@ task's test and browser steps, §7 amendment→**already applied** to the scan/o
 commit `18adc13`, so no task is needed.
 
 **Verified rather than assumed** — two claims this plan rests on were checked against the real
-models before writing: `func.cast(func.strftime('%Y', func.coalesce(received_date, created_at)), Integer)`
-groups and orders correctly and yields Python `int` (not str or float, which `extract` would);
+models before writing: bucketing on `func.coalesce(received_date, created_at)` groups and orders
+correctly and yields Python `int`. (A claim in an earlier draft — that `extract` returns a float
+on SQLite — was disproved during Task 2 and corrected;
 and `session_maker.kw["bind"]` returns the `AsyncEngine`, so the query-counter test can reach
 `.sync_engine`.
 
