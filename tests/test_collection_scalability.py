@@ -9,7 +9,10 @@ import itertools
 from datetime import date, datetime
 
 import pytest
+from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import Card
 from app.db.session import get_db
 from app.main import app
 
@@ -208,12 +211,17 @@ def test_count_respects_filters(client_with_test_db):
 
 
 def test_list_pagination_is_stable(client_with_test_db):
-    """Two pages must not overlap or skip, even when every row ties on the sort key.
+    """Three pages cover all 30 rows exactly once — no overlap, nothing skipped.
 
-    All 30 cards deliberately share one received_date AND one created_at — a bulk
-    import writing a single timestamp does exactly this. With no tiebreaker in ORDER BY
-    the database is free to order tied rows differently per query, so page 2 can repeat
-    or skip a row from page 1. Seeding distinct timestamps would never exercise that.
+    All 30 cards deliberately share one received_date AND one created_at, so every row
+    ties on the leading sort key (a bulk import writing a single timestamp does exactly
+    this). That is the shape where a non-total ORDER BY *could* duplicate or skip rows.
+
+    Be honest about what this proves, though: it does NOT guard the tiebreaker. SQLite
+    returns tied rows in rowid order for this query plan, so removing Card.id from the
+    ORDER BY — or removing the ORDER BY entirely — leaves this test passing. It is an
+    end-to-end smoke test of paging; test_list_ordering_is_total below is what actually
+    guards the total-order invariant.
     """
     _seed_cards([(date(2026, 9, 1), datetime(2026, 9, 1, 12, 0)) for _ in range(30)])
 
@@ -225,6 +233,60 @@ def test_list_pagination_is_stable(client_with_test_db):
     seen = [c["id"] for c in page1 + page2 + page3]
     # No duplicates and nothing skipped: three pages must cover all 30 exactly once.
     assert len(set(seen)) == 30
+
+
+def test_list_ordering_is_total(client_with_test_db, monkeypatch):
+    """The ORDER BY list_cards emits must end in a unique column.
+
+    Without a tiebreaker, LIMIT/OFFSET pagination can duplicate or skip rows whose
+    sort keys tie: the database is free to return tied rows in a different order per
+    query, so page 2 may repeat or omit a row from page 1. The leading key here is
+    coalesce(received_date, created_at), which ties constantly — every card imported
+    in one batch shares it.
+
+    This invariant is *structural*, not behavioural, on SQLite: SQLite happens to
+    return tied rows in rowid order for this query plan, so a paging test cannot
+    observe the missing tiebreaker (see test_list_pagination_is_stable above, which
+    still passes with the ORDER BY deleted outright). So assert on the SQL instead.
+
+    The statement is captured from the live request rather than rebuilt here, so this
+    test is bound to what the endpoint actually executes — mutating list_cards' own
+    order_by fails it.
+    """
+    _seed_cards([(date(2026, 9, 1), datetime(2026, 9, 1, 12, 0)) for _ in range(3)])
+
+    captured = []
+    original_execute = AsyncSession.execute
+
+    async def _spy_execute(self, statement, *args, **kwargs):
+        captured.append(statement)
+        return await original_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "execute", _spy_execute)
+
+    assert client_with_test_db.get("/api/v2/cards", params={"limit": 2}).status_code == 200
+
+    # One request fires several statements (the card page, its eager-loaded sides, the
+    # sync-history lookup). Keep only the one selecting Card entities — that is the
+    # paginated statement whose ordering has to be total. The eager-load statement
+    # selects CardSide, and the history one selects CardSyncHistory, so entity identity
+    # separates them cleanly without matching on SQL text.
+    card_selects = [
+        s for s in captured
+        if getattr(s, "column_descriptions", None)
+        and s.column_descriptions[0].get("entity") is Card
+        and s._order_by_clauses
+    ]
+    assert card_selects, "no ordered Card select was executed by GET /api/v2/cards"
+
+    # Compile the ORDER BY clauses individually — safer than slicing the full SQL
+    # string, which would also match an ORDER BY inside a subquery.
+    order_by_sql = [
+        str(clause.compile(dialect=sqlite_dialect())) for clause in card_selects[-1]._order_by_clauses
+    ]
+    assert any("cards.id" in clause for clause in order_by_sql), (
+        f"ORDER BY {order_by_sql} has no unique column — LIMIT/OFFSET paging is unsound"
+    )
 
 
 def test_month_query_paginates(client_with_test_db):
@@ -267,3 +329,21 @@ def test_wellformed_date_params_are_accepted(client_with_test_db, endpoint):
     """The patterns must not reject input the endpoints are supposed to take."""
     assert client_with_test_db.get(endpoint, params={"month": "2026-09"}).status_code == 200
     assert client_with_test_db.get(endpoint, params={"date": "2026-09-01"}).status_code == 200
+
+
+@pytest.mark.parametrize("endpoint", ["/api/v2/cards", "/api/v2/cards/count"])
+@pytest.mark.parametrize("date_param", [
+    "2026-13-45",   # month 13 and day 45 — both out of range
+    "2026-02-30",   # correctly shaped, but February never has 30 days
+    "2026-04-31",   # April has 30 days
+    "2025-02-29",   # 2025 is not a leap year
+])
+def test_impossible_but_wellformed_dates_are_rejected(client_with_test_db, endpoint, date_param):
+    """A date that passes the regex but is not a real day must be a 422, not a 500.
+
+    No regex can reject 2026-02-30 or 2025-02-29 without encoding leap-year rules, so
+    the pattern alone cannot make this safe — `_apply_card_filters` has to catch the
+    ValueError from `date.fromisoformat` and turn it into a 422. Before that guard
+    existed these four inputs raised an uncaught ValueError out of the endpoint.
+    """
+    assert client_with_test_db.get(endpoint, params={"date": date_param}).status_code == 422

@@ -92,10 +92,18 @@ def _apply_card_filters(
     # single encoding of "received_date, falling back to created_at" — the same
     # expressions card_facets groups by, so a facet count and its ?month= query
     # match by construction rather than by coincidence.
-    # `month` and `date` are pattern-validated at the endpoint, so these parses
-    # cannot raise on caller input.
+    # `month` and `date` are pattern-validated at the endpoint, so the *shape* of
+    # both is guaranteed here — int(month[:4]) and int(month[5:7]) below cannot
+    # raise, and the month pattern already pins 01-12. `date` is different: no
+    # regex can tell a real day from an impossible one, so its parse is guarded.
     if date:
-        d = date_type.fromisoformat(date)
+        try:
+            d = date_type.fromisoformat(date)
+        except ValueError:
+            # The endpoint's pattern catches malformed shapes, but no regex can reject
+            # a well-shaped impossible date like 2026-02-30 without leap-year rules.
+            # Without this guard such input escaped as an uncaught ValueError -> 500.
+            raise HTTPException(422, f"Invalid date: {date}")
         stmt = stmt.where(func.date(_filing_date()) == d)
     elif month:
         y, m = int(month[:4]), int(month[5:7])
@@ -168,7 +176,13 @@ async def list_cards(
     q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
     year: Optional[int] = Query(None),
     month: Optional[str] = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM"),
-    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
+    date: Optional[str] = Query(
+        None,
+        # \d{2} would accept month 13 and day 45; this rejects the cheap cases at
+        # the edge. It still cannot reject 2026-02-30 — see _apply_card_filters.
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$",
+        description="YYYY-MM-DD",
+    ),
     not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
     limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
@@ -303,7 +317,13 @@ async def count_cards(
     q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
     year: Optional[int] = Query(None),
     month: Optional[str] = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM"),
-    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
+    date: Optional[str] = Query(
+        None,
+        # \d{2} would accept month 13 and day 45; this rejects the cheap cases at
+        # the edge. It still cannot reject 2026-02-30 — see _apply_card_filters.
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$",
+        description="YYYY-MM-DD",
+    ),
     not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
     db: AsyncSession = Depends(get_db),
 ):
