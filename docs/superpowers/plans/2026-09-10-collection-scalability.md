@@ -492,7 +492,7 @@ Define the bucket helpers **above `_apply_card_filters`** (not next to the endpo
 have the filter's own date branches use them:
 
 ```python
-def _bucket_year(col_recv=None, col_created=None):
+def _bucket_year():
     """Year of received_date, falling back to created_at when it is NULL. Spec §3.
 
     strftime + cast, not extract: extract() returns a float on SQLite, and coalesce
@@ -500,27 +500,29 @@ def _bucket_year(col_recv=None, col_created=None):
     encoding of the bucketing rule — both the month/year filters and the facets
     GROUP BY use it, so they cannot disagree.
     """
-    return func.cast(
-        func.strftime('%Y', func.coalesce(col_recv or Card.received_date,
-                                          col_created or Card.created_at)), Integer
-    )
+    return func.cast(func.strftime('%Y', _bucket_date()), Integer)
 
 
-def _bucket_month(col_recv=None, col_created=None):
-    return func.cast(
-        func.strftime('%m', func.coalesce(col_recv or Card.received_date,
-                                          col_created or Card.created_at)), Integer
-    )
+def _bucket_month():
+    return func.cast(func.strftime('%m', _bucket_date()), Integer)
+
+
+def _bucket_date():
+    """The coalesced date every bucketing expression is built from."""
+    return func.coalesce(Card.received_date, Card.created_at)
 ```
+
+**Take no column arguments.** An earlier draft had these as `_bucket_year(col_recv=None,
+col_created=None)` with a `col_recv or Card.received_date` body. That is broken: SQLAlchemy's
+`ColumnElement.__bool__` raises `TypeError`, so passing an actual column — the only reason the
+parameters would exist — crashes rather than works. No call site needs them.
 
 Then replace the three date branches inside `_apply_card_filters` with:
 
 ```python
     if date:
         d = date_type.fromisoformat(date)
-        stmt = stmt.where(
-            func.date(func.coalesce(Card.received_date, Card.created_at)) == d
-        )
+        stmt = stmt.where(func.date(_bucket_date()) == d)
     elif month:
         y, m = int(month[:4]), int(month[5:7])
         stmt = stmt.where(and_(_bucket_year() == y, _bucket_month() == m))
@@ -616,8 +618,14 @@ gives a zero-padded string that casts cleanly to `Integer`, and works on both co
 Run: `cd nxt-a1-meishi && venv/bin/python3 -m pytest tests/test_collection_scalability.py -v`
 Expected: 9 passed.
 
-If `test_facets_groups_by_received_date` returns `{"year": 2026, "month": 3}` as strings,
-the `func.cast(..., Integer)` was dropped.
+**Do not rely on `test_facets_groups_by_received_date` to guard the `cast`.** `CardFacet`
+declares `year: int`, and Pydantic coerces `"03"` to `3`, so that test passes either way. If
+you want to prove the cast is present, check the types over HTTP:
+
+```bash
+curl -s localhost:8000/api/v2/cards/facets | venv/bin/python3 -c "import json,sys; f=json.load(sys.stdin)[0]; print(type(f['year']).__name__, type(f['month']).__name__)"
+```
+Expected: `int int`.
 
 - [ ] **Step 6: Run the whole suite**
 
