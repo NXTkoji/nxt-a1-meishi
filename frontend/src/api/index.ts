@@ -57,8 +57,15 @@ export const promoteCardSideToFront = (cardExtId: string, sideOrder: number) =>
   post<void>(`/api/v2/cards/${cardExtId}/sides/${sideOrder}/promote`, {})
 
 // Persons
+// The explicit limit=500 is load-bearing, not decoration. GET /api/v2/persons defaults
+// to 50, and until the backend was fixed its `if q:` branch applied no LIMIT at all —
+// so a search returned every match. Omitting the parameter here would silently truncate
+// both callers in CollectionPage: the Persons tab list, and the Cards tab cross-search
+// whose matching person ids filter the card rows (a person matched only by organisation
+// name would drop off the Cards tab with no error shown). 500 is the endpoint's cap and
+// matches what listCards is called with. A later task replaces this with real pagination.
 export const listPersons = (q?: string) =>
-  get<PersonListItem[]>(`/api/v2/persons${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+  get<PersonListItem[]>(`/api/v2/persons?limit=500${q ? `&q=${encodeURIComponent(q)}` : ''}`)
 
 export const getPerson = (id: string) => get<Person>(`/api/v2/persons/${id}`)
 
