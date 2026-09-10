@@ -229,27 +229,67 @@ async def list_cards(
     for sh in sync_rows:
         synced_map.setdefault(sh.card_id, set()).add(sh.destination)
 
-    async def _get_name(pid: int, lang: Optional[str]) -> Optional[str]:
-        base = (PersonName.person_id == pid, PersonName.is_current == True)  # noqa: E712
-        if lang:
-            preferred = await db.scalar(
-                select(PersonName.full_name)
-                .where(*base, PersonName.language.like(f"{lang}%"))
-                .order_by(PersonName.id.asc())
-                .limit(1)
+    # Every current name for every person on this page, in ONE query. This used to be
+    # an `async def _get_name(...)` called once per card inside the loop below, costing
+    # 1-2 sequential round trips per row — invisible at 200 cards, 10,000-20,000
+    # queries at 10,000. The preference rule is unchanged; only where it is evaluated
+    # moved, from SQL to memory.
+    #
+    # ORDER BY person_id, id means each person's list arrives lowest-id first, which is
+    # what makes "the lowest-id current name" simply the first entry.
+    person_ids = {c.person_id for c in rows}
+    names_by_person: dict[int, list[tuple[str, str]]] = {}
+    if person_ids:
+        name_rows = (await db.execute(
+            select(PersonName.person_id, PersonName.language, PersonName.full_name)
+            .where(
+                PersonName.person_id.in_(person_ids),
+                PersonName.is_current == True,  # noqa: E712
             )
-            if preferred:
-                return preferred
-        return await db.scalar(
-            select(PersonName.full_name)
-            .where(*base)
-            .order_by(PersonName.id.asc())
-            .limit(1)
-        )
+            .order_by(PersonName.person_id.asc(), PersonName.id.asc())
+        )).all()
+        for pid, lang, full in name_rows:
+            names_by_person.setdefault(pid, []).append((lang, full))
+
+    def _pick_name(pid: int, lang: Optional[str]) -> Optional[str]:
+        """Resolve a card's display name. Mirrors the deleted _get_name exactly.
+
+        Rule (user-visible — it decides which script a name appears in on a thumbnail):
+          1. If the card names a preferred language, take the lowest-id current name
+             whose language *starts with* it. "zh" therefore matches a "zh-TW" name,
+             which is why this is a prefix test and not an equality test.
+          2. If that yields nothing usable, fall back to the lowest-id current name
+             regardless of language.
+          3. No current names at all -> None.
+
+        Two details are deliberate rather than incidental:
+          * The prefix comparison is case-insensitive. The old query used SQL LIKE,
+            and SQLite's LIKE is case-insensitive for ASCII by default, so "EN-GB"
+            matched a preference of "en". Python's str.startswith is not, so the
+            operands are lowered to keep the old outcome.
+          * Step 1 only ever considers the FIRST language match. The old code took
+            `LIMIT 1` and then tested `if preferred:`, so a lowest-id language match
+            with an empty full_name fell through to step 2 rather than to the next
+            language match. full_name is NOT NULL in the schema, so this can only
+            differ for the empty string, but it costs nothing to keep identical.
+        """
+        candidates = names_by_person.get(pid)
+        if not candidates:
+            return None
+        if lang:
+            wanted = lang.lower()
+            for cand_lang, full in candidates:
+                if cand_lang and cand_lang.lower().startswith(wanted):
+                    if full:
+                        return full
+                    break  # first match unusable -> fall through, as the old LIMIT 1 did
+        # Fallback: the lowest-id current name, returned as-is (the old db.scalar did
+        # not filter empties out either).
+        return candidates[0][1]
 
     items = []
     for card in rows:
-        name = await _get_name(card.person_id, card.display_name_language)
+        name = _pick_name(card.person_id, card.display_name_language)
         front = next(
             (s.image_path for s in sorted(card.sides, key=lambda s: s.side_order)), None
         )

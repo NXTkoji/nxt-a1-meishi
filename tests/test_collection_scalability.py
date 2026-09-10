@@ -347,3 +347,116 @@ def test_impossible_but_wellformed_dates_are_rejected(client_with_test_db, endpo
     existed these four inputs raised an uncaught ValueError out of the endpoint.
     """
     assert client_with_test_db.get(endpoint, params={"date": date_param}).status_code == 422
+
+
+def _seed_person_with_two_names():
+    """Seed one person carrying two current names, plus three cards pointing at them.
+
+    _seed_cards cannot express this shape — it gives every named card its own person
+    with exactly one "en" PersonName, and has no way to set display_name_language.
+    The whole point here is a person with *several* current names so the preference
+    rule has something to choose between.
+
+    Insertion order is load-bearing: the "ja" name is inserted first, so it holds the
+    lower PersonName.id and is therefore the fallback the resolver must land on when a
+    card expresses no preference (or expresses one that matches nothing).
+
+    Returns the three cards' external_ids keyed by the preference they express.
+    """
+    async def _run():
+        from app.db.models import Card, Person, PersonName
+
+        async for db in app.dependency_overrides[get_db]():
+            person = Person(external_id="p-names")
+            db.add(person)
+            await db.flush()
+
+            db.add(PersonName(person_id=person.id, language="ja", name_type="legal",
+                              full_name="山田太郎", is_current=True))
+            db.add(PersonName(person_id=person.id, language="en", name_type="legal",
+                              full_name="Taro Yamada", is_current=True))
+            # Not current: must never be picked, even though it matches "ko" exactly.
+            db.add(PersonName(person_id=person.id, language="ko", name_type="legal",
+                              full_name="야마다", is_current=False))
+            await db.flush()
+
+            prefers_en = Card(external_id="c-en", person_id=person.id,
+                              display_name_language="en")
+            prefers_none = Card(external_id="c-none", person_id=person.id,
+                                display_name_language=None)
+            # "ko" is only available as a non-current name, so this card must fall
+            # back to the lowest-id *current* name rather than resolving to 야마다.
+            prefers_missing = Card(external_id="c-ko", person_id=person.id,
+                                   display_name_language="ko")
+            db.add_all([prefers_en, prefers_none, prefers_missing])
+            await db.flush()
+            await db.commit()
+            return {
+                "en": prefers_en.external_id,
+                "none": prefers_none.external_id,
+                "ko": prefers_missing.external_id,
+            }
+
+    return asyncio.run(_run())
+
+
+def test_name_batch_honours_display_language(client_with_test_db):
+    """display_name_language picks the matching name; otherwise lowest-id current name.
+
+    This pins the user-visible rule that decides which script a person's name appears
+    in on a collection thumbnail. It has to hold whether the names are resolved one
+    card at a time or in a single batched query.
+    """
+    ext = _seed_person_with_two_names()
+
+    rows = client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json()
+    by_ext = {r["external_id"]: r["person_name"] for r in rows}
+
+    # Preference honoured, even though the "en" name has the higher id.
+    assert by_ext[ext["en"]] == "Taro Yamada"
+    # No preference -> lowest-id current name.
+    assert by_ext[ext["none"]] == "山田太郎"
+    # Preference that matches no *current* name -> same fallback, never the
+    # is_current=False Korean name.
+    assert by_ext[ext["ko"]] == "山田太郎"
+
+
+def test_name_batch_matches_language_by_prefix(client_with_test_db):
+    """A card asking for "zh" takes a "zh-TW" name — the match is a prefix, not equality.
+
+    Real data holds "zh-TW" and "zh" side by side, so a resolver that compared
+    languages with == would silently fall back to the wrong script.
+    """
+    async def _run():
+        from app.db.models import Card, Person, PersonName
+
+        async for db in app.dependency_overrides[get_db]():
+            person = Person(external_id="p-prefix")
+            db.add(person)
+            await db.flush()
+            # "en" first: it is the lowest-id current name, so it is the fallback.
+            db.add(PersonName(person_id=person.id, language="en", name_type="legal",
+                              full_name="Wang Da Ming", is_current=True))
+            db.add(PersonName(person_id=person.id, language="zh-TW", name_type="legal",
+                              full_name="王大明", is_current=True))
+            await db.flush()
+            card = Card(external_id="c-zh", person_id=person.id,
+                        display_name_language="zh")
+            db.add(card)
+            await db.flush()
+            await db.commit()
+            return card.external_id
+
+    ext_id = asyncio.run(_run())
+
+    rows = client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json()
+    by_ext = {r["external_id"]: r["person_name"] for r in rows}
+    assert by_ext[ext_id] == "王大明"
+
+
+def test_name_batch_handles_person_with_no_names(client_with_test_db):
+    """A card whose person has no current name at all reports person_name=None."""
+    _seed_cards([(date(2026, 9, 1), datetime(2026, 9, 1))], prefix="nonames")
+
+    rows = client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json()
+    assert [r["person_name"] for r in rows] == [None]
