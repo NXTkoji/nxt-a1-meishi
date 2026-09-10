@@ -1201,12 +1201,27 @@ def downgrade() -> None:
 
 **Why the filing-date index leads with `deleted_at`, and the verification trap behind it.**
 
-`_apply_card_filters` adds `deleted_at IS NULL` to every list, count and facets query.
-`ix_cards_deleted_at` exists, and `sqlite_stat1` averages over distinct values — so it never
-learns that `IS NULL` matches ~98% of rows. The planner always estimates that seek as cheap,
-takes it, and then sorts in a temp B-tree. A bare `coalesce(...) DESC, id DESC` index is
-*matchable* but never *chosen*: forcing it with `INDEXED BY` measured 12x faster, yet the
-planner ignored it at 208 rows and at 5,200.
+`_apply_card_filters` adds `deleted_at IS NULL` to every list, count and facets query, and
+`ix_cards_deleted_at` exists. Nothing in the app ever runs `ANALYZE`, so there is no
+`sqlite_stat1` and SQLite falls back to a **default selectivity estimate** for `deleted_at = ?`
+— which makes that narrow index look cheap. The planner takes it and then sorts in a temp
+B-tree. A bare `coalesce(...) DESC, id DESC` index is *matchable* but never *chosen*: measured
+plan-for-plan and microsecond-for-microsecond identical to having no index at all, at 208 rows,
+at 5,200, and at 100,000.
+
+(An earlier draft of this note had the cause backwards — it blamed statistics being present and
+averaged. It is their **absence**. After an `ANALYZE` the planner does start choosing a bare
+`coalesce` index for the default list; the `deleted_at`-leading index still wins, because
+leading with `deleted_at` prunes rather than scanning the whole index — 1.088 ms vs 2.013 ms on
+`?month=`. The decision holds in both states, but for the opposite reason to the one first
+written down.)
+
+**The index is declared only in the migration, never on the model** — so
+`alembic revision --autogenerate` would propose dropping all seven *reflectable* indexes while
+silently keeping the expression one, which SQLAlchemy cannot reflect. An `include_object()` hook
+in `migrations/env.py`, keyed on a `_MIGRATION_ONLY_INDEXES` frozenset, suppresses exactly these
+eight names and nothing else. Verified with a negative control: an index outside the set is
+still detected and proposed for drop.
 
 An `EXPLAIN QUERY PLAN` probe on a hand-built table suggested the bare index would win, because
 that table had no `ix_cards_deleted_at`. **Probe the real schema, using the SQL the endpoint
