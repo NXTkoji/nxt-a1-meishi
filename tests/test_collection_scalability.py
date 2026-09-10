@@ -10,7 +10,6 @@ from datetime import date, datetime
 
 import pytest
 from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Card, Person
 from app.db.session import get_db
@@ -236,7 +235,7 @@ def test_list_pagination_is_stable(client_with_test_db):
     assert len(set(seen)) == 30
 
 
-def test_list_ordering_is_total(client_with_test_db, monkeypatch):
+def test_list_ordering_is_total(client_with_test_db, captured_statements):
     """The ORDER BY list_cards emits must end in a unique column.
 
     Without a tiebreaker, LIMIT/OFFSET pagination can duplicate or skip rows whose
@@ -256,14 +255,7 @@ def test_list_ordering_is_total(client_with_test_db, monkeypatch):
     """
     _seed_cards([(date(2026, 9, 1), datetime(2026, 9, 1, 12, 0)) for _ in range(3)])
 
-    captured = []
-    original_execute = AsyncSession.execute
-
-    async def _spy_execute(self, statement, *args, **kwargs):
-        captured.append(statement)
-        return await original_execute(self, statement, *args, **kwargs)
-
-    monkeypatch.setattr(AsyncSession, "execute", _spy_execute)
+    captured = captured_statements()
 
     assert client_with_test_db.get("/api/v2/cards", params={"limit": 2}).status_code == 200
 
@@ -583,13 +575,30 @@ def test_persons_search_is_bounded(client_with_test_db):
     assert len(rows) == 10
 
 
-def test_persons_search_is_ordered(client_with_test_db):
-    """Two identical requests return the same rows in the same order."""
+def test_persons_are_newest_first(client_with_test_db):
+    """The list comes back in descending created_at — newest person first.
+
+    This pins the sort DIRECTION, which nothing else did: flipping the endpoint's
+    order_by to created_at.asc() left every other test green, even though "newest
+    first" is what the Persons tab shows and what a later pager will assume.
+
+    It replaces a test that asserted two identical requests returned the same order —
+    a property of SQLite's query plan, not of this code, which no mutation could kill
+    (not even deleting the order_by outright). The *totality* of the ordering is
+    test_persons_ordering_is_total's job; this one owns the direction.
+
+    _seed_persons gives each person a distinct created_at, so the expected order is
+    unambiguous rather than a tie broken by id.
+    """
     _seed_persons(30)
 
-    a = client_with_test_db.get("/api/v2/persons", params={"q": "Tester", "limit": 10}).json()
-    b = client_with_test_db.get("/api/v2/persons", params={"q": "Tester", "limit": 10}).json()
-    assert [r["id"] for r in a] == [r["id"] for r in b]
+    rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
+    assert len(rows) == 30
+    timestamps = [r["created_at"] for r in rows]
+    # Guard the guard: if the seeder ever produced tied timestamps, the ordering
+    # assertion below would hold in BOTH directions and quietly stop testing anything.
+    assert len(set(timestamps)) == 30, "seeded created_at values tied — assertion vacuous"
+    assert timestamps == sorted(timestamps, reverse=True)
 
 
 def test_persons_search_paginates(client_with_test_db):
@@ -606,7 +615,7 @@ def test_persons_search_paginates(client_with_test_db):
     assert not ({r["id"] for r in p1} & {r["id"] for r in p2})
 
 
-def test_persons_ordering_is_total(client_with_test_db, monkeypatch):
+def test_persons_ordering_is_total(client_with_test_db, captured_statements):
     """The ORDER BY list_persons emits must end in a unique column.
 
     Same argument as test_list_ordering_is_total for cards, and the same reason it has
@@ -619,14 +628,7 @@ def test_persons_ordering_is_total(client_with_test_db, monkeypatch):
     """
     _seed_persons(3)
 
-    captured = []
-    original_execute = AsyncSession.execute
-
-    async def _spy_execute(self, statement, *args, **kwargs):
-        captured.append(statement)
-        return await original_execute(self, statement, *args, **kwargs)
-
-    monkeypatch.setattr(AsyncSession, "execute", _spy_execute)
+    captured = captured_statements()
 
     assert client_with_test_db.get("/api/v2/persons", params={"limit": 2}).status_code == 200
 
@@ -693,6 +695,78 @@ def test_persons_count_matches_search(client_with_test_db):
     assert total == len(rows) == 12
 
 
+def _seed_person_at_org(person_ext_id, person_name, org_name):
+    """Seed one person whose CURRENT organisation name is `org_name`.
+
+    Neither existing seeder can express this: _seed_cards and _seed_person_with_names
+    both stop at PersonName, and nothing in the suite ever created an Organization,
+    OrganizationName or Position. That is exactly why the organisation half of
+    _person_ids_matching had no coverage — it could be deleted outright and the whole
+    suite stayed green.
+
+    The three rows are the minimum the search join needs: Position links the person to
+    the org, and OrganizationName carries the searchable text with is_current=True.
+    """
+    async def _run():
+        from app.db.models import (
+            Organization, OrganizationName, Person, PersonName, Position,
+        )
+
+        async for db in app.dependency_overrides[get_db]():
+            person = Person(external_id=person_ext_id)
+            db.add(person)
+            org = Organization(external_id=f"o-{person_ext_id}")
+            db.add(org)
+            await db.flush()
+
+            db.add(PersonName(
+                person_id=person.id,
+                language="en",
+                name_type="primary",
+                full_name=person_name,
+                is_current=True,
+            ))
+            db.add(OrganizationName(
+                org_id=org.id,
+                language="en",
+                name=org_name,
+                is_current=True,
+            ))
+            db.add(Position(person_id=person.id, org_id=org.id))
+            await db.flush()
+            await db.commit()
+
+    asyncio.run(_run())
+
+
+def test_persons_search_matches_organisation_name(client_with_test_db):
+    """?q= finds a person by their CURRENT organisation name, not just their own name.
+
+    GET /api/v2/persons documents itself as "Search by name or organisation", and the
+    Collection page's Cards tab relies on the organisation half: it feeds the matched
+    person ids into the card filter, so a card whose person matched only by company
+    disappears if that half breaks. Until this test, deleting the matched_org_ids
+    query from _person_ids_matching left every other test passing.
+
+    The person's own name deliberately shares no substring with the query, so only the
+    organisation join can produce the match. The bystander proves the search still
+    discriminates — a broken filter returning everyone would otherwise pass.
+    """
+    _seed_person_at_org("p-at-org", person_name="Alice Smith", org_name="Rotary Club of Taipei")
+    _seed_person_at_org("p-elsewhere", person_name="Bob Jones", org_name="Some Other Company")
+
+    rows = client_with_test_db.get(
+        "/api/v2/persons", params={"q": "Rotary", "limit": 500}
+    ).json()
+    assert [r["external_id"] for r in rows] == ["p-at-org"]
+
+    # /count shares _person_ids_matching with the list, so it must see the same match.
+    total = client_with_test_db.get(
+        "/api/v2/persons/count", params={"q": "Rotary"}
+    ).json()["total"]
+    assert total == 1
+
+
 def test_persons_count_matches_unfiltered_list(client_with_test_db):
     """With no ?q=, /count is the total the pager needs to size itself."""
     _seed_persons(7)
@@ -733,17 +807,30 @@ def test_persons_country_prefers_home_over_work(client_with_test_db):
 def test_persons_country_ignores_non_address_details(client_with_test_db):
     """A country_code on a phone or email row is never shown.
 
-    Falls back to the work address rather than to the phone row seeded before it.
+    The detail_type.in_(["address_home", "address_work"]) filter is only OBSERVABLE on
+    a person who has no address at all — p-phoneonly below. The p-nonaddress case
+    cannot see it: "address_work" < "phone_work" alphabetically, so the endpoint's
+    `detail_type ASC` returns TW first whether or not the filter is there. Both are
+    kept, because together they say "prefer the address" AND "never fall back to a
+    non-address"; only the second one dies when the filter is deleted.
     """
     _seed_person_with_names(
         "p-nonaddress",
         names=[("en", "Phone First", True)],
         contact_details=[("phone_work", "FR"), ("address_work", "TW")],
     )
+    # No address row at all: without the filter, this person's phone country leaks out
+    # as their country_code.
+    _seed_person_with_names(
+        "p-phoneonly",
+        names=[("en", "Phone Only", True)],
+        contact_details=[("phone_work", "FR")],
+    )
 
     rows = client_with_test_db.get("/api/v2/persons", params={"limit": 500}).json()
     by_ext = {r["external_id"]: r["country_code"] for r in rows}
     assert by_ext["p-nonaddress"] == "TW"
+    assert by_ext["p-phoneonly"] is None
 
 
 def test_persons_country_skips_null_country_codes(client_with_test_db):

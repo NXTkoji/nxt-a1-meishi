@@ -14,6 +14,20 @@ from app.schemas.parsed_card import MatchResult, ParsedCard
 
 
 # ---------------------------------------------------------------------------
+# Shared — models used by more than one resource
+# ---------------------------------------------------------------------------
+
+class CountOut(BaseModel):
+    """Total number of rows matching a filter set, with no rows fetched.
+
+    Deliberately resource-agnostic: this docstring is what FastAPI publishes as the
+    OpenAPI `description`, and the model backs both GET /api/v2/cards/count and
+    GET /api/v2/persons/count. Naming one resource here mislabels the other in /docs.
+    """
+    total: int
+
+
+# ---------------------------------------------------------------------------
 # Scan Sessions
 # ---------------------------------------------------------------------------
 
@@ -148,11 +162,6 @@ class CardFacet(BaseModel):
     year: int
     month: int
     count: int
-
-
-class CountOut(BaseModel):
-    """Total number of cards matching a filter set, with no rows fetched."""
-    total: int
 
 
 # ---------------------------------------------------------------------------

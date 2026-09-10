@@ -12,7 +12,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import Base
 from app.db.session import get_db
@@ -91,3 +91,41 @@ def query_counter():
         return result, counter["n"]
 
     return _count
+
+
+@pytest.fixture
+def captured_statements(monkeypatch):
+    """Collect the SQLAlchemy Core statement objects a request executes.
+
+    Usage:
+        stmts = captured_statements()
+        client.get("/api/v2/cards")
+        # stmts is now populated; filter it for the statement under test.
+
+    Returns the live list, so it fills up as the request runs.
+
+    Why objects and not SQL text: the ORDER BY tests assert on
+    `statement._order_by_clauses`, which distinguishes a top-level ORDER BY from one
+    buried in a subquery — something a substring match on the compiled SQL cannot do.
+    They also pick their statement out by `column_descriptions[0]["entity"]`, so a
+    query for Card rows is told apart from its eager-load without matching SQL text.
+
+    Only the plumbing is shared. Each test keeps its own entity filter and its own
+    assertion: that is where the reasoning about which statement matters, and why,
+    actually lives.
+
+    `monkeypatch` undoes the patch at teardown, so AsyncSession.execute is restored
+    even when the test fails mid-request.
+    """
+    def _capture():
+        captured = []
+        original_execute = AsyncSession.execute
+
+        async def _spy_execute(self, statement, *args, **kwargs):
+            captured.append(statement)
+            return await original_execute(self, statement, *args, **kwargs)
+
+        monkeypatch.setattr(AsyncSession, "execute", _spy_execute)
+        return captured
+
+    return _capture

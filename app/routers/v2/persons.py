@@ -10,15 +10,13 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete as sa_delete, func, or_, select, update
+from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.auth import verify_api_key
 from app.db.models import (
     Card,
     ContactDetail,
-    Organization,
     OrganizationName,
     Person,
     PersonName,
@@ -137,8 +135,14 @@ async def _person_ids_matching(db: AsyncSession, q: str) -> set[int]:
 
     The ids are materialised into a Python set and fed to an `IN (...)`, which is
     bounded by the number of persons in the database, not by `limit`. That is fine at
-    the scale this app runs at (hundreds); if the person table ever reaches the tens
-    of thousands this should become a correlated subquery instead.
+    the scale this app runs at (hundreds).
+
+    At tens of thousands of rows the fix is NOT a correlated subquery: that would move
+    the same work inside the outer query without reducing it. Both predicates here are
+    `ilike('%q%')`, a leading-wildcard match, which no B-tree index can serve — every
+    row of person_names and organization_names is scanned either way. The real answer
+    at that scale is a full-text index (SQLite FTS5) over the two name columns, with
+    this function querying that instead of LIKE.
     """
     like = f"%{q}%"
     # Current person names.
@@ -167,6 +171,13 @@ async def list_persons(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
+    """One page of the collection's Persons tab, optionally filtered by ?q=.
+
+    Shape: build one ordered, paginated statement (both the search and browse branches
+    share it) → fetch the page of Person rows → two batched lookups keyed on that
+    page's ids, one for names and one for countries → assemble the list items in the
+    page's order. Fixed cost of three queries regardless of page size.
+    """
     stmt = select(Person)
     if q:
         stmt = stmt.where(Person.id.in_(await _person_ids_matching(db, q)))
@@ -203,9 +214,13 @@ async def list_persons(
         )
         .order_by(PersonName.person_id.asc(), PersonName.id.asc())
     )).all()
-    names_by_person: dict[int, tuple[Optional[str], Optional[str]]] = {}
+    # Singular "name": this dict holds only the WINNING name per person. cards.py:303
+    # uses `names_by_person` for a dict of every candidate name per person, which the
+    # picker then chooses from — same identifier, different shape, in two files a
+    # reader opens side by side. Keep the two names distinct.
+    name_by_person: dict[int, tuple[Optional[str], Optional[str]]] = {}
     for pid, full, family in name_rows:
-        names_by_person.setdefault(pid, (full, family))
+        name_by_person.setdefault(pid, (full, family))
 
     # Countries for the whole page in ONE query — same story, same fold.
     #
@@ -238,8 +253,8 @@ async def list_persons(
             external_id=p.external_id,
             # A person with no current name at all keeps both fields null, exactly as
             # the old `if name_row else None` did.
-            primary_name=names_by_person.get(p.id, (None, None))[0],
-            family_name=names_by_person.get(p.id, (None, None))[1],
+            primary_name=name_by_person.get(p.id, (None, None))[0],
+            family_name=name_by_person.get(p.id, (None, None))[1],
             country_code=country_by_person.get(p.id),
             created_at=p.created_at,
         )
