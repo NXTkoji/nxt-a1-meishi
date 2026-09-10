@@ -1,6 +1,7 @@
 import { get, post, patch, del, uploadFile } from './client'
 import type {
   Card,
+  CardFacet,
   CardListItem,
   Country,
   MyCompany,
@@ -11,7 +12,11 @@ import type {
 } from '../types'
 
 // Cards
-export const listCards = (params?: {
+
+/** The filter set shared by GET /api/v2/cards, /cards/count and /cards/facets.
+ *  `offset`/`limit` page the list only — the count and facets endpoints take no
+ *  pagination and ignore them. */
+export interface CardFilters {
   person_id?: number
   occasion_id?: number
   my_company_id?: number
@@ -22,7 +27,14 @@ export const listCards = (params?: {
   not_exported?: boolean
   offset?: number
   limit?: number
-}) => {
+}
+
+/** Serialise the filter half of CardFilters (everything except offset/limit).
+ *
+ *  Single owner of the wire format so the list, the count and the facets calls can
+ *  never disagree about what one filter object means — a count that does not match
+ *  the rows the list returns would make every "showing n of m" pager lie. */
+const cardFilterQS = (params?: CardFilters) => {
   const qs = new URLSearchParams()
   if (params?.person_id) qs.set('person_id', String(params.person_id))
   if (params?.occasion_id) qs.set('occasion_id', String(params.occasion_id))
@@ -32,10 +44,33 @@ export const listCards = (params?: {
   if (params?.month) qs.set('month', params.month)
   if (params?.date) qs.set('date', params.date)
   if (params?.not_exported) qs.set('not_exported', 'true')
+  return qs
+}
+
+export const listCards = (params?: CardFilters) => {
+  const qs = cardFilterQS(params)
   if (params?.offset) qs.set('offset', String(params.offset))
   if (params?.limit) qs.set('limit', String(params.limit))
   return get<CardListItem[]>(`/api/v2/cards?${qs}`)
 }
+
+/** Year/month buckets with counts, newest first — the shape of the Collection tree.
+ *
+ *  One row per bucket regardless of how many cards exist, so this stays cheap at any
+ *  scale. Note the endpoint *produces* the date buckets, so it accepts no
+ *  year/month/date filter: passing one is silently ignored (200 with the full list),
+ *  not an error. */
+export const listCardFacets = (params?: CardFilters) =>
+  get<CardFacet[]>(`/api/v2/cards/facets?${cardFilterQS(params)}`)
+
+/** How many cards match a filter set, without fetching any rows.
+ *
+ *  NOT named `countCards`: this module re-exports `./sessions`, which already exports a
+ *  `countCards` — the Claude Vision "how many business cards are in this photo?" call
+ *  used by ScanPage. A local export silently wins over a star re-export, so reusing the
+ *  name would quietly redirect that caller to a different endpoint. */
+export const countCardsTotal = (params?: CardFilters) =>
+  get<{ total: number }>(`/api/v2/cards/count?${cardFilterQS(params)}`)
 
 export const getCard = (id: string) => get<Card>(`/api/v2/cards/${id}`)
 
@@ -57,15 +92,25 @@ export const promoteCardSideToFront = (cardExtId: string, sideOrder: number) =>
   post<void>(`/api/v2/cards/${cardExtId}/sides/${sideOrder}/promote`, {})
 
 // Persons
-// The explicit limit=500 is load-bearing, not decoration. GET /api/v2/persons defaults
-// to 50, and until the backend was fixed its `if q:` branch applied no LIMIT at all —
-// so a search returned every match. Omitting the parameter here would silently truncate
-// both callers in CollectionPage: the Persons tab list, and the Cards tab cross-search
-// whose matching person ids filter the card rows (a person matched only by organisation
-// name would drop off the Cards tab with no error shown). 500 is the endpoint's cap and
-// matches what listCards is called with. A later task replaces this with real pagination.
-export const listPersons = (q?: string) =>
-  get<PersonListItem[]>(`/api/v2/persons?limit=500${q ? `&q=${encodeURIComponent(q)}` : ''}`)
+
+/** One page of persons, optionally filtered by `q`.
+ *
+ *  `limit` defaults to the endpoint's own default of 50 — callers that render a whole
+ *  list rather than a page MUST pass an explicit limit, because a missing one silently
+ *  truncates with no error shown. (The backend caps limit at 500; its `if q:` branch
+ *  once applied no LIMIT at all, which is why the callers below say 500 out loud.) */
+export const listPersons = (q?: string, limit = 50, offset = 0) => {
+  const qs = new URLSearchParams()
+  if (q) qs.set('q', q)
+  qs.set('limit', String(limit))
+  qs.set('offset', String(offset))
+  return get<PersonListItem[]>(`/api/v2/persons?${qs}`)
+}
+
+/** How many persons match `q` — the total a "showing n of m" pager is sized from.
+ *  Shares its match logic with listPersons on the backend, so the two agree. */
+export const countPersons = (q?: string) =>
+  get<{ total: number }>(`/api/v2/persons/count${q ? `?q=${encodeURIComponent(q)}` : ''}`)
 
 export const getPerson = (id: string) => get<Person>(`/api/v2/persons/${id}`)
 

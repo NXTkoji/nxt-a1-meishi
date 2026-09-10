@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { listCards, listPersons, listCountries } from '../api'
+import { listCardFacets, listCards, listPersons, listCountries } from '../api'
 import { useLang } from '../LangContext'
-import type { CardListItem, Country, PersonListItem } from '../types'
+import type { CardFacet, CardListItem, Country, PersonListItem } from '../types'
 import { MergeModal } from '../components/MergeModal'
+import { MonthSection } from '../components/MonthSection'
 
 // Fallback country names must follow the UI language, so the DisplayNames instance
 // is built per-locale by the caller rather than pinned at module load.
@@ -22,20 +23,37 @@ export function CollectionPage() {
   const { t, lang } = useLang()
   const intlNames = useMemo(() => new Intl.DisplayNames([lang], { type: 'region' }), [lang])
   const [q, setQ] = useState('')
+  // Stand-in for the debounced search term that Task 7 introduces. Defined here so the
+  // browse/search switch below is already written against the value it will use.
+  const debouncedQ = q
   const [view, setView] = useState<'cards' | 'persons'>('cards')
   const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set())
-  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set())
   const [collapsedCountries, setCollapsedCountries] = useState<Set<string>>(new Set())
 
+  // Browse mode: one small request describing every year/month bucket in the whole
+  // collection. The page no longer fetches a fixed slab of cards and groups it in the
+  // browser — that slab silently dropped everything past its limit.
+  const { data: facets = [], isLoading: facetsLoading } = useQuery<CardFacet[]>({
+    queryKey: ['cards', 'facets'],
+    queryFn: () => listCardFacets(),
+    enabled: view === 'cards' && !debouncedQ,
+  })
+
+  // Search mode: still the old client-side filter over one page of cards. Task 7
+  // replaces this with a server-side search; until then it stays working so the app is
+  // never broken between commits. Only fetched while a search is active.
   const { data: cards = [], isLoading: cardsLoading } = useQuery<CardListItem[]>({
     queryKey: ['cards'],
     queryFn: () => listCards({ limit: 200 }),
-    enabled: view === 'cards',
+    enabled: view === 'cards' && !!debouncedQ,
   })
 
   const { data: persons = [], isLoading: personsLoading } = useQuery<PersonListItem[]>({
     queryKey: ['persons', q],
-    queryFn: () => listPersons(q || undefined),
+    // 500 is the endpoint's cap; passing it explicitly is load-bearing, since
+    // listPersons now defaults to the API's own default of 50. Task 8 gives this list
+    // a real pager.
+    queryFn: () => listPersons(q || undefined, 500),
     enabled: view === 'persons',
   })
 
@@ -48,7 +66,9 @@ export function CollectionPage() {
   // Cross-search: when searching cards, also fetch persons matching q to find cards by person
   const { data: searchPersons = [] } = useQuery<PersonListItem[]>({
     queryKey: ['persons-search', q],
-    queryFn: () => listPersons(q),
+    // Explicit 500 for the same reason as above: a person matched only by organisation
+    // name must not fall off the Cards tab because the default page size hid them.
+    queryFn: () => listPersons(q, 500),
     enabled: view === 'cards' && q.length > 0,
   })
 
@@ -58,39 +78,31 @@ export function CollectionPage() {
   )
 
   const filteredCards = useMemo(() => {
-    if (!q) return cards
+    if (!debouncedQ) return cards
     return cards.filter(
       c =>
-        c.person_name?.toLowerCase().includes(q.toLowerCase()) ||
+        c.person_name?.toLowerCase().includes(debouncedQ.toLowerCase()) ||
         matchingPersonIds.has(c.person_id),
     )
-  }, [cards, q, matchingPersonIds])
+  }, [cards, debouncedQ, matchingPersonIds])
 
-  // Group cards by year (desc) → month (desc) → cards sorted by date desc
-  const cardsByYearMonth = useMemo(() => {
-    const getDate = (c: CardListItem) => new Date(c.received_date ?? c.created_at)
-    const sorted = [...filteredCards].sort((a, b) => getDate(b).getTime() - getDate(a).getTime())
+  // The three most recent months open on load. Facets arrive newest-first, so those are
+  // simply the first three entries — no date arithmetic, and no assumption that "recent"
+  // means the current calendar month.
+  const eagerMonths = useMemo(
+    () => new Set(facets.slice(0, 3).map(f => `${f.year}-${f.month}`)),
+    [facets],
+  )
 
-    const yearMap = new Map<number, Map<number, CardListItem[]>>()
-    for (const card of sorted) {
-      const d = getDate(card)
-      const y = d.getFullYear()
-      const m = d.getMonth() + 1
-      if (!yearMap.has(y)) yearMap.set(y, new Map())
-      const monthMap = yearMap.get(y)!
-      if (!monthMap.has(m)) monthMap.set(m, [])
-      monthMap.get(m)!.push(card)
+  // Facets → year groups for the tree. Both levels stay newest-first.
+  const facetsByYear = useMemo(() => {
+    const years = new Map<number, CardFacet[]>()
+    for (const f of facets) {
+      if (!years.has(f.year)) years.set(f.year, [])
+      years.get(f.year)!.push(f)
     }
-
-    return [...yearMap.entries()]
-      .sort(([a], [b]) => b - a)
-      .map(([year, monthMap]) => ({
-        year,
-        months: [...monthMap.entries()]
-          .sort(([a], [b]) => b - a)
-          .map(([month, cards]) => ({ year, month, cards })),
-      }))
-  }, [filteredCards])
+    return [...years.entries()].sort((a, b) => b[0] - a[0])
+  }, [facets])
 
   // Group persons by country_code (home first, then work), sorted by family name within
   const personsByCountry = useMemo(() => {
@@ -140,13 +152,6 @@ export function CollectionPage() {
     setCollapsedYears(prev => {
       const next = new Set(prev)
       next.has(year) ? next.delete(year) : next.add(year)
-      return next
-    })
-
-  const toggleMonth = (key: string) =>
-    setCollapsedMonths(prev => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
 
@@ -212,54 +217,63 @@ export function CollectionPage() {
         </a>
       </div>
 
-      {/* Cards grouped by year/month */}
+      {/* Cards — search results while a query is active, otherwise the browse tree */}
       {view === 'cards' && (
-        cardsLoading ? (
-          <div className="text-center text-gray-400 py-12">{t.loading}</div>
-        ) : filteredCards.length === 0 ? (
-          <EmptyState />
+        debouncedQ ? (
+          // Search mode (temporary shape; Task 7 makes this a server-side search).
+          cardsLoading ? (
+            <div className="text-center text-gray-400 py-12">{t.loading}</div>
+          ) : filteredCards.length === 0 ? (
+            <p className="text-center text-sm text-gray-400 py-12">{t.noResults(debouncedQ)}</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-400">{t.resultsN(filteredCards.length)}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {filteredCards.map(card => (
+                  <CardThumbnail key={card.id} card={card} />
+                ))}
+              </div>
+            </div>
+          )
         ) : (
-          <div className="space-y-2">
-            {cardsByYearMonth.map(({ year, months }) => {
-              const yearCollapsed = collapsedYears.has(year)
-              return (
-                <div key={year}>
-                  <button
-                    className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 py-1 hover:text-blue-600 text-left"
-                    onClick={() => toggleYear(year)}
-                  >
-                    <span className="text-xs text-gray-400">{yearCollapsed ? '▶' : '▼'}</span>
-                    <span>{year}</span>
-                  </button>
+          // Browse mode: the whole collection as a year → month tree. Counts come from
+          // the facets response, so every card in the database is reachable even though
+          // only the expanded months are fetched.
+          facetsLoading ? (
+            <div className="text-center text-gray-400 py-12">{t.loading}</div>
+          ) : facets.length === 0 ? (
+            <EmptyState />
+          ) : (
+            <div className="space-y-2">
+              {facetsByYear.map(([year, months]) => {
+                const yearCollapsed = collapsedYears.has(year)
+                const yearCount = months.reduce((n, f) => n + f.count, 0)
+                return (
+                  <div key={year}>
+                    <button
+                      className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 py-1 hover:text-blue-600 text-left"
+                      onClick={() => toggleYear(year)}
+                    >
+                      <span className="text-xs text-gray-400">{yearCollapsed ? '▶' : '▼'}</span>
+                      <span>{year}</span>
+                      <span className="text-xs text-gray-400">({yearCount})</span>
+                    </button>
 
-                  {!yearCollapsed && months.map(({ month, cards: monthCards }) => {
-                    const monthKey = `${year}-${month}`
-                    const monthCollapsed = collapsedMonths.has(monthKey)
-                    return (
-                      <div key={monthKey} className="ml-4 mb-2">
-                        <button
-                          className="flex items-center gap-2 text-xs font-medium text-gray-500 py-0.5 hover:text-blue-500"
-                          onClick={() => toggleMonth(monthKey)}
-                        >
-                          <span className="text-gray-400">{monthCollapsed ? '▶' : '▼'}</span>
-                          <span>{year}/{String(month).padStart(2, '0')}</span>
-                          <span className="text-gray-400">({monthCards.length})</span>
-                        </button>
-
-                        {!monthCollapsed && (
-                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-2">
-                            {monthCards.map(card => (
-                              <CardThumbnail key={card.id} card={card} />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </div>
+                    {!yearCollapsed && months.map(f => (
+                      <MonthSection
+                        key={`${f.year}-${f.month}`}
+                        year={f.year}
+                        month={f.month}
+                        count={f.count}
+                        defaultExpanded={eagerMonths.has(`${f.year}-${f.month}`)}
+                        renderCard={card => <CardThumbnail key={card.id} card={card} />}
+                      />
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+          )
         )
       )}
 
