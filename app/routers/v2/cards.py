@@ -7,9 +7,10 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import Integer, and_, exists, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.auth import verify_api_key
 from app.db.models import Card, CardMyCompany, CardSide, CardSyncHistory, Person, PersonName
@@ -27,30 +28,24 @@ router = APIRouter(
 )
 
 
-def _bucket_date():
+def _filing_date() -> ColumnElement:
     """The date a card is filed under: received_date, or created_at when it is NULL.
 
-    Every date rule in this module derives from this one expression, so a card can
-    never land in one bucket for the facets query and a different one for ?month=.
+    Every date filter and the facets GROUP BY are built from this one expression, so a
+    month header count cannot disagree with the cards that month actually returns.
+    Spec: docs/superpowers/specs/2026-09-09-collection-scalability-design.md §3
     """
     return func.coalesce(Card.received_date, Card.created_at)
 
 
-def _bucket_year():
-    """Year of the bucket date, as a real Python int. Spec §3.
-
-    strftime + cast, not extract: extract() returns a float on SQLite, and coalesce
-    across a Date and a DateTime column needs a consistent text form. strftime('%Y', …)
-    yields a zero-padded string that casts cleanly to Integer and works on both column
-    types. This is the ONLY encoding of the bucketing rule — both the month/year
-    filters below and the facets GROUP BY use it, so they cannot disagree.
-    """
-    return func.cast(func.strftime('%Y', _bucket_date()), Integer)
+def _filing_year() -> ColumnElement:
+    """Year of the filing date, as a real Python int."""
+    return func.extract('year', _filing_date())
 
 
-def _bucket_month():
-    """Month (1-12) of the bucket date, as a real Python int. See _bucket_year."""
-    return func.cast(func.strftime('%m', _bucket_date()), Integer)
+def _filing_month() -> ColumnElement:
+    """Month (1-12) of the filing date, as a real Python int."""
+    return func.extract('month', _filing_date())
 
 
 def _apply_card_filters(
@@ -93,18 +88,20 @@ def _apply_card_filters(
         mc_subq = select(CardMyCompany.card_id).where(CardMyCompany.my_company_id == my_company_id)
         stmt = stmt.where(Card.id.in_(mc_subq))
 
-    # Date filters. All three go through the _bucket_* expressions, which are the
+    # Date filters. All three go through the _filing_* expressions, which are the
     # single encoding of "received_date, falling back to created_at" — the same
     # expressions card_facets groups by, so a facet count and its ?month= query
     # match by construction rather than by coincidence.
+    # `month` and `date` are pattern-validated at the endpoint, so these parses
+    # cannot raise on caller input.
     if date:
         d = date_type.fromisoformat(date)
-        stmt = stmt.where(func.date(_bucket_date()) == d)
+        stmt = stmt.where(func.date(_filing_date()) == d)
     elif month:
         y, m = int(month[:4]), int(month[5:7])
-        stmt = stmt.where(and_(_bucket_year() == y, _bucket_month() == m))
+        stmt = stmt.where(and_(_filing_year() == y, _filing_month() == m))
     elif year:
-        stmt = stmt.where(_bucket_year() == year)
+        stmt = stmt.where(_filing_year() == year)
 
     # not_exported: no successful sync history to odoo or google_contacts
     if not_exported:
@@ -170,17 +167,23 @@ async def list_cards(
     my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
     q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
     year: Optional[int] = Query(None),
-    month: Optional[str] = Query(None, description="YYYY-MM"),
-    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM"),
+    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
     not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
     limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     # _apply_card_filters owns the soft-delete predicate — do not repeat it here.
+    #
+    # ORDER BY has to be a *total* order, or LIMIT/OFFSET paging is unsound: rows
+    # that tie on the leading key can come back in a different order per query, so
+    # page 2 may repeat or skip a row from page 1. Card.id breaks every tie.
+    # The leading key is the filing date, not created_at, so a card sorts in the same
+    # bucket it is counted in (and matches how the frontend already sorts today).
     stmt = (
         select(Card)
-        .order_by(Card.created_at.desc())
+        .order_by(_filing_date().desc(), Card.id.desc())
         .limit(limit)
         .offset(offset)
         .options(selectinload(Card.sides))
@@ -271,10 +274,13 @@ async def card_facets(
     lets the Collection tree be complete at any scale.
 
     Deliberately takes no year/month/date filter: this endpoint *produces* the date
-    buckets that those filters consume.
+    buckets that those filters consume. Callers holding one filter object and
+    spreading it into every request should note that passing year/month/date here has
+    no effect — FastAPI ignores unknown query params, so /facets?month=1999-01 returns
+    the full unfiltered bucket list with a 200, not an error.
     """
-    y = _bucket_year().label("year")
-    m = _bucket_month().label("month")
+    y = _filing_year().label("year")
+    m = _filing_month().label("month")
 
     # No deleted_at filter here — _apply_card_filters owns it.
     stmt = select(y, m, func.count(Card.id).label("count"))
@@ -296,8 +302,8 @@ async def count_cards(
     my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
     q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
     year: Optional[int] = Query(None),
-    month: Optional[str] = Query(None, description="YYYY-MM"),
-    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM"),
+    date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="YYYY-MM-DD"),
     not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -313,7 +319,9 @@ async def count_cards(
         person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
         q=q, year=year, month=month, date=date, not_exported=not_exported,
     )
-    return CountOut(total=await db.scalar(stmt) or 0)
+    # COUNT(...) with no GROUP BY always yields a row holding an integer, so there is
+    # no NULL case to defend against here.
+    return CountOut(total=await db.scalar(stmt))
 
 
 async def _load_card(db: AsyncSession, card_ext_id: str) -> Card:
