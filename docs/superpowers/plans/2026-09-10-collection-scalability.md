@@ -1175,8 +1175,11 @@ _INDEXES = [
     ("ix_cards_created_at", "cards", ["created_at"]),
     ("ix_cards_received_date", "cards", ["received_date"]),
     ("ix_cards_deleted_at", "cards", ["deleted_at"]),
-    ("ix_person_names_person_id", "person_names", ["person_id"]),
-    ("ix_contact_details_person_id", "contact_details", ["person_id"]),
+    # Composite, not single-column: the batched lookups in Tasks 3 and 4 filter on
+    # person_id AND is_current / detail_type together. Verified on live data that the
+    # name query currently does "SCAN person_names" + "USE TEMP B-TREE FOR ORDER BY".
+    ("ix_person_names_person_current", "person_names", ["person_id", "is_current"]),
+    ("ix_contact_details_person_type", "contact_details", ["person_id", "detail_type"]),
     ("ix_positions_person_id", "positions", ["person_id"]),
     ("ix_card_sync_history_card_id", "card_sync_history", ["card_id"]),
 ]
@@ -1199,7 +1202,8 @@ Run:
 cd nxt-a1-meishi && PYTHONPATH=. venv/bin/python3 -c "
 from app.db.models import Base
 want = [('cards',['person_id','occasion_id','created_at','received_date','deleted_at']),
-        ('person_names',['person_id']),('contact_details',['person_id']),
+        ('person_names',['person_id','is_current']),
+        ('contact_details',['person_id','detail_type']),
         ('positions',['person_id']),('card_sync_history',['card_id'])]
 for t, cols in want:
     tbl = Base.metadata.tables[t]
@@ -1224,6 +1228,17 @@ curl -s localhost:8000/api/v1/health
 tail -20 /tmp/nxt-a1-backend.log
 ```
 Expected: health OK, and no traceback in the log.
+
+- [ ] **Step 4b: Confirm the indexes are actually used**
+
+An index that the planner ignores is worse than none — it costs writes and buys nothing.
+Check the two that back the batched lookups:
+
+```bash
+sqlite3 ~/.nxt-a1/meishi.db "EXPLAIN QUERY PLAN SELECT person_id, language, full_name FROM person_names WHERE person_id IN (1,2,3) AND is_current = 1 ORDER BY person_id, id;"
+```
+Expected: a `SEARCH person_names USING INDEX ix_person_names_person_current` line. Before the
+migration this reads `SCAN person_names` plus `USE TEMP B-TREE FOR ORDER BY`.
 
 - [ ] **Step 5: Confirm the indexes exist**
 
