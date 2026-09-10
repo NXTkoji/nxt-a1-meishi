@@ -1,59 +1,63 @@
-"""Performance guard: the card list must not issue a query per card.
+"""Performance guard: collection endpoints must not issue a query per row.
 
 Without this, an N+1 can creep back silently — it stays fast on a small database
 and only hurts once a real collection grows. The live database holds ~200 cards, at
 which size a per-card lookup costs about 60ms and is invisible; at 10,000 cards the
 same code shape is 10,000-20,000 sequential round trips.
 
-The counter hooks SQLAlchemy's `before_cursor_execute` on the *test* engine, so it
-counts real statements sent to SQLite, not ORM calls.
+The counting is done by the `query_counter` fixture in tests/conftest.py, which hooks
+SQLAlchemy's `before_cursor_execute` on the *test* engine, so it counts real statements
+sent to SQLite, not ORM calls.
+
+The two tests below catch different regressions and both are needed:
+  * the constant-bound test is the only one bounding the constant — five new
+    unconditional queries would keep the flat test's two cohorts equal and sail through;
+  * the flat test is the only one catching growth proportional to rows — a smaller
+    constant plus a cheap N+1 can still sit under a fixed threshold.
 """
 from datetime import date, datetime
 
-from sqlalchemy import event
+import pytest
 
 # Reuse the existing seeder rather than growing a second one. It gives every named
 # card its own Person plus one current PersonName, which is exactly the shape that
 # made the old per-card resolver issue a query per row.
 from tests.test_collection_scalability import _seed_cards
 
-
-def _count_queries(client, fn):
-    """Run `fn` with a statement counter attached to the test engine; return (result, n)."""
-    engine = client.session_maker.kw["bind"]
-    counter = {"n": 0}
-
-    def _count(conn, cursor, statement, parameters, context, executemany):
-        counter["n"] += 1
-
-    # The async engine wraps a sync engine; events live on the sync one.
-    event.listen(engine.sync_engine, "before_cursor_execute", _count)
-    try:
-        result = fn()
-    finally:
-        event.remove(engine.sync_engine, "before_cursor_execute", _count)
-    return result, counter["n"]
+# Every collection endpoint whose query count must be independent of the row count.
+# /api/v2/persons is deliberately absent: it still resolves names and contact details
+# with per-row loops and would fail here. It joins this list when those are batched.
+BOUNDED_ENDPOINTS = [
+    "/api/v2/cards",
+    "/api/v2/cards/facets",
+    "/api/v2/cards/count",
+]
 
 
-def test_card_list_query_count_does_not_scale_with_rows(client_with_test_db):
+@pytest.mark.parametrize("endpoint", BOUNDED_ENDPOINTS)
+def test_card_list_costs_a_constant_number_of_queries(
+    client_with_test_db, query_counter, endpoint
+):
     """60 cards must cost a fixed handful of queries, not one or two per card."""
     _seed_cards(
         [(date(2026, 9, 1), datetime(2026, 9, 1, 0, i % 60), f"Person {i}") for i in range(60)],
         prefix="qc",
     )
 
-    rows, n = _count_queries(
+    resp, n = query_counter(
         client_with_test_db,
-        lambda: client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json(),
+        lambda: client_with_test_db.get(endpoint, params={"limit": 500}),
     )
 
-    assert len(rows) == 60
-    # Cards + sides + sync history + names ≈ a handful, plus whatever the session
-    # emits around the transaction. Anything near 60 is an N+1.
-    assert n < 15, f"{n} queries for 60 cards — N+1 regression"
+    assert resp.status_code == 200
+    # GET /api/v2/cards is the busiest of the three, at four statements: the card page,
+    # its eager-loaded sides (selectinload), the sync-history lookup, and the batched
+    # name lookup. /facets and /count are one statement each. The bound sits just above
+    # four on purpose — the previous `< 15` left room for a 3.5x constant regression.
+    assert n <= 6, f"{n} queries for 60 cards on {endpoint} — N+1 regression"
 
 
-def test_card_list_query_count_is_flat_in_row_count(client_with_test_db):
+def test_card_list_query_count_is_flat_in_row_count(client_with_test_db, query_counter):
     """The stronger claim: doubling the rows must not change the query count.
 
     A fixed threshold can be satisfied by accident (a smaller constant, a cheaper
@@ -64,7 +68,7 @@ def test_card_list_query_count_is_flat_in_row_count(client_with_test_db):
         [(date(2026, 9, 1), datetime(2026, 9, 1, 0, i % 60), f"A {i}") for i in range(20)],
         prefix="flat-a",
     )
-    small, n_small = _count_queries(
+    small, n_small = query_counter(
         client_with_test_db,
         lambda: client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json(),
     )
@@ -73,7 +77,7 @@ def test_card_list_query_count_is_flat_in_row_count(client_with_test_db):
         [(date(2026, 9, 1), datetime(2026, 9, 1, 0, i % 60), f"B {i}") for i in range(20)],
         prefix="flat-b",
     )
-    big, n_big = _count_queries(
+    big, n_big = query_counter(
         client_with_test_db,
         lambda: client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json(),
     )

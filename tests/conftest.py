@@ -11,6 +11,7 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.models import Base
@@ -47,8 +48,46 @@ def client_with_test_db(tmp_path):
     app.dependency_overrides[get_db] = _override_get_db
     test_client = TestClient(app)
     test_client.session_maker = session_maker
+    # The engine is exposed alongside the session maker so tests that need to hook
+    # SQLAlchemy events (see the query_counter fixture) do not have to reach into
+    # async_sessionmaker internals — `session_maker.kw["bind"]` is private.
+    test_client.engine = engine
 
     yield test_client
 
     app.dependency_overrides.pop(get_db, None)
     asyncio.run(engine.dispose())
+
+
+@pytest.fixture
+def query_counter():
+    """Count the SQL statements a block of code actually sends to the test database.
+
+    Usage:
+        result, n = query_counter(client, lambda: client.get("/api/v2/cards"))
+
+    Hooks SQLAlchemy's `before_cursor_execute` on the test engine, so it counts real
+    statements reaching SQLite rather than ORM calls — an N+1 hidden behind a lazy
+    relationship still shows up.
+
+    Lives here rather than in one test module because every collection endpoint needs
+    the same guard, and importing a module-private helper across test modules is worse
+    than a fixture.
+    """
+    def _count(client, fn):
+        # client.engine is set by client_with_test_db above.
+        engine = client.engine
+        counter = {"n": 0}
+
+        def _on_execute(conn, cursor, statement, parameters, context, executemany):
+            counter["n"] += 1
+
+        # The async engine wraps a sync engine; events live on the sync one.
+        event.listen(engine.sync_engine, "before_cursor_execute", _on_execute)
+        try:
+            result = fn()
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", _on_execute)
+        return result, counter["n"]
+
+    return _count

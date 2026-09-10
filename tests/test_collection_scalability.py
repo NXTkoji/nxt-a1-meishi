@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Card
 from app.db.session import get_db
 from app.main import app
+from app.routers.v2.cards import _pick_name
 
 # persons.external_id and cards.external_id are both unique, so every _seed_cards call
 # needs its own namespace — otherwise a second call in the same test raises
@@ -349,53 +350,60 @@ def test_impossible_but_wellformed_dates_are_rejected(client_with_test_db, endpo
     assert client_with_test_db.get(endpoint, params={"date": date_param}).status_code == 422
 
 
-def _seed_person_with_two_names():
-    """Seed one person carrying two current names, plus three cards pointing at them.
+@pytest.mark.parametrize("limit", [-1, 0])
+def test_nonpositive_limit_is_rejected(client_with_test_db, limit):
+    """?limit=-1 must be a 422, not the entire table.
+
+    SQLite reads `LIMIT -1` as "no limit", so before the `ge=1` bound this returned
+    every row with a 200 — which also meant an unbounded IN (...) in the batched name
+    lookup and every current name held in memory. `offset` already had ge=0.
+    """
+    assert client_with_test_db.get(
+        "/api/v2/cards", params={"limit": limit}
+    ).status_code == 422
+
+
+def _seed_person_with_names(person_ext_id, names, cards):
+    """Seed one person carrying several PersonNames, plus cards pointing at them.
 
     _seed_cards cannot express this shape — it gives every named card its own person
-    with exactly one "en" PersonName, and has no way to set display_name_language.
-    The whole point here is a person with *several* current names so the preference
-    rule has something to choose between.
+    with exactly one current "en" PersonName, and has no way to set
+    display_name_language. The point here is a person with *several* current names, so
+    the preference rule has something to choose between.
 
-    Insertion order is load-bearing: the "ja" name is inserted first, so it holds the
-    lower PersonName.id and is therefore the fallback the resolver must land on when a
-    card expresses no preference (or expresses one that matches nothing).
+    `names` is a list of (language, full_name, is_current) in INSERTION order, and that
+    order is load-bearing: PersonName.id ascending is the resolver's tiebreak, so the
+    first current entry is the fallback name.
+    `cards` is a list of (external_id, display_name_language).
 
-    Returns the three cards' external_ids keyed by the preference they express.
+    Returns the cards' external_ids in the order given.
     """
     async def _run():
         from app.db.models import Card, Person, PersonName
 
         async for db in app.dependency_overrides[get_db]():
-            person = Person(external_id="p-names")
+            person = Person(external_id=person_ext_id)
             db.add(person)
             await db.flush()
 
-            db.add(PersonName(person_id=person.id, language="ja", name_type="legal",
-                              full_name="山田太郎", is_current=True))
-            db.add(PersonName(person_id=person.id, language="en", name_type="legal",
-                              full_name="Taro Yamada", is_current=True))
-            # Not current: must never be picked, even though it matches "ko" exactly.
-            db.add(PersonName(person_id=person.id, language="ko", name_type="legal",
-                              full_name="야마다", is_current=False))
+            for language, full_name, is_current in names:
+                db.add(PersonName(
+                    person_id=person.id,
+                    language=language,
+                    name_type="legal",
+                    full_name=full_name,
+                    is_current=is_current,
+                ))
             await db.flush()
 
-            prefers_en = Card(external_id="c-en", person_id=person.id,
-                              display_name_language="en")
-            prefers_none = Card(external_id="c-none", person_id=person.id,
-                                display_name_language=None)
-            # "ko" is only available as a non-current name, so this card must fall
-            # back to the lowest-id *current* name rather than resolving to 야마다.
-            prefers_missing = Card(external_id="c-ko", person_id=person.id,
-                                   display_name_language="ko")
-            db.add_all([prefers_en, prefers_none, prefers_missing])
+            created = [
+                Card(external_id=ext, person_id=person.id, display_name_language=lang)
+                for ext, lang in cards
+            ]
+            db.add_all(created)
             await db.flush()
             await db.commit()
-            return {
-                "en": prefers_en.external_id,
-                "none": prefers_none.external_id,
-                "ko": prefers_missing.external_id,
-            }
+            return [c.external_id for c in created]
 
     return asyncio.run(_run())
 
@@ -407,18 +415,28 @@ def test_name_batch_honours_display_language(client_with_test_db):
     in on a collection thumbnail. It has to hold whether the names are resolved one
     card at a time or in a single batched query.
     """
-    ext = _seed_person_with_two_names()
+    ext_en, ext_none, ext_ko = _seed_person_with_names(
+        "p-names",
+        names=[
+            # "ja" first: lowest PersonName.id, therefore the fallback.
+            ("ja", "山田太郎", True),
+            ("en", "Taro Yamada", True),
+            # Not current: must never be picked, even though it matches "ko" exactly.
+            ("ko", "야마다", False),
+        ],
+        cards=[("c-en", "en"), ("c-none", None), ("c-ko", "ko")],
+    )
 
     rows = client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json()
     by_ext = {r["external_id"]: r["person_name"] for r in rows}
 
     # Preference honoured, even though the "en" name has the higher id.
-    assert by_ext[ext["en"]] == "Taro Yamada"
+    assert by_ext[ext_en] == "Taro Yamada"
     # No preference -> lowest-id current name.
-    assert by_ext[ext["none"]] == "山田太郎"
+    assert by_ext[ext_none] == "山田太郎"
     # Preference that matches no *current* name -> same fallback, never the
     # is_current=False Korean name.
-    assert by_ext[ext["ko"]] == "山田太郎"
+    assert by_ext[ext_ko] == "山田太郎"
 
 
 def test_name_batch_matches_language_by_prefix(client_with_test_db):
@@ -427,27 +445,13 @@ def test_name_batch_matches_language_by_prefix(client_with_test_db):
     Real data holds "zh-TW" and "zh" side by side, so a resolver that compared
     languages with == would silently fall back to the wrong script.
     """
-    async def _run():
-        from app.db.models import Card, Person, PersonName
-
-        async for db in app.dependency_overrides[get_db]():
-            person = Person(external_id="p-prefix")
-            db.add(person)
-            await db.flush()
-            # "en" first: it is the lowest-id current name, so it is the fallback.
-            db.add(PersonName(person_id=person.id, language="en", name_type="legal",
-                              full_name="Wang Da Ming", is_current=True))
-            db.add(PersonName(person_id=person.id, language="zh-TW", name_type="legal",
-                              full_name="王大明", is_current=True))
-            await db.flush()
-            card = Card(external_id="c-zh", person_id=person.id,
-                        display_name_language="zh")
-            db.add(card)
-            await db.flush()
-            await db.commit()
-            return card.external_id
-
-    ext_id = asyncio.run(_run())
+    (ext_id,) = _seed_person_with_names(
+        "p-prefix",
+        # "en" first: it is the lowest-id current name, so it is the fallback the
+        # test would land on if the prefix match stopped working.
+        names=[("en", "Wang Da Ming", True), ("zh-TW", "王大明", True)],
+        cards=[("c-zh", "zh")],
+    )
 
     rows = client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json()
     by_ext = {r["external_id"]: r["person_name"] for r in rows}
@@ -460,3 +464,68 @@ def test_name_batch_handles_person_with_no_names(client_with_test_db):
 
     rows = client_with_test_db.get("/api/v2/cards", params={"limit": 500}).json()
     assert [r["person_name"] for r in rows] == [None]
+
+
+# ---------------------------------------------------------------------------
+# _pick_name as a pure function — no HTTP, no database.
+#
+# The tests above pin the rule end to end, which is what proves the endpoint wires it
+# up. These pin the rule itself, and reach two cases the seeder cannot express: an
+# empty full_name and an empty candidate list.
+#
+# `candidates` is always (language, full_name) pairs ordered by PersonName.id
+# ascending — the ordering list_cards' batched query is responsible for producing.
+# ---------------------------------------------------------------------------
+
+# One person, two current names, "ja" holding the lower id (so "ja" is the fallback).
+JA_THEN_EN = [("ja", "山田太郎"), ("en", "Taro Yamada")]
+
+
+def test_pick_name_prefers_the_matching_language():
+    """A preference that matches wins over the lowest-id name."""
+    assert _pick_name(JA_THEN_EN, "en") == "Taro Yamada"
+
+
+def test_pick_name_matches_language_by_prefix():
+    """"zh" must take a "zh-TW" name — a prefix test, not equality."""
+    candidates = [("en", "Wang Da Ming"), ("zh-TW", "王大明")]
+    assert _pick_name(candidates, "zh") == "王大明"
+
+
+def test_pick_name_prefix_match_is_case_insensitive():
+    """SQL LIKE was case-insensitive for ASCII; str.startswith is not.
+
+    Both operands are asserted, so lowering only one of them fails here.
+    """
+    # Candidate cased, preference lowercase.
+    assert _pick_name([("ja", "山田太郎"), ("EN-GB", "Taro Yamada")], "en") == "Taro Yamada"
+    # Preference cased, candidate lowercase.
+    assert _pick_name([("ja", "山田太郎"), ("en-gb", "Taro Yamada")], "EN") == "Taro Yamada"
+
+
+def test_pick_name_falls_back_when_the_preference_matches_nothing():
+    """An unmatched preference lands on the lowest-id name, not on nothing."""
+    assert _pick_name(JA_THEN_EN, "ko") == "山田太郎"
+
+
+def test_pick_name_falls_back_when_no_preference_is_expressed():
+    """display_name_language=None -> the lowest-id current name."""
+    assert _pick_name(JA_THEN_EN, None) == "山田太郎"
+
+
+def test_pick_name_returns_none_without_candidates():
+    """A person with no current names at all resolves to None, not to a crash."""
+    assert _pick_name([], "en") is None
+    assert _pick_name([], None) is None
+
+
+def test_pick_name_empty_match_falls_through_to_the_fallback():
+    """An empty full_name on the FIRST language match does not try the next match.
+
+    The old SQL took `LIMIT 1` and then tested `if preferred:`, so an empty lowest-id
+    language match fell through to the unfiltered fallback rather than to the second
+    "en" name. Only reachable via the empty string (full_name is NOT NULL), and pinned
+    here because no HTTP-level test can express it.
+    """
+    candidates = [("ja", "山田太郎"), ("en", ""), ("en", "Taro Yamada")]
+    assert _pick_name(candidates, "en") == "山田太郎"

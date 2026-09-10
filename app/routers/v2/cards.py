@@ -168,6 +168,59 @@ def _apply_card_filters(
     return stmt
 
 
+def _pick_name(candidates: list[tuple[str, str]], lang: Optional[str]) -> Optional[str]:
+    """Resolve one card's display name from its person's current names.
+
+    `candidates` is that person's (language, full_name) pairs for every *current*
+    PersonName, already ordered by PersonName.id ascending. The caller owns that
+    ordering, because "lowest id wins" is the whole tiebreak — hand this an
+    unordered list and the fallback silently picks an arbitrary name.
+    `lang` is the card's display_name_language preference, or None.
+
+    Rule (user-visible — it decides which script a name appears in on a thumbnail):
+      1. If the card names a preferred language, take the lowest-id current name
+         whose language *starts with* it. "zh" therefore matches a "zh-TW" name,
+         which is why this is a prefix test and not an equality test.
+      2. If that yields nothing usable, fall back to the lowest-id current name
+         regardless of language.
+      3. No current names at all -> None.
+
+    This replaced a per-card SQL lookup (`_get_name`, deleted in 4c0ad00) that ran the
+    same rule as one or two queries. It reproduces that rule apart from the divergence
+    listed last below.
+
+      * The prefix comparison is case-insensitive. The old query used SQL LIKE,
+        and SQLite's LIKE is case-insensitive for ASCII by default, so "EN-GB"
+        matched a preference of "en". Python's str.startswith is not, so the
+        operands are lowered to keep the old outcome.
+      * Step 1 only ever considers the FIRST language match. The old code took
+        `LIMIT 1` and then tested `if preferred:`, so a lowest-id language match
+        with an empty full_name fell through to step 2 rather than to the next
+        language match. full_name is NOT NULL in the schema, so this can only
+        differ for the empty string, but it costs nothing to keep identical.
+      * SQL LIKE treats `_` as a single-character wildcard and `%` as a multi-character
+        one, and the old query interpolated `lang` unescaped — so a preference of "zh_TW"
+        used to match the language "zh-TW". str.startswith is literal, and that is
+        deliberately NOT replicated: matching a language by wildcard was an accident of
+        using LIKE for a prefix test, never intended behaviour. Reachable only if
+        display_name_language ever contains `_` or `%`, which no writer produces today.
+    """
+    if not candidates:
+        return None
+    if lang:
+        wanted = lang.lower()
+        for cand_lang, full in candidates:
+            # PersonName.language is NOT NULL, so cand_lang is always a real string —
+            # no emptiness guard here, matching how full_name is reasoned about above.
+            if cand_lang.lower().startswith(wanted):
+                if full:
+                    return full
+                break  # first match unusable -> fall through, as the old LIMIT 1 did
+    # Fallback: the lowest-id current name, returned as-is (the old db.scalar did
+    # not filter empties out either).
+    return candidates[0][1]
+
+
 @router.get("", response_model=List[CardListItem])
 async def list_cards(
     person_id: Optional[int] = Query(None),
@@ -184,7 +237,10 @@ async def list_cards(
         description="YYYY-MM-DD",
     ),
     not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
-    limit: int = Query(50, le=500),
+    # ge=1 is not cosmetic: SQLite reads LIMIT -1 as "no limit", so ?limit=-1 used
+    # to return every row. The 500 cap is also what bounds the batched name lookup
+    # below — both the IN (...) parameter count and the names held in memory.
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
@@ -210,8 +266,11 @@ async def list_cards(
 
     rows = (await db.execute(stmt)).scalars().all()
 
-    # Fetch sync history for all returned cards in one query
-    card_ids = [c.id for c in rows]
+    # Fetch sync history for all returned cards in one query. A set, like
+    # person_ids below: both feed an `.in_()`, so the two batched lookups read the
+    # same way. (person_ids genuinely dedupes — several cards can share one person;
+    # card ids are already distinct, so here the set is only for consistency.)
+    card_ids = {c.id for c in rows}
     sync_rows: list = []
     if card_ids:
         sh_stmt = (
@@ -235,8 +294,11 @@ async def list_cards(
     # queries at 10,000. The preference rule is unchanged; only where it is evaluated
     # moved, from SQL to memory.
     #
-    # ORDER BY person_id, id means each person's list arrives lowest-id first, which is
-    # what makes "the lowest-id current name" simply the first entry.
+    # Only the `id ASC` half of the ORDER BY is load-bearing: setdefault/append keeps
+    # each person's names in arrival order, so the lowest-id current name is simply
+    # entry [0] — which is what _pick_name's fallback relies on. The leading person_id
+    # is a planner hint, not a correctness requirement: rows belonging to different
+    # persons may interleave freely without changing the result.
     person_ids = {c.person_id for c in rows}
     names_by_person: dict[int, list[tuple[str, str]]] = {}
     if person_ids:
@@ -251,45 +313,11 @@ async def list_cards(
         for pid, lang, full in name_rows:
             names_by_person.setdefault(pid, []).append((lang, full))
 
-    def _pick_name(pid: int, lang: Optional[str]) -> Optional[str]:
-        """Resolve a card's display name. Mirrors the deleted _get_name exactly.
-
-        Rule (user-visible — it decides which script a name appears in on a thumbnail):
-          1. If the card names a preferred language, take the lowest-id current name
-             whose language *starts with* it. "zh" therefore matches a "zh-TW" name,
-             which is why this is a prefix test and not an equality test.
-          2. If that yields nothing usable, fall back to the lowest-id current name
-             regardless of language.
-          3. No current names at all -> None.
-
-        Two details are deliberate rather than incidental:
-          * The prefix comparison is case-insensitive. The old query used SQL LIKE,
-            and SQLite's LIKE is case-insensitive for ASCII by default, so "EN-GB"
-            matched a preference of "en". Python's str.startswith is not, so the
-            operands are lowered to keep the old outcome.
-          * Step 1 only ever considers the FIRST language match. The old code took
-            `LIMIT 1` and then tested `if preferred:`, so a lowest-id language match
-            with an empty full_name fell through to step 2 rather than to the next
-            language match. full_name is NOT NULL in the schema, so this can only
-            differ for the empty string, but it costs nothing to keep identical.
-        """
-        candidates = names_by_person.get(pid)
-        if not candidates:
-            return None
-        if lang:
-            wanted = lang.lower()
-            for cand_lang, full in candidates:
-                if cand_lang and cand_lang.lower().startswith(wanted):
-                    if full:
-                        return full
-                    break  # first match unusable -> fall through, as the old LIMIT 1 did
-        # Fallback: the lowest-id current name, returned as-is (the old db.scalar did
-        # not filter empties out either).
-        return candidates[0][1]
-
     items = []
     for card in rows:
-        name = _pick_name(card.person_id, card.display_name_language)
+        name = _pick_name(
+            names_by_person.get(card.person_id, []), card.display_name_language
+        )
         front = next(
             (s.image_path for s in sorted(card.sides, key=lambda s: s.side_order)), None
         )
