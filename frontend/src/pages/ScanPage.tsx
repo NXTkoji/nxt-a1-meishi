@@ -888,7 +888,10 @@ export function ScanPage() {
 
       {/* Upload */}
       {(stage === 'uploading' || stage === 'grouping') && (
-        <DropZone onFiles={handleFiles} />
+        <DropZone
+          onFiles={handleFiles}
+          compact={ungrouped.length > 0 || groups.length > 0}
+        />
       )}
 
       {/* Explains the split/rotate icon buttons before the user reaches them. */}
