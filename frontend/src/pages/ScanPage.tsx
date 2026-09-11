@@ -47,9 +47,11 @@ import type {
   SessionImage,
 } from '../types'
 
-// Icon buttons on image tiles. ~36px so they are comfortably clickable, and fixed
-// size so a tile's controls never reflow when the image rotates.
-const ICON_BTN = 'h-9 min-w-9 px-2 rounded text-lg leading-none flex items-center justify-center disabled:opacity-50'
+// Icon buttons on image tiles. ~36px so they are comfortably clickable. Fixed
+// h-9 w-9 (not min-w-9/px-2) because every one of these buttons holds exactly one
+// glyph — including the split button, which swaps ✂️ for '…' while splitting — so
+// a fixed width guarantees the button never resizes and its neighbours never shift.
+const ICON_BTN = 'h-9 w-9 px-0 rounded text-lg leading-none flex items-center justify-center disabled:opacity-50'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -786,6 +788,7 @@ export function ScanPage() {
                     disabled={splittingIds.has(img.id)}
                     onClick={() => handleSplit(img)}
                     title={t.splitCards}
+                    aria-label={t.splitCards}
                   >
                     {splittingIds.has(img.id) ? '…' : '✂️'}
                   </button>
@@ -793,6 +796,7 @@ export function ScanPage() {
                     className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
                     onClick={() => handleRotate(img, 'ccw')}
                     title={t.rotateCcw}
+                    aria-label={t.rotateCcw}
                   >
                     ↺
                   </button>
@@ -800,6 +804,7 @@ export function ScanPage() {
                     className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
                     onClick={() => handleRotate(img)}
                     title={t.rotateCw}
+                    aria-label={t.rotateCw}
                   >
                     ↻
                   </button>
@@ -899,6 +904,7 @@ export function ScanPage() {
                 )
               }
               onRotateImage={handleRotate}
+              onImageChanged={imgId => setImgCacheBust(prev => ({ ...prev, [imgId]: Date.now() }))}
             />
           ))}
 
@@ -1111,7 +1117,7 @@ function OccasionPicker({
 function CardGroupCard({
   group, index, sessionId, companies, occasions, stage,
   splittingIds, splitFeedback, imgCacheBust, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
-  onDupNotDuplicate, onDupDiscard, onDupMerge, onRotateImage, isManual,
+  onDupNotDuplicate, onDupDiscard, onDupMerge, onRotateImage, onImageChanged, isManual,
 }: {
   group: CardGroup
   index: number
@@ -1137,6 +1143,10 @@ function CardGroupCard({
   onDupDiscard: (groupId: string) => void
   onDupMerge: (groupId: string, mergedCard: ParsedCard) => void
   onRotateImage: (img: SessionImage, direction?: 'cw' | 'ccw') => void
+  /** Bumps ScanPage's shared imgCacheBust map for one image id. Used after a crop
+   *  completes, so the crop modal's DOM-rewriting hack can be replaced with a
+   *  state update that both CardGroupCard's own re-render and LightboxImage pick up. */
+  onImageChanged: (imgId: number) => void
   isManual?: boolean
 }) {
   const { t } = useLang()
@@ -1221,6 +1231,8 @@ function CardGroupCard({
                   e.dataTransfer.effectAllowed = 'move'
                 } : undefined}
               >
+                {/* Fixed 128px box: rotating swaps the image's aspect ratio but the
+                    tile keeps its footprint, so the buttons below never move. */}
                 <div className="w-32 h-32 rounded border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
                   <LightboxImage
                     src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
@@ -1230,14 +1242,21 @@ function CardGroupCard({
                 </div>
                 <p className="text-xs text-gray-400 mt-1">{sideLabel(img.side_order ?? 0)}</p>
                 {(stage === 'grouping' || stage === 'review') && (
-                  <div className="flex gap-1 justify-center mt-0.5">
+                  // Two rows, not one: four 36px buttons (✂️ ⬚ ↺ ↻) plus gaps come to
+                  // ~156px, wider than the 128px tile. In a single row they spilled
+                  // 14px past both edges, so the front/back tiles of a two-sided
+                  // card (only 8px apart) overlapped and a click could land on the
+                  // neighbouring tile's button instead. Row 1 (split/crop, grouping
+                  // only) and row 2 (rotate, both stages) each fit within 128px.
+                  <div className="flex flex-col gap-1 items-center mt-0.5">
                     {stage === 'grouping' && (
-                      <>
+                      <div className="flex gap-1 justify-center">
                         <button
                           className={`${ICON_BTN} bg-yellow-100 text-yellow-700 hover:bg-yellow-400 hover:text-gray-900`}
                           disabled={splittingIds.has(img.id)}
                           onClick={() => onSplitImage(img, group.tempCardId)}
                           title={t.splitCards}
+                          aria-label={t.splitCards}
                         >
                           {splittingIds.has(img.id) ? '…' : '✂️'}
                         </button>
@@ -1245,25 +1264,30 @@ function CardGroupCard({
                           className={`${ICON_BTN} bg-blue-100 text-blue-700 hover:bg-blue-500 hover:text-white`}
                           onClick={() => setCropImg(img)}
                           title={t.cropImage}
+                          aria-label={t.cropImage}
                         >
                           ⬚
                         </button>
-                      </>
+                      </div>
                     )}
-                    <button
-                      className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
-                      onClick={() => onRotateImage(img, 'ccw')}
-                      title={t.rotateCcw}
-                    >
-                      ↺
-                    </button>
-                    <button
-                      className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
-                      onClick={() => onRotateImage(img)}
-                      title={t.rotateCw}
-                    >
-                      ↻
-                    </button>
+                    <div className="flex gap-1 justify-center">
+                      <button
+                        className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+                        onClick={() => onRotateImage(img, 'ccw')}
+                        title={t.rotateCcw}
+                        aria-label={t.rotateCcw}
+                      >
+                        ↺
+                      </button>
+                      <button
+                        className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+                        onClick={() => onRotateImage(img)}
+                        title={t.rotateCw}
+                        aria-label={t.rotateCw}
+                      >
+                        ↻
+                      </button>
+                    </div>
                   </div>
                 )}
                 {splitFeedback[img.id] && (
@@ -1426,16 +1450,22 @@ function CardGroupCard({
       <CropModal
         sessionId={sessionId}
         imgId={cropImg.id}
-        imageUrl={`/api/v2/sessions/${sessionId}/temp/${cropImg.image_filename}`}
+        // Cache-bust the displayed image the same way every other image URL in
+        // this page does. Crop coordinates the user drags are relative to *this*
+        // displayed image, so without the bust a stale (pre-rotation) cached copy
+        // could be shown here even though the file on disk was already rotated —
+        // the user would then crop a region that lands wrong once the backend
+        // applies it to the actual (rotated) file.
+        imageUrl={`/api/v2/sessions/${sessionId}/temp/${cropImg.image_filename}${imgCacheBust[cropImg.id] ? `?t=${imgCacheBust[cropImg.id]}` : ''}`}
         onDone={() => {
+          // Bump the shared imgCacheBust map (single source of truth, owned by
+          // ScanPage) so every consumer — this tile's own re-render and
+          // LightboxImage's full-screen view — picks up the freshly cropped file.
+          // Previously this rewrote <img src> directly via querySelectorAll, which
+          // never touched React state, so state and the lightbox kept serving the
+          // stale pre-crop URL.
+          onImageChanged(cropImg.id)
           setCropImg(null)
-          // Bust image cache so thumbnails reload with the cropped version
-          const ts = Date.now()
-          document.querySelectorAll<HTMLImageElement>('img').forEach(el => {
-            if (el.src.includes(cropImg.image_filename)) {
-              el.src = el.src.split('?')[0] + `?t=${ts}`
-            }
-          })
         }}
         onClose={() => setCropImg(null)}
       />
