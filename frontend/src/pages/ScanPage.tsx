@@ -301,6 +301,11 @@ export function ScanPage() {
   const [session, setSession] = useState<Session | null>(null)
   const [stage, setStage] = useState<Stage>('idle')
   const [ungrouped, setUngrouped] = useState<SessionImage[]>([])
+  // Mirror of `ungrouped` for the async grouping runs below: they loop with an await
+  // per image, so the list they captured at click time goes stale the moment the user
+  // drags, splits or deletes something mid-run. The ref always holds the latest list.
+  const ungroupedRef = useRef<SessionImage[]>([])
+  useEffect(() => { ungroupedRef.current = ungrouped }, [ungrouped])
   const [groups, setGroups] = useState<CardGroup[]>([])
   const [confirmed, setConfirmed] = useState<{ count: number } | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
@@ -434,8 +439,14 @@ export function ScanPage() {
     setUngrouped(prev => prev.filter(i => i.id !== img.id))
     setGroups(prev =>
       prev.map(g => {
-        if (g.tempCardId !== groupId) return g
-        return { ...g, images: [...g.images, { ...img, temp_card_id: groupId, side_order: sideOrder }] }
+        // The backend stores one assignment per image, so state must agree: drop the
+        // image from whatever group it was in before adding it here. Without this, an
+        // image dragged into a group during an auto-grouping run shows up in two.
+        const without = g.images.filter(i => i.id !== img.id)
+        if (g.tempCardId !== groupId) {
+          return without.length === g.images.length ? g : { ...g, images: without }
+        }
+        return { ...g, images: [...without, { ...img, temp_card_id: groupId, side_order: sideOrder }] }
       }),
     )
   }
@@ -450,16 +461,26 @@ export function ScanPage() {
   // first run just created but has not filled yet, stranding its images. So only
   // one run at a time: a click during a run is ignored. A ref, not state, because
   // the guard must flip synchronously, before any re-render.
+  // `grouping` drives the disabled state of the row buttons; the ref is what actually
+  // guards re-entry, because state updates are not visible until the next render.
   const groupingInFlight = useRef(false)
+  const [grouping, setGrouping] = useState(false)
   const runExclusive = async (run: () => Promise<void>) => {
     if (groupingInFlight.current) return
     groupingInFlight.current = true
+    setGrouping(true)
     try {
       await run()
     } finally {
       groupingInFlight.current = false
+      setGrouping(false)
     }
   }
+
+  // An image can leave `ungrouped` while a run is in flight — dragged into a group,
+  // split, or its group deleted. Re-assigning it would fight what the user just did,
+  // and for a split image the request would 404, so skip it.
+  const stillUngrouped = (img: SessionImage) => ungroupedRef.current.some(i => i.id === img.id)
 
   // Drop groups that hold no images. A functional update, so it prunes the latest
   // groups rather than the snapshot captured when the click handler rendered.
@@ -468,21 +489,27 @@ export function ScanPage() {
   const autoGroup1 = (images: SessionImage[]) => runExclusive(async () => {
     pruneEmptyGroups()
     for (const img of images) {
+      if (!stillUngrouped(img)) continue
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(img, id, 0)
     }
+    pruneEmptyGroups()
   })
 
   const autoGroup2 = (images: SessionImage[]) => runExclusive(async () => {
     // Pair every 2 images as front+back of one card
     pruneEmptyGroups()
     for (let i = 0; i < images.length; i += 2) {
+      const pair = [images[i], images[i + 1]].filter(img => img && stillUngrouped(img))
+      if (pair.length === 0) continue
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
-      await assignToGroup(images[i], id, 0)
-      if (images[i + 1]) await assignToGroup(images[i + 1], id, 1)
+      // side_order counts the images actually assigned, so a skipped front does not
+      // leave the back sitting at side_order 1 with no side 0.
+      for (const [side, img] of pair.entries()) await assignToGroup(img, id, side)
     }
+    pruneEmptyGroups()
   })
 
   // Display-only partition of `ungrouped`. Images produced by the scissors carry a
@@ -561,22 +588,23 @@ export function ScanPage() {
       const allPositions = [...posA.keys()].sort((a, b) => a - b)
 
       for (const pos of allPositions) {
+        const back = prefB ? byPrefixPos.get(prefB)?.get(pos) : undefined
+        const sides = [posA.get(pos)!, back].filter(img => img && stillUngrouped(img))
+        if (sides.length === 0) continue
         const id = crypto.randomUUID()
         setGroups(prev => [...prev, newGroup(id)])
-        await assignToGroup(posA.get(pos)!, id, 0)
-        if (prefB) {
-          const posB = byPrefixPos.get(prefB)?.get(pos)
-          if (posB) await assignToGroup(posB, id, 1)
-        }
+        for (const [side, img] of sides.entries()) await assignToGroup(img!, id, side)
       }
     }
 
     // Images without a _cardN suffix each become their own single-sided card
     for (const img of noPos) {
+      if (!stillUngrouped(img)) continue
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(img, id, 0)
     }
+    pruneEmptyGroups()
   })
 
   const handleSplit = async (img: SessionImage) => {
@@ -910,8 +938,8 @@ export function ScanPage() {
             </div>
             {stage === 'grouping' && (
               <div className="flex gap-1 shrink-0">
-                <button onClick={() => autoGroup1(unsplit)} className="btn-sm">{t.autoGroup1}</button>
-                <button onClick={() => autoGroup2(unsplit)} className="btn-sm">{t.autoGroup2}</button>
+                <button onClick={() => autoGroup1(unsplit)} disabled={grouping} className="btn-sm disabled:opacity-50">{t.autoGroup1}</button>
+                <button onClick={() => autoGroup2(unsplit)} disabled={grouping} className="btn-sm disabled:opacity-50">{t.autoGroup2}</button>
               </div>
             )}
           </div>
@@ -947,11 +975,12 @@ export function ScanPage() {
               <div className="flex gap-1 shrink-0">
                 <button
                   onClick={() => autoPairByPosition(separated)}
+                  disabled={grouping}
                   className="btn-primary text-sm"
                 >
                   {t.autoPairByPos}
                 </button>
-                <button onClick={() => autoGroup1(separated)} className="btn-sm">{t.autoGroup1}</button>
+                <button onClick={() => autoGroup1(separated)} disabled={grouping} className="btn-sm disabled:opacity-50">{t.autoGroup1}</button>
               </div>
             )}
           </div>
