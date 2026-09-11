@@ -47,6 +47,10 @@ import type {
   SessionImage,
 } from '../types'
 
+// Icon buttons on image tiles. ~36px so they are comfortably clickable, and fixed
+// size so a tile's controls never reflow when the image rotates.
+const ICON_BTN = 'h-9 min-w-9 px-2 rounded text-lg leading-none flex items-center justify-center disabled:opacity-50'
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CardGroup {
@@ -758,7 +762,7 @@ export function ScanPage() {
             {ungrouped.map(img => (
               <div
                 key={img.id}
-                className="relative cursor-grab active:cursor-grabbing"
+                className="relative w-32 cursor-grab active:cursor-grabbing"
                 draggable
                 onDragStart={e => {
                   e.dataTransfer.setData('imgId', String(img.id))
@@ -766,15 +770,19 @@ export function ScanPage() {
                   e.dataTransfer.effectAllowed = 'move'
                 }}
               >
-                <LightboxImage
-                  src={`/api/v2/sessions/${session?.external_id}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
-                  alt={img.image_filename}
-                  className="h-24 w-auto rounded border border-gray-200 object-cover"
-                />
+                {/* Fixed 128px box: rotating swaps the image's aspect ratio but the
+                    tile keeps its footprint, so the buttons below never move. */}
+                <div className="w-32 h-32 rounded border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+                  <LightboxImage
+                    src={`/api/v2/sessions/${session?.external_id}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
+                    alt={img.image_filename}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                </div>
                 {/* Action buttons always visible below the image */}
-                <div className="flex flex-wrap gap-0.5 mt-1 max-w-[96px]">
+                <div className="flex gap-1 mt-1">
                   <button
-                    className="bg-yellow-100 text-xs px-1.5 py-0.5 rounded text-yellow-700 hover:bg-yellow-400 hover:text-gray-900 disabled:opacity-50"
+                    className={`${ICON_BTN} bg-yellow-100 text-yellow-700 hover:bg-yellow-400 hover:text-gray-900`}
                     disabled={splittingIds.has(img.id)}
                     onClick={() => handleSplit(img)}
                     title={t.splitCards}
@@ -782,16 +790,16 @@ export function ScanPage() {
                     {splittingIds.has(img.id) ? '…' : '✂️'}
                   </button>
                   <button
-                    className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
+                    className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
                     onClick={() => handleRotate(img, 'ccw')}
-                    title="Rotate 90° counter-clockwise"
+                    title={t.rotateCcw}
                   >
                     ↺
                   </button>
                   <button
-                    className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
+                    className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
                     onClick={() => handleRotate(img)}
-                    title="Rotate 90° clockwise"
+                    title={t.rotateCw}
                   >
                     ↻
                   </button>
@@ -801,7 +809,7 @@ export function ScanPage() {
                     {splitFeedback[img.id]}
                   </div>
                 )}
-                <p className="text-xs text-gray-500 mt-1 truncate max-w-[96px]">{img.image_filename}</p>
+                <p className="text-xs text-gray-500 mt-1 truncate w-32">{img.image_filename}</p>
               </div>
             ))}
           </div>
@@ -1205,7 +1213,7 @@ function CardGroupCard({
             .map(img => (
               <div
                 key={img.id}
-                className={`text-center relative ${canDragDrop ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                className={`text-center relative w-32 ${canDragDrop ? 'cursor-grab active:cursor-grabbing' : ''}`}
                 draggable={canDragDrop}
                 onDragStart={canDragDrop ? e => {
                   e.dataTransfer.setData('imgId', String(img.id))
@@ -1213,18 +1221,20 @@ function CardGroupCard({
                   e.dataTransfer.effectAllowed = 'move'
                 } : undefined}
               >
-                <LightboxImage
-                  src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
-                  alt={`side ${img.side_order}`}
-                  className="h-28 w-auto rounded border border-gray-200 object-contain bg-gray-50"
-                />
+                <div className="w-32 h-32 rounded border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+                  <LightboxImage
+                    src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
+                    alt={`side ${img.side_order}`}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                </div>
                 <p className="text-xs text-gray-400 mt-1">{sideLabel(img.side_order ?? 0)}</p>
                 {(stage === 'grouping' || stage === 'review') && (
-                  <div className="flex gap-0.5 justify-center mt-0.5">
+                  <div className="flex gap-1 justify-center mt-0.5">
                     {stage === 'grouping' && (
                       <>
                         <button
-                          className="bg-yellow-100 text-xs px-1.5 py-0.5 rounded text-yellow-700 hover:bg-yellow-400 hover:text-gray-900 disabled:opacity-50"
+                          className={`${ICON_BTN} bg-yellow-100 text-yellow-700 hover:bg-yellow-400 hover:text-gray-900`}
                           disabled={splittingIds.has(img.id)}
                           onClick={() => onSplitImage(img, group.tempCardId)}
                           title={t.splitCards}
@@ -1232,25 +1242,25 @@ function CardGroupCard({
                           {splittingIds.has(img.id) ? '…' : '✂️'}
                         </button>
                         <button
-                          className="bg-blue-100 text-xs px-1.5 py-0.5 rounded text-blue-700 hover:bg-blue-500 hover:text-white"
+                          className={`${ICON_BTN} bg-blue-100 text-blue-700 hover:bg-blue-500 hover:text-white`}
                           onClick={() => setCropImg(img)}
-                          title="Crop image"
+                          title={t.cropImage}
                         >
                           ⬚
                         </button>
                       </>
                     )}
                     <button
-                      className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
+                      className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
                       onClick={() => onRotateImage(img, 'ccw')}
-                      title="Rotate 90° counter-clockwise"
+                      title={t.rotateCcw}
                     >
                       ↺
                     </button>
                     <button
-                      className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
+                      className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
                       onClick={() => onRotateImage(img)}
-                      title="Rotate 90° clockwise"
+                      title={t.rotateCw}
                     >
                       ↻
                     </button>
@@ -1264,7 +1274,7 @@ function CardGroupCard({
               </div>
             ))}
           {group.images.length === 0 && (
-            <div className="h-28 w-20 rounded border-2 border-dashed border-gray-200 flex items-center justify-center">
+            <div className="w-32 h-32 rounded border-2 border-dashed border-gray-200 flex items-center justify-center">
               <span className="text-xs text-gray-400">{t.emptySlot}</span>
             </div>
           )}
