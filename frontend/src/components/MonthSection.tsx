@@ -47,10 +47,9 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
   //    cache instead of refetching.
   const {
     data,
-    isPending,
     isFetching,
     isFetchingNextPage,
-    isError,
+    isLoadingError,
     isFetchNextPageError,
     fetchNextPage,
     refetch,
@@ -90,9 +89,9 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
         // than an empty grid that reads as "this month has no cards". Retrying re-runs
         // the whole query. `data === undefined` is what separates this from a failed
         // LATER page (also `isError`), which is handled below without hiding the grid.
-        isError && data === undefined ? (
+        isLoadingError ? (
           <LoadError onRetry={() => refetch()} isRetrying={isFetching} />
-        ) : isPending ? (
+        ) : data === undefined ? (
           // No page has arrived yet — whether the request is in flight or paused.
           <p className="text-xs text-gray-400 py-2">{t.loading}</p>
         ) : (
