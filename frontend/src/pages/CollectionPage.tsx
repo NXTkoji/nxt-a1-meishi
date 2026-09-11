@@ -236,7 +236,9 @@ export function CollectionPage() {
         </div>
         <input
           type="search"
-          placeholder={t.searchPlaceholder}
+          // Persons search matches names/organisations only (never occasions), so its
+          // placeholder is narrower than the Cards tab's — see CollectionPage's `view` state.
+          placeholder={view === 'persons' ? t.searchPlaceholderPersons : t.searchPlaceholder}
           value={q}
           onChange={e => setQ(e.target.value)}
           className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"

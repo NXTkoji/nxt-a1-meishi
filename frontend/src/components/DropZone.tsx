@@ -4,9 +4,11 @@ import { useLang } from '../LangContext'
 interface Props {
   onFiles: (files: File[]) => void
   disabled?: boolean
+  /** Shrink once images exist — a full-height zone would push the card rows off-screen. */
+  compact?: boolean
 }
 
-export function DropZone({ onFiles, disabled }: Props) {
+export function DropZone({ onFiles, disabled, compact }: Props) {
   const { t } = useLang()
   const [dragging, setDragging] = useState(false)
 
@@ -31,7 +33,7 @@ export function DropZone({ onFiles, disabled }: Props) {
 
   return (
     <label
-      className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-colors cursor-pointer select-none p-10 min-h-[360px]
+      className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-colors cursor-pointer select-none p-10 ${compact ? 'min-h-[200px]' : 'min-h-[720px]'}
         ${dragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'}
         ${disabled ? 'opacity-40 pointer-events-none' : ''}`}
       onDragOver={e => { e.preventDefault(); setDragging(true) }}

@@ -107,7 +107,10 @@ def build_legacy_card(
         for link in db_card.my_company_links
     ]
 
-    occasion_name = db_card.occasion.name if db_card.occasion else ""
+    # A live link wins so renames propagate; occasion_label is the snapshot left
+    # behind when the occasion was deleted. occasion_location has no snapshot —
+    # location is a property of the occasion, not of the card — so it goes empty.
+    occasion_name = db_card.occasion.name if db_card.occasion else (db_card.occasion_label or "")
     occasion_location = db_card.occasion.location or "" if db_card.occasion else ""
 
     return LegacyCard(

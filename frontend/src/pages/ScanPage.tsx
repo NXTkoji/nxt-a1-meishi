@@ -9,7 +9,7 @@
  *  confirm  → Write permanent records
  *  done     → Show summary with links
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   analyzeSession,
@@ -37,6 +37,7 @@ import CardOutlineSelector from '../components/CardOutlineSelector'
 import type { Point } from '../api/sessions'
 import { useLang } from '../LangContext'
 import { todayLocalISODate } from '../lib/dates'
+import { flattenOccasionMonths } from '../lib/occasionGrouping'
 import type {
   AnalysisEvent,
   CardDraft,
@@ -46,6 +47,12 @@ import type {
   Session,
   SessionImage,
 } from '../types'
+
+// Icon buttons on image tiles. ~36px so they are comfortably clickable. Fixed
+// h-9 w-9 (not min-w-9/px-2) because every one of these buttons holds exactly one
+// glyph — including the split button, which swaps ✂️ for '…' while splitting — so
+// a fixed width guarantees the button never resizes and its neighbours never shift.
+const ICON_BTN = 'h-9 w-9 px-0 rounded text-lg leading-none flex items-center justify-center disabled:opacity-50'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -107,6 +114,21 @@ function nextSideOrder(images: SessionImage[]): number {
   return images.reduce((max, i) => Math.max(max, i.side_order ?? 0), -1) + 1
 }
 
+// Extract the _cardN position index from a split filename (e.g. "photo_card2.jpg" → 2).
+// Pure and stateless, so it lives at module scope — the "Ungrouped" / "Separated"
+// partition derived from it needs to run before any component-scope declaration that
+// might otherwise create a temporal-dead-zone hazard for a `const` arrow function.
+function getCardPos(filename: string): number | null {
+  const m = filename.match(/_card(\d+)\./i)
+  return m ? parseInt(m[1], 10) : null
+}
+
+// Extract the source prefix from a split filename (e.g. "IMG_6433_card2.jpg" → "IMG_6433")
+function getSourcePrefix(filename: string): string | null {
+  const m = filename.match(/^(.+)_card\d+\./i)
+  return m ? m[1] : null
+}
+
 type SavedGroupState = Pick<
   CardGroup,
   'tempCardId' | 'parsed' | 'status' | 'matchPersonId' | 'matchPersonExtId' | 'matchName' | 'matchConfidence' |
@@ -146,6 +168,132 @@ function loadGroupsState(sessionExtId: string): Record<string, SavedGroupState> 
   }
 }
 
+/**
+ * One draggable image tile in the Ungrouped or Separated cards row.
+ * Extracted so the two rows (Task 8) don't duplicate this JSX — everything that
+ * differs between the rows is passed in as a prop; everything else (icon layout,
+ * aria-labels, drag data, split feedback overlay, filename) is verbatim from the
+ * single-row version.
+ */
+function UngroupedTile({
+  img, sessionId, cacheBust, splitting, feedback, onSplit, onRotate, t,
+}: {
+  img: SessionImage
+  sessionId: string
+  cacheBust?: number
+  splitting: boolean
+  feedback?: string
+  onSplit: (img: SessionImage) => void
+  onRotate: (img: SessionImage, direction?: 'cw' | 'ccw') => void
+  t: ReturnType<typeof useLang>['t']
+}) {
+  return (
+    <div
+      className="relative w-32 cursor-grab active:cursor-grabbing"
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.setData('imgId', String(img.id))
+        e.dataTransfer.setData('fromGroupId', '__ungrouped__')
+        e.dataTransfer.effectAllowed = 'move'
+      }}
+    >
+      {/* Fixed 128px box: rotating swaps the image's aspect ratio but the
+          tile keeps its footprint, so the buttons below never move. */}
+      <div className="w-32 h-32 rounded border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+        <LightboxImage
+          src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${cacheBust ? `?t=${cacheBust}` : ''}`}
+          alt={img.image_filename}
+          className="max-w-full max-h-full object-contain"
+        />
+      </div>
+      {/* Action buttons always visible below the image */}
+      <div className="flex gap-1 mt-1">
+        <button
+          className={`${ICON_BTN} bg-yellow-100 text-yellow-700 hover:bg-yellow-400 hover:text-gray-900`}
+          disabled={splitting}
+          onClick={() => onSplit(img)}
+          title={t.splitCards}
+          aria-label={t.splitCards}
+        >
+          {splitting ? '…' : '✂️'}
+        </button>
+        <button
+          className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+          onClick={() => onRotate(img, 'ccw')}
+          title={t.rotateCcw}
+          aria-label={t.rotateCcw}
+        >
+          ↺
+        </button>
+        <button
+          className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+          onClick={() => onRotate(img)}
+          title={t.rotateCw}
+          aria-label={t.rotateCw}
+        >
+          ↻
+        </button>
+      </div>
+      {feedback && (
+        <div className="absolute top-0 left-0 right-0 bg-black/70 text-white text-xs text-center py-0.5 rounded-t">
+          {feedback}
+        </div>
+      )}
+      <p className="text-xs text-gray-500 mt-1 truncate w-32">{img.image_filename}</p>
+    </div>
+  )
+}
+
+/** Explains the ✂️ and ↺↻ actions. Collapsed state is remembered so a returning
+ *  user is not re-lectured, but it defaults to open for a first-time user.
+ *  localStorage can throw in some browser contexts (private mode, disabled
+ *  storage) — fall back to "always open, never persisted" rather than crash. */
+function GroupingHelp() {
+  const { t } = useLang()
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('scan.help.collapsed') === '1'
+    } catch {
+      return false
+    }
+  })
+
+  // Persist outside the state updater: updaters must stay pure (StrictMode runs
+  // them twice in development), and this click handler runs exactly once.
+  const toggle = () => {
+    const next = !collapsed
+    try {
+      localStorage.setItem('scan.help.collapsed', next ? '1' : '0')
+    } catch {
+      // Storage unavailable — collapse state just won't persist across reloads.
+    }
+    setCollapsed(next)
+  }
+
+  // Both toggle buttons carry aria-expanded so assistive tech announces whether
+  // the explanation is currently shown.
+  if (collapsed) {
+    return (
+      <button onClick={toggle} aria-expanded={false} className="text-xs text-blue-500 hover:text-blue-700">
+        ⓘ {t.scanHelpShow}
+      </button>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-blue-900">{t.scanHelpTitle}</h3>
+        <button onClick={toggle} aria-expanded={true} className="text-xs text-blue-500 hover:text-blue-700">
+          {t.scanHelpHide}
+        </button>
+      </div>
+      <p className="text-xs text-blue-900/80">{t.scanHelpSplit}</p>
+      <p className="text-xs text-blue-900/80">{t.scanHelpRotate}</p>
+    </div>
+  )
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ScanPage() {
@@ -153,6 +301,11 @@ export function ScanPage() {
   const [session, setSession] = useState<Session | null>(null)
   const [stage, setStage] = useState<Stage>('idle')
   const [ungrouped, setUngrouped] = useState<SessionImage[]>([])
+  // Mirror of `ungrouped` for the async grouping runs below: they loop with an await
+  // per image, so the list they captured at click time goes stale the moment the user
+  // drags, splits or deletes something mid-run. The ref always holds the latest list.
+  const ungroupedRef = useRef<SessionImage[]>([])
+  useEffect(() => { ungroupedRef.current = ungrouped }, [ungrouped])
   const [groups, setGroups] = useState<CardGroup[]>([])
   const [confirmed, setConfirmed] = useState<{ count: number } | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
@@ -286,83 +439,123 @@ export function ScanPage() {
     setUngrouped(prev => prev.filter(i => i.id !== img.id))
     setGroups(prev =>
       prev.map(g => {
-        if (g.tempCardId !== groupId) return g
-        return { ...g, images: [...g.images, { ...img, temp_card_id: groupId, side_order: sideOrder }] }
+        // The backend stores one assignment per image, so state must agree: drop the
+        // image from whatever group it was in before adding it here. Without this, an
+        // image dragged into a group during an auto-grouping run shows up in two.
+        const without = g.images.filter(i => i.id !== img.id)
+        if (g.tempCardId !== groupId) {
+          return without.length === g.images.length ? g : { ...g, images: without }
+        }
+        return { ...g, images: [...without, { ...img, temp_card_id: groupId, side_order: sideOrder }] }
       }),
     )
   }
 
-  const autoGroup1 = async () => {
-    // Each image becomes its own single-sided card
-    // Remove any existing empty groups first
-    const keepGroups = groups.filter(g => g.images.length > 0)
-    setGroups(keepGroups)
-    const imgs = [...ungrouped]
-    for (const img of imgs) {
+  // Each image becomes its own single-sided card. Takes the images to act on
+  // (Ungrouped row passes `unsplit`, Separated row passes `separated`) rather than
+  // closing over the whole `ungrouped` array, so each row's button only touches
+  // that row's images.
+  // Grouping runs are async — one request per image — and each starts by pruning
+  // empty groups. A second grouping click while a run is in flight (easy now that
+  // the Ungrouped and Separated rows each have buttons) would prune the groups the
+  // first run just created but has not filled yet, stranding its images. So only
+  // one run at a time: a click during a run is ignored. A ref, not state, because
+  // the guard must flip synchronously, before any re-render.
+  // `grouping` drives the disabled state of the row buttons; the ref is what actually
+  // guards re-entry, because state updates are not visible until the next render.
+  const groupingInFlight = useRef(false)
+  const [grouping, setGrouping] = useState(false)
+  const runExclusive = async (run: () => Promise<void>) => {
+    if (groupingInFlight.current) return
+    groupingInFlight.current = true
+    setGrouping(true)
+    try {
+      await run()
+    } finally {
+      groupingInFlight.current = false
+      setGrouping(false)
+    }
+  }
+
+  // An image can leave `ungrouped` while a run is in flight — dragged into a group,
+  // split, or its group deleted. Re-assigning it would fight what the user just did,
+  // and for a split image the request would 404, so skip it.
+  const stillUngrouped = (img: SessionImage) => ungroupedRef.current.some(i => i.id === img.id)
+
+  // Drop groups that hold no images. A functional update, so it prunes the latest
+  // groups rather than the snapshot captured when the click handler rendered.
+  const pruneEmptyGroups = () => setGroups(prev => prev.filter(g => g.images.length > 0))
+
+  const autoGroup1 = (images: SessionImage[]) => runExclusive(async () => {
+    pruneEmptyGroups()
+    for (const img of images) {
+      if (!stillUngrouped(img)) continue
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(img, id, 0)
     }
-  }
+    pruneEmptyGroups()
+  })
 
-  const autoGroup2 = async () => {
-    // Pair every 2 ungrouped images as front+back of one card
-    const keepGroups = groups.filter(g => g.images.length > 0)
-    setGroups(keepGroups)
-    const imgs = [...ungrouped]
-    for (let i = 0; i < imgs.length; i += 2) {
+  const autoGroup2 = (images: SessionImage[]) => runExclusive(async () => {
+    // Pair every 2 images as front+back of one card
+    pruneEmptyGroups()
+    for (let i = 0; i < images.length; i += 2) {
+      const pair = [images[i], images[i + 1]].filter(img => img && stillUngrouped(img))
+      if (pair.length === 0) continue
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
-      await assignToGroup(imgs[i], id, 0)
-      if (imgs[i + 1]) await assignToGroup(imgs[i + 1], id, 1)
+      // side_order counts the images actually assigned, so a skipped front does not
+      // leave the back sitting at side_order 1 with no side 0.
+      for (const [side, img] of pair.entries()) await assignToGroup(img, id, side)
     }
-  }
+    pruneEmptyGroups()
+  })
 
-  // Extract the _cardN position index from a split filename (e.g. "photo_card2.jpg" → 2)
-  const getCardPos = (filename: string): number | null => {
-    const m = filename.match(/_card(\d+)\./i)
-    return m ? parseInt(m[1], 10) : null
-  }
+  // Display-only partition of `ungrouped`. Images produced by the scissors carry a
+  // _cardN suffix (see module-scope `getCardPos`); everything else is a whole photo
+  // that has not been split yet.
+  // NOTE: `separated` is a SUBSET of `ungrouped`, never an addition to it — every
+  // image is in exactly one of `separated` / `unsplit`.
+  const separated = ungrouped.filter(i => getCardPos(i.image_filename) !== null)
+  const unsplit   = ungrouped.filter(i => getCardPos(i.image_filename) === null)
 
-  // Extract the source prefix from a split filename (e.g. "IMG_6433_card2.jpg" → "IMG_6433")
-  const getSourcePrefix = (filename: string): string | null => {
-    const m = filename.match(/^(.+)_card\d+\./i)
-    return m ? m[1] : null
-  }
-
-  // "Pair by position": group images by their _cardN suffix.
-  // Images with the same position number (from different source photos) become
-  // front/back sides of the same card group.
-  // Only shown when ≥2 ungrouped images share at least one _cardN suffix.
-  const canAutoPairByPos = (() => {
-    const positions = ungrouped.map(i => getCardPos(i.image_filename)).filter(p => p !== null)
-    return positions.length >= 2 && new Set(positions).size < positions.length
-  })()
-
-  // True when some ungrouped images have _cardN suffix and some do not — mixing
-  // cropped splits with uncropped originals would give wrong pairing results.
+  // True when an un-split photo shares a base name with images that were split —
+  // pairing by position while that photo is still whole would give wrong results.
   const hasMixedCropState = (() => {
-    if (!canAutoPairByPos) return false
+    if (separated.length === 0) return false
     // Collect the source prefixes of all cropped (_cardN) images
     const croppedPrefixes = new Set(
-      ungrouped
+      separated
         .map(i => getSourcePrefix(i.image_filename))
         .filter((p): p is string => p !== null)
     )
     if (croppedPrefixes.size === 0) return false
-    // An un-suffixed image is "problematically uncropped" only if its base name
+    // An un-split photo is "problematically uncropped" only if its base name
     // matches a source prefix that also produced cropped siblings.
-    return ungrouped.some(i => {
-      if (getCardPos(i.image_filename) !== null) return false  // is itself cropped
+    return unsplit.some(i => {
       const base = i.image_filename.replace(/\.[^.]+$/, '')   // strip extension
       return croppedPrefixes.has(base)
     })
   })()
 
-  const autoPairByPosition = async () => {
-    const keepGroups = groups.filter(g => g.images.length > 0)
-    setGroups(keepGroups)
-    const imgs = [...ungrouped]
+  // Images left in Ungrouped or Separated are silently dropped by the analysis, so
+  // block until every one is in a group. `ungrouped` covers both rows (see Task 8:
+  // `separated`/`unsplit` are just a display-only partition of it).
+  const analysisBlockedReason =
+    ungrouped.length > 0
+      ? t.analysisBlockedUngrouped(ungrouped.length)
+      : groups.every(g => g.images.length === 0)
+        ? t.analysisBlockedEmpty
+        : null
+
+  // "Pair by position": group images by their _cardN suffix.
+  // Images with the same position number (from different source photos) become
+  // front/back sides of the same card group. Also handles a fronts-only batch
+  // (odd trailing prefix) correctly — see the loop below.
+  const autoPairByPosition = (images: SessionImage[]) => runExclusive(async () => {
+    pruneEmptyGroups()
+    const imgs = [...images]
 
     // Separate images with _cardN suffix from those without
     const withPos = imgs.filter(i => getCardPos(i.image_filename) !== null)
@@ -395,23 +588,24 @@ export function ScanPage() {
       const allPositions = [...posA.keys()].sort((a, b) => a - b)
 
       for (const pos of allPositions) {
+        const back = prefB ? byPrefixPos.get(prefB)?.get(pos) : undefined
+        const sides = [posA.get(pos)!, back].filter(img => img && stillUngrouped(img))
+        if (sides.length === 0) continue
         const id = crypto.randomUUID()
         setGroups(prev => [...prev, newGroup(id)])
-        await assignToGroup(posA.get(pos)!, id, 0)
-        if (prefB) {
-          const posB = byPrefixPos.get(prefB)?.get(pos)
-          if (posB) await assignToGroup(posB, id, 1)
-        }
+        for (const [side, img] of sides.entries()) await assignToGroup(img!, id, side)
       }
     }
 
     // Images without a _cardN suffix each become their own single-sided card
     for (const img of noPos) {
+      if (!stillUngrouped(img)) continue
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(img, id, 0)
     }
-  }
+    pruneEmptyGroups()
+  })
 
   const handleSplit = async (img: SessionImage) => {
     if (!session) return
@@ -723,31 +917,72 @@ export function ScanPage() {
 
       {/* Upload */}
       {(stage === 'uploading' || stage === 'grouping') && (
-        <DropZone onFiles={handleFiles} />
+        <DropZone
+          onFiles={handleFiles}
+          compact={ungrouped.length > 0 || groups.length > 0}
+        />
       )}
 
-      {/* Ungrouped images */}
-      {ungrouped.length > 0 && (
+      {/* Explains the split/rotate icon buttons before the user reaches them. */}
+      {stage === 'grouping' && <GroupingHelp />}
+
+      {/* Ungrouped — whole photos that have not been split. Only the two grouping
+          buttons that make sense on a whole photo appear here; "Pair by position"
+          needs a _cardN suffix that these files don't have (see the Separated row). */}
+      {unsplit.length > 0 && (
         <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-gray-700">{t.ungroupedN(ungrouped.length)}</h2>
-            <div className="flex gap-1">
-              <button onClick={autoGroup1} className="btn-sm">{t.autoGroup1}</button>
-              <button onClick={autoGroup2} className="btn-sm">{t.autoGroup2}</button>
-              {stage === 'grouping' && groups.length === 0 && (
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-medium text-gray-700">{t.ungroupedN(unsplit.length)}</h2>
+              <p className="text-xs text-gray-400">{t.ungroupedHint}</p>
+            </div>
+            {stage === 'grouping' && (
+              <div className="flex gap-1 shrink-0">
+                <button onClick={() => autoGroup1(unsplit)} disabled={grouping} className="btn-sm disabled:opacity-50">{t.autoGroup1}</button>
+                <button onClick={() => autoGroup2(unsplit)} disabled={grouping} className="btn-sm disabled:opacity-50">{t.autoGroup2}</button>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {unsplit.map(img => (
+              <UngroupedTile
+                key={img.id}
+                img={img}
+                sessionId={session?.external_id ?? ''}
+                cacheBust={imgCacheBust[img.id]}
+                splitting={splittingIds.has(img.id)}
+                feedback={splitFeedback[img.id]}
+                onSplit={handleSplit}
+                onRotate={handleRotate}
+                t={t}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Separated cards — output of the scissors. "Pair by position" is the primary
+          action here: it matches the confirmed workflow of shooting all fronts in
+          one photo, flipping in place, then shooting all backs. */}
+      {separated.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-medium text-gray-700">{t.separatedN(separated.length)}</h2>
+              <p className="text-xs text-gray-400">{t.separatedHint}</p>
+            </div>
+            {stage === 'grouping' && (
+              <div className="flex gap-1 shrink-0">
                 <button
-                  onClick={async () => { await autoGroup1(); startAnalysis() }}
+                  onClick={() => autoPairByPosition(separated)}
+                  disabled={grouping}
                   className="btn-primary text-sm"
                 >
-                  {t.startAnalysis}
-                </button>
-              )}
-              {canAutoPairByPos && (
-                <button onClick={autoPairByPosition} className="btn-sm bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100" title="Group images from different photos by matching card position">
                   {t.autoPairByPos}
                 </button>
-              )}
-            </div>
+                <button onClick={() => autoGroup1(separated)} disabled={grouping} className="btn-sm disabled:opacity-50">{t.autoGroup1}</button>
+              </div>
+            )}
           </div>
           {hasMixedCropState && (
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
@@ -755,54 +990,18 @@ export function ScanPage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            {ungrouped.map(img => (
-              <div
+            {separated.map(img => (
+              <UngroupedTile
                 key={img.id}
-                className="relative cursor-grab active:cursor-grabbing"
-                draggable
-                onDragStart={e => {
-                  e.dataTransfer.setData('imgId', String(img.id))
-                  e.dataTransfer.setData('fromGroupId', '__ungrouped__')
-                  e.dataTransfer.effectAllowed = 'move'
-                }}
-              >
-                <LightboxImage
-                  src={`/api/v2/sessions/${session?.external_id}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
-                  alt={img.image_filename}
-                  className="h-24 w-auto rounded border border-gray-200 object-cover"
-                />
-                {/* Action buttons always visible below the image */}
-                <div className="flex flex-wrap gap-0.5 mt-1 max-w-[96px]">
-                  <button
-                    className="bg-yellow-100 text-xs px-1.5 py-0.5 rounded text-yellow-700 hover:bg-yellow-400 hover:text-gray-900 disabled:opacity-50"
-                    disabled={splittingIds.has(img.id)}
-                    onClick={() => handleSplit(img)}
-                    title={t.splitCards}
-                  >
-                    {splittingIds.has(img.id) ? '…' : '✂️'}
-                  </button>
-                  <button
-                    className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
-                    onClick={() => handleRotate(img, 'ccw')}
-                    title="Rotate 90° counter-clockwise"
-                  >
-                    ↺
-                  </button>
-                  <button
-                    className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
-                    onClick={() => handleRotate(img)}
-                    title="Rotate 90° clockwise"
-                  >
-                    ↻
-                  </button>
-                </div>
-                {splitFeedback[img.id] && (
-                  <div className="absolute top-0 left-0 right-0 bg-black/70 text-white text-xs text-center py-0.5 rounded-t">
-                    {splitFeedback[img.id]}
-                  </div>
-                )}
-                <p className="text-xs text-gray-500 mt-1 truncate max-w-[96px]">{img.image_filename}</p>
-              </div>
+                img={img}
+                sessionId={session?.external_id ?? ''}
+                cacheBust={imgCacheBust[img.id]}
+                splitting={splittingIds.has(img.id)}
+                feedback={splitFeedback[img.id]}
+                onSplit={handleSplit}
+                onRotate={handleRotate}
+                t={t}
+              />
             ))}
           </div>
         </section>
@@ -817,9 +1016,10 @@ export function ScanPage() {
               <div className="flex gap-2">
                 <button onClick={addGroup} className="btn-sm">{t.addGroup}</button>
                 <button
-                  disabled={groups.every(g => g.images.length === 0)}
+                  disabled={analysisBlockedReason !== null}
                   onClick={startAnalysis}
-                  className="btn-primary text-sm"
+                  className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={analysisBlockedReason ?? undefined}
                 >
                   {t.startAnalysis}
                 </button>
@@ -827,10 +1027,12 @@ export function ScanPage() {
             )}
           </div>
 
-          {stage === 'grouping' && groups.length >= 2 && (
-            <p className="text-xs text-gray-400">
-              Tip: Drag an image from one card into another card to pair them as front and back.
-            </p>
+          {stage === 'grouping' && (
+            <ul className="text-xs text-gray-400 list-disc pl-4 space-y-0.5">
+              {groups.length >= 2 && <li>{t.tipDragPair}</li>}
+              <li>{t.tipFrontSide}</li>
+              <li>{t.tipStartAnalysis}</li>
+            </ul>
           )}
 
           {groups.map((group, gi) => (
@@ -845,6 +1047,7 @@ export function ScanPage() {
               isManual={isManual}
               splittingIds={splittingIds}
               splitFeedback={splitFeedback}
+              imgCacheBust={imgCacheBust}
               onSplitImage={handleSplitGrouped}
               onParsedChange={parsed =>
                 setGroups(prev =>
@@ -890,16 +1093,25 @@ export function ScanPage() {
                 )
               }
               onRotateImage={handleRotate}
+              onImageChanged={imgId => setImgCacheBust(prev => ({ ...prev, [imgId]: Date.now() }))}
             />
           ))}
 
           {stage === 'grouping' && (
-            <div className="flex justify-end pt-2">
+            <div className="flex flex-col items-end gap-2 pt-2">
+              {analysisBlockedReason && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 w-full">
+                  ⚠️ {analysisBlockedReason}
+                </p>
+              )}
               <button
-                disabled={groups.every(g => g.images.length === 0)}
+                disabled={analysisBlockedReason !== null}
                 onClick={startAnalysis}
-                className="btn-primary text-sm"
+                className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
+                {/* No title here: the same reason is already shown in the amber
+                    banner directly above. The header button keeps its title because
+                    nothing next to it explains why it is disabled. */}
                 {t.startAnalysis}
               </button>
             </div>
@@ -1034,13 +1246,10 @@ function OccasionPicker({
     },
   })
 
-  // Sort by created_at desc; take first 3 as "recent", rest as "all"
-  const sorted = [...occasions].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  )
-  const recent = sorted.slice(0, 3)
-  const recentIds = new Set(recent.map(o => o.id))
-  const older = sorted.filter(o => !recentIds.has(o.id))
+  // Group into year → month buckets (newest first) for the <optgroup> list below.
+  // A <select> can't nest optgroups, so this is the flat one-level-per-month form.
+  // Memoised so typing a new occasion name does not regroup the list on every keystroke.
+  const months = useMemo(() => flattenOccasionMonths(occasions), [occasions])
 
   return (
     <div>
@@ -1051,16 +1260,14 @@ function OccasionPicker({
         className="w-full border border-gray-300 rounded px-2 py-0.5 text-xs"
       >
         <option value="">{t.noneOption}</option>
-        {recent.length > 0 && (
-          <optgroup label="Recent">
-            {recent.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        {months.map(({ year, month, occasions: os }) => (
+          <optgroup
+            key={`${year}-${month}`}
+            label={year === 0 ? t.occasionUndated : t.monthLabel(year, month)}
+          >
+            {os.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
           </optgroup>
-        )}
-        {older.length > 0 && (
-          <optgroup label="All">
-            {older.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </optgroup>
-        )}
+        ))}
       </select>
 
       {adding ? (
@@ -1101,8 +1308,8 @@ function OccasionPicker({
 
 function CardGroupCard({
   group, index, sessionId, companies, occasions, stage,
-  splittingIds, splitFeedback, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
-  onDupNotDuplicate, onDupDiscard, onDupMerge, onRotateImage, isManual,
+  splittingIds, splitFeedback, imgCacheBust, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
+  onDupNotDuplicate, onDupDiscard, onDupMerge, onRotateImage, onImageChanged, isManual,
 }: {
   group: CardGroup
   index: number
@@ -1112,6 +1319,9 @@ function CardGroupCard({
   stage: Stage
   splittingIds: Set<number>
   splitFeedback: Record<number, string>
+  /** Shared with ScanPage so a rotation done while the image was ungrouped is still
+   *  reflected once it lands in a group. Must not be duplicated into local state. */
+  imgCacheBust: Record<number, number>
   onSplitImage: (img: SessionImage, groupId: string) => void
   onParsedChange: (p: ParsedCard) => void
   onMetaChange: (meta: Partial<CardGroup>) => void
@@ -1125,12 +1335,15 @@ function CardGroupCard({
   onDupDiscard: (groupId: string) => void
   onDupMerge: (groupId: string, mergedCard: ParsedCard) => void
   onRotateImage: (img: SessionImage, direction?: 'cw' | 'ccw') => void
+  /** Bumps ScanPage's shared imgCacheBust map for one image id. Used after a crop
+   *  completes, so the crop modal's DOM-rewriting hack can be replaced with a
+   *  state update that both CardGroupCard's own re-render and LightboxImage pick up. */
+  onImageChanged: (imgId: number) => void
   isManual?: boolean
 }) {
   const { t } = useLang()
   const [cropImg, setCropImg] = useState<SessionImage | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [localCacheBust, setLocalCacheBust] = useState<Record<number, number>>({})
   const canDragDrop = stage === 'grouping' || stage === 'review'
 
   const sideLabel = (order: number) => {
@@ -1202,7 +1415,7 @@ function CardGroupCard({
             .map(img => (
               <div
                 key={img.id}
-                className={`text-center relative ${canDragDrop ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                className={`text-center relative w-32 ${canDragDrop ? 'cursor-grab active:cursor-grabbing' : ''}`}
                 draggable={canDragDrop}
                 onDragStart={canDragDrop ? e => {
                   e.dataTransfer.setData('imgId', String(img.id))
@@ -1210,53 +1423,63 @@ function CardGroupCard({
                   e.dataTransfer.effectAllowed = 'move'
                 } : undefined}
               >
-                <LightboxImage
-                  src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${localCacheBust[img.id] ? `?t=${localCacheBust[img.id]}` : ''}`}
-                  alt={`side ${img.side_order}`}
-                  className="h-28 w-auto rounded border border-gray-200 object-contain bg-gray-50"
-                />
+                {/* Fixed 128px box: rotating swaps the image's aspect ratio but the
+                    tile keeps its footprint, so the buttons below never move. */}
+                <div className="w-32 h-32 rounded border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+                  <LightboxImage
+                    src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
+                    alt={`side ${img.side_order}`}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                </div>
                 <p className="text-xs text-gray-400 mt-1">{sideLabel(img.side_order ?? 0)}</p>
                 {(stage === 'grouping' || stage === 'review') && (
-                  <div className="flex gap-0.5 justify-center mt-0.5">
+                  // Two rows, not one: four 36px buttons (✂️ ⬚ ↺ ↻) plus gaps come to
+                  // ~156px, wider than the 128px tile. In a single row they spilled
+                  // 14px past both edges, so the front/back tiles of a two-sided
+                  // card (only 8px apart) overlapped and a click could land on the
+                  // neighbouring tile's button instead. Row 1 (split/crop, grouping
+                  // only) and row 2 (rotate, both stages) each fit within 128px.
+                  <div className="flex flex-col gap-1 items-center mt-0.5">
                     {stage === 'grouping' && (
-                      <>
+                      <div className="flex gap-1 justify-center">
                         <button
-                          className="bg-yellow-100 text-xs px-1.5 py-0.5 rounded text-yellow-700 hover:bg-yellow-400 hover:text-gray-900 disabled:opacity-50"
+                          className={`${ICON_BTN} bg-yellow-100 text-yellow-700 hover:bg-yellow-400 hover:text-gray-900`}
                           disabled={splittingIds.has(img.id)}
                           onClick={() => onSplitImage(img, group.tempCardId)}
                           title={t.splitCards}
+                          aria-label={t.splitCards}
                         >
                           {splittingIds.has(img.id) ? '…' : '✂️'}
                         </button>
                         <button
-                          className="bg-blue-100 text-xs px-1.5 py-0.5 rounded text-blue-700 hover:bg-blue-500 hover:text-white"
+                          className={`${ICON_BTN} bg-blue-100 text-blue-700 hover:bg-blue-500 hover:text-white`}
                           onClick={() => setCropImg(img)}
-                          title="Crop image"
+                          title={t.cropImage}
+                          aria-label={t.cropImage}
                         >
                           ⬚
                         </button>
-                      </>
+                      </div>
                     )}
-                    <button
-                      className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
-                      onClick={async () => {
-                        await onRotateImage(img, 'ccw')
-                        setLocalCacheBust(prev => ({ ...prev, [img.id]: Date.now() }))
-                      }}
-                      title="Rotate 90° counter-clockwise"
-                    >
-                      ↺
-                    </button>
-                    <button
-                      className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
-                      onClick={async () => {
-                        await onRotateImage(img)
-                        setLocalCacheBust(prev => ({ ...prev, [img.id]: Date.now() }))
-                      }}
-                      title="Rotate 90° clockwise"
-                    >
-                      ↻
-                    </button>
+                    <div className="flex gap-1 justify-center">
+                      <button
+                        className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+                        onClick={() => onRotateImage(img, 'ccw')}
+                        title={t.rotateCcw}
+                        aria-label={t.rotateCcw}
+                      >
+                        ↺
+                      </button>
+                      <button
+                        className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+                        onClick={() => onRotateImage(img)}
+                        title={t.rotateCw}
+                        aria-label={t.rotateCw}
+                      >
+                        ↻
+                      </button>
+                    </div>
                   </div>
                 )}
                 {splitFeedback[img.id] && (
@@ -1267,7 +1490,7 @@ function CardGroupCard({
               </div>
             ))}
           {group.images.length === 0 && (
-            <div className="h-28 w-20 rounded border-2 border-dashed border-gray-200 flex items-center justify-center">
+            <div className="w-32 h-32 rounded border-2 border-dashed border-gray-200 flex items-center justify-center">
               <span className="text-xs text-gray-400">{t.emptySlot}</span>
             </div>
           )}
@@ -1419,16 +1642,22 @@ function CardGroupCard({
       <CropModal
         sessionId={sessionId}
         imgId={cropImg.id}
-        imageUrl={`/api/v2/sessions/${sessionId}/temp/${cropImg.image_filename}`}
+        // Cache-bust the displayed image the same way every other image URL in
+        // this page does. Crop coordinates the user drags are relative to *this*
+        // displayed image, so without the bust a stale (pre-rotation) cached copy
+        // could be shown here even though the file on disk was already rotated —
+        // the user would then crop a region that lands wrong once the backend
+        // applies it to the actual (rotated) file.
+        imageUrl={`/api/v2/sessions/${sessionId}/temp/${cropImg.image_filename}${imgCacheBust[cropImg.id] ? `?t=${imgCacheBust[cropImg.id]}` : ''}`}
         onDone={() => {
+          // Bump the shared imgCacheBust map (single source of truth, owned by
+          // ScanPage) so every consumer — this tile's own re-render and
+          // LightboxImage's full-screen view — picks up the freshly cropped file.
+          // Previously this rewrote <img src> directly via querySelectorAll, which
+          // never touched React state, so state and the lightbox kept serving the
+          // stale pre-crop URL.
+          onImageChanged(cropImg.id)
           setCropImg(null)
-          // Bust image cache so thumbnails reload with the cropped version
-          const ts = Date.now()
-          document.querySelectorAll<HTMLImageElement>('img').forEach(el => {
-            if (el.src.includes(cropImg.image_filename)) {
-              el.src = el.src.split('?')[0] + `?t=${ts}`
-            }
-          })
         }}
         onClose={() => setCropImg(null)}
       />

@@ -26,17 +26,35 @@ const translations = {
 
     // ScanPage — grouping
     ungroupedN: (n: number) => `未グループ (${n}枚)`,
+    separatedN: (n: number) => `分割済みの名刺 (${n}枚)`,
+    ungroupedHint: 'まだ分割していない写真',
+    separatedHint: '各写真の1枚目どうしが、表と裏のペアになります。',
     autoGroup1: '1枚ずつ（片面）',
     autoGroup2: '2枚ペア（両面）',
     autoPairByPos: '位置でペア',
-    mixedCropWarning: '切り抜き済みの画像と未切り抜き画像が混在しています。「位置でペア」を使う前に、すべての複数名刺画像を切り抜いてください。',
+    mixedCropWarning: '「未グループ」にまだ分割していない写真があります。分割してから「位置でペア」を使わないと、ペアが正しくなりません。',
     splitCards: '名刺を分割',
+    rotateCcw: '左に90°回転',
+    rotateCw: '右に90°回転',
+    cropImage: '画像を切り抜く',
     splitting: '分割中…',
     splitDone: (n: number) => `${n}枚に分割しました`,
     splitNone: '名刺は1枚のみ検出されました',
     cardGroupsN: (n: number) => `名刺グループ (${n}枚)`,
     addGroup: '＋グループ追加',
     startAnalysis: '解析開始 →',
+
+    // ScanPage — grouping help panel & readiness gate
+    scanHelpTitle: '使い方',
+    scanHelpShow: '使い方を表示',
+    scanHelpHide: '隠す',
+    scanHelpSplit: '✂️ 分割 — 複数の名刺が写った写真を、名刺1枚ずつの画像に切り分けます。複数名刺の写真は解析前に必ず分割してください。',
+    scanHelpRotate: '↺ ↻ 回転 — 文字が横書きで読める向きに画像を回転します。',
+    analysisBlockedUngrouped: (n: number) => `${n}枚の画像がまだグループに入っていません。複数の名刺が写った写真を分割してから、上のボタンでグループ化してください。`,
+    analysisBlockedEmpty: '解析する名刺がありません。',
+    tipDragPair: '画像を他の名刺にドラッグすると、表と裏のペアになります。',
+    tipFrontSide: '名前と連絡先が載っている面を「表」にしてください。⇅ で表と裏を入れ替えられます。',
+    tipStartAnalysis: 'すべての名刺が正しく並んだら「解析開始」を押してください。',
 
     // ScanPage — card group card
     cardN: (n: number) => `名刺 #${n}`,
@@ -49,12 +67,18 @@ const translations = {
     // ScanPage — review metadata
     myCompanyLabel: '対面時の立場',
     occasionLabel: '場面',
+    occasionDeleted: (name: string) => `削除された場面: ${name}`,
     occasionAddNew: '＋ 新しい場面',
     occasionNewPlaceholder: '場面名を入力…',
     receivedDateLabel: '受取日',
     existingPersonLabel: '既存人物',
     createNew: '✕ 新規作成',
     noneOption: 'なし',
+    monthLabel: (y: number, m: number) => `${y}年${m}月`,
+    occasionUndated: '日付不明',
+    occasionCardCount: (n: number) => `${n}枚`,
+    occasionDeleteWarn: (name: string, n: number) =>
+      `「${name}」を削除しますか？\n\nこの場面は ${n} 枚の名刺で使われています。名刺には「${name}」がテキストとして残りますが、名前の変更や絞り込みができる場面とのリンクはなくなります。`,
 
     // ScanPage — actions
     retryAnalysis: '再解析 ↺',
@@ -69,7 +93,8 @@ const translations = {
     newScanBtn: '＋ 新しいスキャン',
     tabCards: '名刺',
     tabPersons: '人物',
-    searchPlaceholder: '名前で検索…',
+    searchPlaceholder: '名前・会社・場面で検索…',
+    searchPlaceholderPersons: '名前・会社で検索…',
     loading: '読み込み中…',
     emptyMessage: 'まだ名刺がありません',
     emptyCta: '最初の名刺をスキャン',
@@ -233,6 +258,29 @@ const translations = {
     moveToCard: (n: number) => `→ #${n}`,
     deleteGroupLabel: 'カードを削除',
     deleteGroupDisabledHint: '画像をすべて移動してから削除できます',
+
+    // CardOutlineSelector — full-screen tap/drag outline screen
+    outlineCancel: 'キャンセル',
+    outlineUndo: '取り消し',
+    outlineUndoHint: '最後に指定した名刺を取り消します',
+    outlineDetecting: '角を検出中…',
+    outlineTapHeader: (n: number) => `各名刺の中心をクリックしてください（${n}枚検出）`,
+    outlineDragHeader: (n: number) => `各名刺を囲むようにドラッグしてください（${n}枚検出）`,
+    outlineDragging: (n: number) => `名刺 ${n} — ドラッグして範囲を指定`,
+    outlineSelectedN: (n: number) => `${n}枚を指定しました — 続けて指定するか、切り抜いてください`,
+    outlineCropN: (n: number) => `${n}枚を切り抜く`,
+    outlineAlreadyOutlined: 'その名刺はすでに指定済みです',
+    outlineDetectFailed: '角の検出に失敗しました — もう一度お試しください',
+    outlineHintTap: '名刺の中心を1回クリックすると、4つの角が自動で検出されます。角をドラッグして調整できます。',
+    outlineHintDrag: '各名刺を囲むようにドラッグしてください',
+    outlineHintReady: 'すべての名刺を指定したら、下の緑のボタンを押してください。',
+    outlineHintAmber: '黄色の点線は角の推定です — 名刺の端に合わせてドラッグしてください。',
+    // Footer prompt before the first outline — shorter than the instruction bar above it.
+    outlineFooterTap: '各名刺の中心をクリックしてください。',
+    outlineFooterDrag: 'ドラッグで名刺を1枚ずつ囲んでください。',
+    // Extra strings the plan's list missed: the <img> alt text differs per mode.
+    outlineAltTap: '各名刺の中心をクリック',
+    outlineAltDrag: 'ドラッグして名刺の範囲を選択',
   },
 
   en: {
@@ -257,17 +305,35 @@ const translations = {
 
     // ScanPage — grouping
     ungroupedN: (n: number) => `Ungrouped (${n})`,
+    separatedN: (n: number) => `Separated cards (${n})`,
+    ungroupedHint: 'Whole photos, not yet split',
+    separatedHint: 'Card #1 of each photo pairs with card #1 of the next photo, as front and back.',
     autoGroup1: '1 per card (single-sided)',
     autoGroup2: 'Pairs of 2 (double-sided)',
     autoPairByPos: 'Pair by position',
-    mixedCropWarning: 'Some images are cropped and some are not. Crop all multi-card photos before using "Pair by position" — otherwise uncropped images will each land in their own group.',
+    mixedCropWarning: 'Some photos in Ungrouped have not been split yet. Split them before pairing by position, or the pairing will be wrong.',
     splitCards: 'Split Cards',
+    rotateCcw: 'Rotate 90° counter-clockwise',
+    rotateCw: 'Rotate 90° clockwise',
+    cropImage: 'Crop image',
     splitting: 'Detecting…',
     splitDone: (n: number) => `Split into ${n} cards`,
     splitNone: 'Only 1 card detected',
     cardGroupsN: (n: number) => `Card Groups (${n})`,
     addGroup: '+ Add Group',
     startAnalysis: 'Start Analysis →',
+
+    // ScanPage — grouping help panel & readiness gate
+    scanHelpTitle: 'How this works',
+    scanHelpShow: 'How this works',
+    scanHelpHide: 'Hide',
+    scanHelpSplit: '✂️ Split — for a photo holding several cards, cut it into one image per card. Every multi-card photo must be split before analysis.',
+    scanHelpRotate: '↺ ↻ Rotate — turn an image upright so the text reads left to right.',
+    analysisBlockedUngrouped: (n: number) => `${n} image${n === 1 ? ' is' : 's are'} not in a card group yet. Split any photo holding more than one card, then use the grouping buttons above.`,
+    analysisBlockedEmpty: 'There are no cards to analyze yet.',
+    tipDragPair: 'Drag an image from one card into another to pair them as front and back.',
+    tipFrontSide: 'The side showing the name and contact details should be the Front. Use ⇅ Swap to change it.',
+    tipStartAnalysis: 'When every card is positioned correctly, press Start Analysis.',
 
     // ScanPage — card group card
     cardN: (n: number) => `Card #${n}`,
@@ -280,12 +346,18 @@ const translations = {
     // ScanPage — review metadata
     myCompanyLabel: 'Met As',
     occasionLabel: 'Occasion',
+    occasionDeleted: (name: string) => `Deleted occasion: ${name}`,
     occasionAddNew: '+ New Occasion',
     occasionNewPlaceholder: 'Occasion name…',
     receivedDateLabel: 'Received',
     existingPersonLabel: 'Existing Person',
     createNew: '✕ Create New',
     noneOption: 'None',
+    monthLabel: (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`,
+    occasionUndated: 'Undated',
+    occasionCardCount: (n: number) => `${n} card${n === 1 ? '' : 's'}`,
+    occasionDeleteWarn: (name: string, n: number) =>
+      `Delete "${name}"?\n\n${n} card${n === 1 ? '' : 's'} use this occasion. They will keep "${name}" as a plain text label, but will no longer be linked to an occasion you can rename or filter by.`,
 
     // ScanPage — actions
     retryAnalysis: 'Retry Analysis ↺',
@@ -300,7 +372,8 @@ const translations = {
     newScanBtn: '+ New Scan',
     tabCards: 'Cards',
     tabPersons: 'Persons',
-    searchPlaceholder: 'Search by name…',
+    searchPlaceholder: 'Search name, company, occasion…',
+    searchPlaceholderPersons: 'Search name, company…',
     loading: 'Loading…',
     emptyMessage: 'No business cards yet',
     emptyCta: 'Scan your first card',
@@ -464,6 +537,29 @@ const translations = {
     moveToCard: (n: number) => `→ #${n}`,
     deleteGroupLabel: 'Delete Card',
     deleteGroupDisabledHint: 'Move all images out first to delete',
+
+    // CardOutlineSelector — full-screen tap/drag outline screen
+    outlineCancel: 'Cancel',
+    outlineUndo: 'Undo',
+    outlineUndoHint: 'Removes the last card you outlined.',
+    outlineDetecting: 'Detecting corners…',
+    outlineTapHeader: (n: number) => `Click the center of each card (${n} detected)`,
+    outlineDragHeader: (n: number) => `Drag around each card (${n} detected)`,
+    outlineDragging: (n: number) => `Card ${n} — drag to define boundary`,
+    outlineSelectedN: (n: number) => `${n} card${n === 1 ? '' : 's'} outlined — outline more, or crop`,
+    outlineCropN: (n: number) => `Crop ${n} card${n === 1 ? '' : 's'}`,
+    outlineAlreadyOutlined: 'That card is already outlined',
+    outlineDetectFailed: 'Corner detection failed — try again',
+    outlineHintTap: 'Click the center of a card once — its 4 corners are found automatically. Then drag any corner to adjust.',
+    outlineHintDrag: 'Press and drag to draw a box around each card',
+    outlineHintReady: 'When every card is outlined, press the green button below.',
+    outlineHintAmber: 'A dashed amber outline means the corners are a guess — drag them onto the card edges.',
+    // Footer prompt before the first outline — shorter than the instruction bar above it.
+    outlineFooterTap: 'Click the center of each business card.',
+    outlineFooterDrag: 'Drag a box around each business card.',
+    // Extra strings the plan's list missed: the <img> alt text differs per mode.
+    outlineAltTap: 'Click the center of each card',
+    outlineAltDrag: 'Drag to select card boundaries',
   },
   'zh-TW': {
     // Nav
@@ -487,17 +583,35 @@ const translations = {
 
     // ScanPage — grouping
     ungroupedN: (n: number) => `未分組 (${n})`,
+    separatedN: (n: number) => `已分割的名片 (${n})`,
+    ungroupedHint: '尚未分割的整張照片',
+    separatedHint: '每張照片的第 1 張名片會互相配對，成為正面與背面。',
     autoGroup1: '每張一組（單面）',
     autoGroup2: '兩張一組（雙面）',
     autoPairByPos: '依位置配對',
-    mixedCropWarning: '部分影像已裁切、部分尚未裁切。使用「依位置配對」前請先裁切所有含多張名片的照片，否則未裁切的影像會各自成為一組。',
+    mixedCropWarning: '「未分組」中還有尚未分割的照片。請先分割，再使用「依位置配對」，否則配對會出錯。',
     splitCards: '分割名片',
+    rotateCcw: '逆時針旋轉 90°',
+    rotateCw: '順時針旋轉 90°',
+    cropImage: '裁切影像',
     splitting: '偵測中…',
     splitDone: (n: number) => `已分割成 ${n} 張名片`,
     splitNone: '僅偵測到 1 張名片',
     cardGroupsN: (n: number) => `名片組 (${n})`,
     addGroup: '＋ 新增群組',
     startAnalysis: '開始解析 →',
+
+    // ScanPage — grouping help panel & readiness gate
+    scanHelpTitle: '操作說明',
+    scanHelpShow: '顯示操作說明',
+    scanHelpHide: '隱藏',
+    scanHelpSplit: '✂️ 分割 — 將一張含多張名片的照片，切成每張名片一個影像。含多張名片的照片必須先分割才能解析。',
+    scanHelpRotate: '↺ ↻ 旋轉 — 將影像轉正，讓文字能夠橫向閱讀。',
+    analysisBlockedUngrouped: (n: number) => `還有 ${n} 張影像尚未加入名片群組。請先分割含多張名片的照片，再使用上方的群組按鈕。`,
+    analysisBlockedEmpty: '目前沒有可解析的名片。',
+    tipDragPair: '將影像拖曳到另一張名片上，即可配成正面與背面。',
+    tipFrontSide: '有姓名與聯絡資訊的那一面應設為「正面」。可用 ⇅ 交換正面與背面。',
+    tipStartAnalysis: '當所有名片都排列正確後，請按「開始解析」。',
 
     // ScanPage — card group card
     cardN: (n: number) => `名片 #${n}`,
@@ -510,12 +624,18 @@ const translations = {
     // ScanPage — review metadata
     myCompanyLabel: '見面身分',
     occasionLabel: '場合',
+    occasionDeleted: (name: string) => `已刪除的場合：${name}`,
     occasionAddNew: '＋ 新增場合',
     occasionNewPlaceholder: '輸入場合名稱…',
     receivedDateLabel: '收到日期',
     existingPersonLabel: '既有人物',
     createNew: '✕ 建立新的',
     noneOption: '無',
+    monthLabel: (y: number, m: number) => `${y}年${m}月`,
+    occasionUndated: '日期不明',
+    occasionCardCount: (n: number) => `${n} 張`,
+    occasionDeleteWarn: (name: string, n: number) =>
+      `要刪除「${name}」嗎？\n\n有 ${n} 張名片使用此場合。名片會保留「${name}」文字標籤，但將不再連結到可重新命名或篩選的場合。`,
 
     // ScanPage — actions
     retryAnalysis: '重新解析 ↺',
@@ -530,7 +650,8 @@ const translations = {
     newScanBtn: '＋ 新的掃描',
     tabCards: '名片',
     tabPersons: '人物',
-    searchPlaceholder: '以姓名搜尋…',
+    searchPlaceholder: '搜尋姓名、公司、場合…',
+    searchPlaceholderPersons: '搜尋姓名、公司…',
     loading: '載入中…',
     emptyMessage: '尚無名片',
     emptyCta: '掃描第一張名片',
@@ -694,6 +815,29 @@ const translations = {
     moveToCard: (n: number) => `→ #${n}`,
     deleteGroupLabel: '刪除名片',
     deleteGroupDisabledHint: '請先將所有影像移出才能刪除',
+
+    // CardOutlineSelector — full-screen tap/drag outline screen
+    outlineCancel: '取消',
+    outlineUndo: '復原',
+    outlineUndoHint: '移除最後指定的名片。',
+    outlineDetecting: '正在偵測邊角…',
+    outlineTapHeader: (n: number) => `請點選每張名片的中心（偵測到 ${n} 張）`,
+    outlineDragHeader: (n: number) => `請拖曳框選每張名片（偵測到 ${n} 張）`,
+    outlineDragging: (n: number) => `名片 ${n} — 拖曳以指定範圍`,
+    outlineSelectedN: (n: number) => `已指定 ${n} 張 — 可繼續指定或進行裁切`,
+    outlineCropN: (n: number) => `裁切 ${n} 張名片`,
+    outlineAlreadyOutlined: '該名片已經指定過了',
+    outlineDetectFailed: '邊角偵測失敗 — 請再試一次',
+    outlineHintTap: '在名片中心點一下，系統會自動找出四個邊角。可拖曳邊角進行微調。',
+    outlineHintDrag: '請按住並拖曳，框選每一張名片',
+    outlineHintReady: '所有名片都指定完成後，請按下方的綠色按鈕。',
+    outlineHintAmber: '黃色虛線表示邊角是推測的 — 請拖曳到名片邊緣。',
+    // Footer prompt before the first outline — shorter than the instruction bar above it.
+    outlineFooterTap: '請點選每張名片的中心。',
+    outlineFooterDrag: '請逐一拖曳框住每張名片。',
+    // Extra strings the plan's list missed: the <img> alt text differs per mode.
+    outlineAltTap: '點選每張名片的中心',
+    outlineAltDrag: '拖曳以選取名片範圍',
   },
 } as const
 

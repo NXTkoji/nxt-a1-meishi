@@ -324,6 +324,10 @@ class Card(Base):
     )
     person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), nullable=False)
     occasion_id: Mapped[Optional[int]] = mapped_column(ForeignKey("occasions.id"))
+    # Plain-text occasion name, stamped in when the linked Occasion is deleted so the
+    # card keeps a human-readable record of where it came from. Only consulted when
+    # occasion_id is NULL — a live link always wins, so renames still propagate.
+    occasion_label: Mapped[Optional[str]] = mapped_column(String(256))
     received_date: Mapped[Optional[date]] = mapped_column(Date)
     received_location: Mapped[Optional[str]] = mapped_column(String(512))
     notes: Mapped[Optional[str]] = mapped_column(Text)

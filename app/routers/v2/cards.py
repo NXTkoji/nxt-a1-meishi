@@ -64,8 +64,9 @@ def _apply_card_filters(
 
     Single owner of four rules that list_cards, count_cards and card_facets must agree on:
       * date bucketing — received_date, falling back to created_at when null
-      * what ?q= matches — current person name, contact details, position title/department
-        and current organization name
+      * what ?q= matches — current person name, contact details, position title/department,
+        current organization name, and the card's occasion (by live link or, once that
+        occasion is deleted, by the label snapshot left on the card)
       * not_exported — a card counts as exported only when it has sync history to
         "odoo" or "google_contacts" whose result is "created" or "updated"
       * soft-deleted cards are excluded — this helper owns that predicate, so callers
@@ -75,7 +76,14 @@ def _apply_card_filters(
     """
     from datetime import date as date_type
 
-    from app.db.models import ContactDetail, Organization, OrganizationName, Position, PositionDetail
+    from app.db.models import (
+        ContactDetail,
+        Occasion,
+        Organization,
+        OrganizationName,
+        Position,
+        PositionDetail,
+    )
 
     # Soft-deleted cards are never visible through any of these endpoints.
     stmt = stmt.where(Card.deleted_at.is_(None))
@@ -156,12 +164,23 @@ def _apply_card_filters(
                 OrganizationName.name.ilike(like),
             )
         )
+        # Occasion — matches the linked occasion's name, or (only when the card has
+        # no live occasion) the label stamped on it by an earlier deletion. Once a
+        # card is re-linked to a live occasion, its stale label must stop matching —
+        # otherwise a search could surface a card under a name it no longer carries
+        # anywhere visible.
+        occasion_subq = select(Occasion.id).where(
+            Occasion.id == Card.occasion_id,
+            Occasion.name.ilike(like),
+        )
         stmt = stmt.where(
             or_(
                 exists(text_subq),
                 exists(contact_subq),
                 exists(pos_subq),
                 exists(org_subq),
+                exists(occasion_subq),
+                and_(Card.occasion_id.is_(None), Card.occasion_label.ilike(like)),
             )
         )
 
@@ -452,6 +471,12 @@ async def update_card(
         card.display_name_language = val if val else None
     if "occasion_id" in body:
         card.occasion_id = body["occasion_id"] or None
+        # Any change to occasion_id — a new link or an explicit null — makes the
+        # old label stale: it either belongs to a now-superseded occasion, or the
+        # card is unlinked and a stale label would resurface search hits for an
+        # occasion the card no longer has any connection to. Deleting an occasion
+        # (see occasions.py) is the only path that is allowed to set this label.
+        card.occasion_label = None
     if "my_company_ids" in body:
         from sqlalchemy import delete as sa_delete
         await db.execute(sa_delete(CardMyCompany).where(CardMyCompany.card_id == card.id))
