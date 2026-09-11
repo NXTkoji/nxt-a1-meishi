@@ -236,11 +236,18 @@ occasion_label: Mapped[Optional[str]] = mapped_column(String(256))
 <p><code>DELETE /api/v2/occasions/{id}</code> stamps before deleting:</p>
 <pre><code class="language-python">await db.execute(
     update(Card)
-    .where(Card.occasion_id == occasion_id, Card.occasion_label.is_(None))
+    .where(Card.occasion_id == occasion_id)
     .values(occasion_label=occ.name)
 )
 await db.delete(occ)
 </code></pre>
+<p>Deleting an occasion <strong>always</strong> overwrites <code>occasion_label</code>, even if the card already
+carried a label from an earlier deletion — the label should track the most recently
+deleted occasion, not the first one. A card's label is also cleared whenever its
+<code>occasion_id</code> changes (re-linked to another occasion, or explicitly unlinked via
+<code>PATCH .../cards/{id}</code> with <code>occasion_id</code> set to a new id or to <code>null</code>) — see
+<code>app/routers/v2/cards.py</code>'s <code>update_card</code>. Leaving <code>occasion_id</code> out of a PATCH body
+entirely leaves the label untouched.</p>
 <p><strong>Resolution rule, applied everywhere an occasion name is displayed or exported:</strong></p>
 <ol>
 <li><code>occasion_id</code> set → the live <code>Occasion.name</code> (renames propagate)</li>
@@ -294,9 +301,10 @@ reachable only via the exact <code>occasion_id</code> filter, which the Collecti
 even a live occasion is not findable by typing its name.</p>
 <p>Without this piece, §6.1's stamped label would be visible but unfindable.</p>
 <p><strong>Change.</strong> Add a fourth branch to the <code>q</code> <code>or_()</code>:</p>
-<pre><code class="language-python"># Occasion — matches the linked occasion's name, or the label stamped onto the
-# card when that occasion was deleted. Covers both sides of the link so a search
-# returns the same cards before and after an occasion is removed.
+<pre><code class="language-python"># Occasion — matches the linked occasion's name, or (only when the card has no
+# live occasion) the label stamped on it by an earlier deletion. Once a card is
+# re-linked to a live occasion, its stale label must stop matching — otherwise a
+# search could surface a card under a name it no longer carries anywhere visible.
 occasion_clause = or_(
     exists(
         select(Occasion.id).where(
@@ -304,9 +312,12 @@ occasion_clause = or_(
             Occasion.name.ilike(like),
         )
     ),
-    Card.occasion_label.ilike(like),
+    and_(Card.occasion_id.is_(None), Card.occasion_label.ilike(like)),
 )
 </code></pre>
+<p>The label is a snapshot, not a live value — once <code>occasion_id</code> is set again (see §6.1),
+the label is stale and must not match, even though the column itself is only cleared on
+the next PATCH that touches <code>occasion_id</code>.</p>
 <p><strong>Placeholder copy.</strong> <code>searchPlaceholder</code> ([i18n.ts:72]) already understates search — it says
 "by name" while covering company and phone number. Widened:</p>
 <table>
@@ -361,12 +372,24 @@ of <code>test_cards_filter.py</code>; the delete path has 48 real cards riding o
 <td>card count unchanged, cards still readable</td>
 </tr>
 <tr>
-<td><code>test_delete_preserves_existing_label</code></td>
-<td>a card with a label already set is not overwritten</td>
+<td><code>test_delete_overwrites_older_label</code></td>
+<td>a card already carrying an older label ends up with the <em>just-deleted</em> occasion's name, not the older one</td>
+</tr>
+<tr>
+<td><code>test_delete_unknown_occasion_returns_404</code></td>
+<td>deleting a nonexistent occasion id returns 404</td>
 </tr>
 <tr>
 <td><code>test_list_returns_card_count</code></td>
 <td><code>card_count</code> correct, and excludes soft-deleted cards</td>
+</tr>
+<tr>
+<td><code>test_card_count_zero_for_unused_occasion</code></td>
+<td>a brand-new occasion reports <code>card_count == 0</code> from both create and list</td>
+</tr>
+<tr>
+<td><code>test_patch_rename_occasion_reports_correct_card_count</code></td>
+<td>renaming an occasion with cards returns the real <code>card_count</code>, not 0</td>
 </tr>
 <tr>
 <td><code>test_search_matches_linked_occasion</code></td>
@@ -377,11 +400,30 @@ of <code>test_cards_filter.py</code>; the delete path has 48 real cards riding o
 <td>same query returns the same cards after the occasion is deleted</td>
 </tr>
 <tr>
+<td><code>test_search_ignores_stale_label_on_relinked_card</code></td>
+<td>a card's stale label does not match <code>?q=</code> once the card has a live occasion again</td>
+</tr>
+<tr>
+<td><code>test_patch_occasion_id_clears_stale_label</code></td>
+<td>PATCH with a new <code>occasion_id</code> clears the card's old label</td>
+</tr>
+<tr>
+<td><code>test_patch_occasion_id_null_clears_stale_label</code></td>
+<td>PATCH with <code>occasion_id: null</code> also clears the label</td>
+</tr>
+<tr>
+<td><code>test_patch_without_occasion_id_keeps_label</code></td>
+<td>a PATCH that omits <code>occasion_id</code> leaves the label untouched</td>
+</tr>
+<tr>
 <td><code>test_legacy_card_falls_back_to_label</code></td>
 <td><code>occasion_name</code> in the DTO survives deletion</td>
 </tr>
 </tbody>
 </table>
+<p>Re-linking a card to a different occasion, or explicitly unlinking it, clears its
+<code>occasion_label</code> — see §6.1's PATCH rule. A stale label is dead weight once the card
+has (or explicitly loses) a live link, so it is wiped rather than left to resurface later.</p>
 <p><strong>Frontend.</strong> No test runner exists and this spec does not add one. Verification is
 <code>cd frontend &amp;&amp; npm run build</code> (which runs <code>tsc -b</code>) plus browser verification of the
 stateful paths, per the project's standing rule that a <code>tsc</code> pass is not evidence that

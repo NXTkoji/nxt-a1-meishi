@@ -21,16 +21,25 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=List[OccasionOut])
-async def list_occasions(db: AsyncSession = Depends(get_db)):
-    # Correlated count of live cards per occasion — one query, no N+1.
-    card_count = (
+def _card_count_subquery():
+    """Correlated scalar count of live (not soft-deleted) cards for an Occasion row.
+
+    Single owner of the "how many cards use this occasion" rule, so list_occasions
+    and update_occasion cannot disagree on it. Correlates on Occasion.id, so it
+    must be selected alongside an Occasion in the same query.
+    """
+    return (
         select(func.count(Card.id))
         .where(Card.occasion_id == Occasion.id, Card.deleted_at.is_(None))
         .scalar_subquery()
     )
+
+
+@router.get("", response_model=List[OccasionOut])
+async def list_occasions(db: AsyncSession = Depends(get_db)):
+    # Correlated count of live cards per occasion — one query, no N+1.
     rows = (await db.execute(
-        select(Occasion, card_count).order_by(
+        select(Occasion, _card_count_subquery()).order_by(
             Occasion.event_date.desc().nullslast(), Occasion.created_at.desc()
         )
     )).all()
@@ -45,6 +54,8 @@ async def list_occasions(db: AsyncSession = Depends(get_db)):
 
 @router.post("", response_model=OccasionOut, status_code=status.HTTP_201_CREATED)
 async def create_occasion(body: OccasionCreate, db: AsyncSession = Depends(get_db)):
+    # card_count is correctly left at its OccasionOut default of 0 here: a
+    # brand-new occasion cannot have any cards linked to it yet.
     occ = Occasion(**body.model_dump())
     db.add(occ)
     await db.flush()
@@ -63,7 +74,16 @@ async def update_occasion(
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(occ, field, value)
     await db.flush()
-    return occ
+
+    # Unlike create, an existing occasion may already have cards — report the
+    # real count rather than leaving the OccasionOut default of 0, or a renamed
+    # occasion with cards would look empty in the response.
+    count = await db.scalar(
+        select(_card_count_subquery()).select_from(Occasion).where(Occasion.id == occasion_id)
+    )
+    out = OccasionOut.model_validate(occ)
+    out.card_count = count or 0
+    return out
 
 
 @router.delete("/{occasion_id}", status_code=204)
@@ -75,10 +95,11 @@ async def delete_occasion(occasion_id: int, db: AsyncSession = Depends(get_db)):
     # Stamp the name onto every card that points here BEFORE deleting, so the card
     # keeps a readable record. SQLAlchemy will null out occasion_id as part of the
     # delete; occasion_label is a different column and survives that.
-    # Cards that already carry a label (from an earlier deletion) are left alone.
+    # Always overwrite: the label should reflect the most recently deleted occasion,
+    # even if the card already carried an older label from a previous deletion.
     await db.execute(
         update(Card)
-        .where(Card.occasion_id == occasion_id, Card.occasion_label.is_(None))
+        .where(Card.occasion_id == occasion_id)
         .values(occasion_label=occ.name)
         .execution_options(synchronize_session=False)
     )

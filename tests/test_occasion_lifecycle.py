@@ -5,8 +5,6 @@ real cards riding on it (48 on one occasion in the live database).
 """
 import asyncio
 
-import pytest
-
 from app.db.session import get_db
 from app.main import app
 
@@ -94,8 +92,13 @@ def test_delete_does_not_delete_cards(client_with_test_db):
     assert len(rows) == 5
 
 
-def test_delete_preserves_existing_label(client_with_test_db):
-    """A card that already carries a label from an earlier deletion is not overwritten."""
+def test_delete_overwrites_older_label(client_with_test_db):
+    """Deleting an occasion always stamps its name, replacing any older label.
+
+    A card carrying a stale label from an earlier deletion (here "Original Event")
+    but currently linked to a live occasion ("Second Event") must end up labelled
+    with the occasion that was *just* deleted, not the older label.
+    """
     occ_id, card_ids = _seed(
         client_with_test_db, occasion_name="Second Event", label="Original Event"
     )
@@ -105,7 +108,7 @@ def test_delete_preserves_existing_label(client_with_test_db):
     rows = _load_cards(client_with_test_db, card_ids)
     assert len(rows) == len(card_ids)
     for row in rows:
-        assert row["occasion_label"] == "Original Event"
+        assert row["occasion_label"] == "Second Event"
 
 
 def test_list_returns_card_count(client_with_test_db):
@@ -119,7 +122,7 @@ def test_list_returns_card_count(client_with_test_db):
 
 
 def test_card_count_excludes_soft_deleted_cards(client_with_test_db):
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     occ_id, card_ids = _seed(client_with_test_db, n_cards=3)
 
@@ -128,7 +131,9 @@ def test_card_count_excludes_soft_deleted_cards(client_with_test_db):
 
         async for db in app.dependency_overrides[get_db]():
             card = await db.get(Card, card_ids[0])
-            card.deleted_at = datetime.utcnow()
+            # deleted_at is a naive-UTC column (see Card.deleted_at / app/db/models.py),
+            # so store a naive datetime here too rather than an aware one.
+            card.deleted_at = datetime.now(UTC).replace(tzinfo=None)
             await db.commit()
             break
 
@@ -137,6 +142,34 @@ def test_card_count_excludes_soft_deleted_cards(client_with_test_db):
     resp = client_with_test_db.get("/api/v2/occasions")
     row = next(o for o in resp.json() if o["id"] == occ_id)
     assert row["card_count"] == 2
+
+
+def test_patch_rename_occasion_reports_correct_card_count(client_with_test_db):
+    """PATCH (rename) must not misreport card_count as 0 for an occasion that has cards."""
+    occ_id, _ = _seed(client_with_test_db, n_cards=2)
+
+    resp = client_with_test_db.patch(
+        f"/api/v2/occasions/{occ_id}", json={"name": "Renamed Event"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["card_count"] == 2
+
+
+def test_card_count_zero_for_unused_occasion(client_with_test_db):
+    """A brand-new occasion with no cards reports card_count == 0 everywhere."""
+    resp = client_with_test_db.post("/api/v2/occasions", json={"name": "Empty Event"})
+    assert resp.status_code == 201
+    assert resp.json()["card_count"] == 0
+
+    occ_id = resp.json()["id"]
+    list_resp = client_with_test_db.get("/api/v2/occasions")
+    row = next(o for o in list_resp.json() if o["id"] == occ_id)
+    assert row["card_count"] == 0
+
+
+def test_delete_unknown_occasion_returns_404(client_with_test_db):
+    resp = client_with_test_db.delete("/api/v2/occasions/999999")
+    assert resp.status_code == 404
 
 
 def test_search_matches_linked_occasion(client_with_test_db):
@@ -161,6 +194,24 @@ def test_search_matches_orphaned_label(client_with_test_db):
     assert len(after) == 3
     # CardListItem exposes `id`, not `external_id` — use the key that actually exists.
     assert {c["id"] for c in after} == {c["id"] for c in before}
+
+
+def test_search_ignores_stale_label_on_relinked_card(client_with_test_db):
+    """A card's stale label must not leak into search once it has a live occasion.
+
+    Seed a card whose occasion_label is "Old Gala" (left over from some earlier
+    deletion) but which is currently linked to a *different*, live occasion. The
+    stale label must not be searchable, and the live occasion's name must be.
+    """
+    occ_id, card_ids = _seed(
+        client_with_test_db, occasion_name="RI Convention", n_cards=1, label="Old Gala"
+    )
+
+    stale = client_with_test_db.get("/api/v2/cards", params={"q": "Gala"}).json()
+    assert stale == []
+
+    live = client_with_test_db.get("/api/v2/cards", params={"q": "Convention"}).json()
+    assert len(live) == 1
 
 
 def test_search_does_not_match_unrelated_occasion(client_with_test_db):
@@ -188,44 +239,83 @@ def test_search_count_and_facets_include_occasion_matches(client_with_test_db):
     assert sum(f["count"] for f in facets_resp.json()) == 3
 
 
+def test_patch_occasion_id_clears_stale_label(client_with_test_db):
+    """Re-linking a card to a (different) live occasion clears its stale label.
+
+    Once occasion_id is live again, the label is dead weight that could otherwise
+    resurface (e.g. if this occasion is later deleted without ever having been
+    re-stamped) — so any PATCH that touches occasion_id wipes it.
+    """
+    occ_id, card_ids = _seed(
+        client_with_test_db, occasion_name="Second Event", n_cards=1, label="Original Event"
+    )
+    other = client_with_test_db.post("/api/v2/occasions", json={"name": "Third Event"}).json()
+
+    resp = client_with_test_db.patch(
+        f"/api/v2/cards/c-occ-0", json={"occasion_id": other["id"]}
+    )
+    assert resp.status_code == 200
+
+    rows = _load_cards(client_with_test_db, card_ids)
+    assert rows[0]["occasion_label"] is None
+    assert rows[0]["occasion_id"] == other["id"]
+
+
+def test_patch_occasion_id_null_clears_stale_label(client_with_test_db):
+    """Explicitly unlinking a card (occasion_id: null) also clears its label."""
+    occ_id, card_ids = _seed(
+        client_with_test_db, occasion_name="Second Event", n_cards=1, label="Original Event"
+    )
+
+    resp = client_with_test_db.patch(f"/api/v2/cards/c-occ-0", json={"occasion_id": None})
+    assert resp.status_code == 200
+
+    rows = _load_cards(client_with_test_db, card_ids)
+    assert rows[0]["occasion_label"] is None
+    assert rows[0]["occasion_id"] is None
+
+
+def test_patch_without_occasion_id_keeps_label(client_with_test_db):
+    """A PATCH that never mentions occasion_id must not touch occasion_label."""
+    occ_id, card_ids = _seed(
+        client_with_test_db, occasion_name="Second Event", n_cards=1, label="Original Event"
+    )
+
+    resp = client_with_test_db.patch(f"/api/v2/cards/c-occ-0", json={"notes": "x"})
+    assert resp.status_code == 200
+
+    rows = _load_cards(client_with_test_db, card_ids)
+    assert rows[0]["occasion_label"] == "Original Event"
+
+
 def test_legacy_card_falls_back_to_label(client_with_test_db):
-    """The DTO fed to the Google Contacts sync survives an occasion deletion."""
-    holder = {}
+    """The DTO fed to the Google Contacts sync survives an occasion deletion.
+
+    Seeding happens first so `holder["card_ext_id"]` is populated before `_run`
+    (defined below it) ever executes — `_run` only runs later, inside
+    `asyncio.run`, so the ordering in the file doesn't matter for correctness,
+    but reads top-to-bottom in the order things actually happen.
+    """
+    occ_id, _ = _seed(client_with_test_db, occasion_name="RI Convention", n_cards=1)
+    holder = {"card_ext_id": "c-occ-0"}
+
+    client_with_test_db.delete(f"/api/v2/occasions/{occ_id}")
 
     async def _run():
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
-
-        from app.db.models import Card, CardMyCompany, Person
+        # _load_full_card already loads every relationship build_legacy_card
+        # needs (occasion, person.names/contact_details/positions/relationships_from)
+        # — reuse it instead of hand-copying that selectinload list here.
+        from app.routers.v2.export import _load_full_card
         from app.services.legacy_card import build_legacy_card
 
         async for db in app.dependency_overrides[get_db]():
-            card = await db.scalar(
-                select(Card)
-                .where(Card.id == holder["card_id"])
-                .options(
-                    selectinload(Card.occasion),
-                    selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
-                    selectinload(Card.person).selectinload(Person.names),
-                    selectinload(Card.person).selectinload(Person.contact_details),
-                    selectinload(Card.person).selectinload(Person.positions),
-                    # build_legacy_card walks person.relationships_from even for a
-                    # person with none — an empty list still needs to be loaded, or
-                    # accessing the attribute triggers a lazy load outside the
-                    # greenlet and raises MissingGreenlet.
-                    selectinload(Card.person).selectinload(Person.relationships_from),
-                )
-            )
+            card = await _load_full_card(db, holder["card_ext_id"])
             legacy = build_legacy_card(
                 card, card.person, card.person.contact_details, card.person.positions
             )
             holder["occasion_name"] = legacy.occasion_name
             break
 
-    occ_id, card_ids = _seed(client_with_test_db, occasion_name="RI Convention", n_cards=1)
-    holder["card_id"] = card_ids[0]
-
-    client_with_test_db.delete(f"/api/v2/occasions/{occ_id}")
     asyncio.run(_run())
 
     assert holder["occasion_name"] == "RI Convention"

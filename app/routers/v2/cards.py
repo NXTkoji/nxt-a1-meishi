@@ -164,9 +164,11 @@ def _apply_card_filters(
                 OrganizationName.name.ilike(like),
             )
         )
-        # Occasion — matches the linked occasion's name, or the label stamped onto
-        # the card when that occasion was deleted. Covering both sides of the link
-        # means a search returns the same cards before and after a deletion.
+        # Occasion — matches the linked occasion's name, or (only when the card has
+        # no live occasion) the label stamped on it by an earlier deletion. Once a
+        # card is re-linked to a live occasion, its stale label must stop matching —
+        # otherwise a search could surface a card under a name it no longer carries
+        # anywhere visible.
         occasion_subq = select(Occasion.id).where(
             Occasion.id == Card.occasion_id,
             Occasion.name.ilike(like),
@@ -178,7 +180,7 @@ def _apply_card_filters(
                 exists(pos_subq),
                 exists(org_subq),
                 exists(occasion_subq),
-                Card.occasion_label.ilike(like),
+                and_(Card.occasion_id.is_(None), Card.occasion_label.ilike(like)),
             )
         )
 
@@ -469,6 +471,12 @@ async def update_card(
         card.display_name_language = val if val else None
     if "occasion_id" in body:
         card.occasion_id = body["occasion_id"] or None
+        # Any change to occasion_id — a new link or an explicit null — makes the
+        # old label stale: it either belongs to a now-superseded occasion, or the
+        # card is unlinked and a stale label would resurface search hits for an
+        # occasion the card no longer has any connection to. Deleting an occasion
+        # (see occasions.py) is the only path that is allowed to set this label.
+        card.occasion_label = None
     if "my_company_ids" in body:
         from sqlalchemy import delete as sa_delete
         await db.execute(sa_delete(CardMyCompany).where(CardMyCompany.card_id == card.id))

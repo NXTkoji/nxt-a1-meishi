@@ -207,11 +207,19 @@ occasion_label: Mapped[Optional[str]] = mapped_column(String(256))
 ```python
 await db.execute(
     update(Card)
-    .where(Card.occasion_id == occasion_id, Card.occasion_label.is_(None))
+    .where(Card.occasion_id == occasion_id)
     .values(occasion_label=occ.name)
 )
 await db.delete(occ)
 ```
+
+Deleting an occasion **always** overwrites `occasion_label`, even if the card already
+carried a label from an earlier deletion — the label should track the most recently
+deleted occasion, not the first one. A card's label is also cleared whenever its
+`occasion_id` changes (re-linked to another occasion, or explicitly unlinked via
+`PATCH .../cards/{id}` with `occasion_id` set to a new id or to `null`) — see
+`app/routers/v2/cards.py`'s `update_card`. Leaving `occasion_id` out of a PATCH body
+entirely leaves the label untouched.
 
 **Resolution rule, applied everywhere an occasion name is displayed or exported:**
 
@@ -283,9 +291,10 @@ Without this piece, §6.1's stamped label would be visible but unfindable.
 **Change.** Add a fourth branch to the `q` `or_()`:
 
 ```python
-# Occasion — matches the linked occasion's name, or the label stamped onto the
-# card when that occasion was deleted. Covers both sides of the link so a search
-# returns the same cards before and after an occasion is removed.
+# Occasion — matches the linked occasion's name, or (only when the card has no
+# live occasion) the label stamped on it by an earlier deletion. Once a card is
+# re-linked to a live occasion, its stale label must stop matching — otherwise a
+# search could surface a card under a name it no longer carries anywhere visible.
 occasion_clause = or_(
     exists(
         select(Occasion.id).where(
@@ -293,9 +302,13 @@ occasion_clause = or_(
             Occasion.name.ilike(like),
         )
     ),
-    Card.occasion_label.ilike(like),
+    and_(Card.occasion_id.is_(None), Card.occasion_label.ilike(like)),
 )
 ```
+
+The label is a snapshot, not a live value — once `occasion_id` is set again (see §6.1),
+the label is stale and must not match, even though the column itself is only cleared on
+the next PATCH that touches `occasion_id`.
 
 **Placeholder copy.** `searchPlaceholder` ([i18n.ts:72]) already understates search — it says
 "by name" while covering company and phone number. Widened:
@@ -331,11 +344,22 @@ of `test_cards_filter.py`; the delete path has 48 real cards riding on it.
 |---|---|
 | `test_delete_stamps_label_onto_cards` | after `DELETE`, each card has `occasion_id IS NULL` and `occasion_label == "<name>"` |
 | `test_delete_does_not_delete_cards` | card count unchanged, cards still readable |
-| `test_delete_preserves_existing_label` | a card with a label already set is not overwritten |
+| `test_delete_overwrites_older_label` | a card already carrying an older label ends up with the *just-deleted* occasion's name, not the older one |
+| `test_delete_unknown_occasion_returns_404` | deleting a nonexistent occasion id returns 404 |
 | `test_list_returns_card_count` | `card_count` correct, and excludes soft-deleted cards |
+| `test_card_count_zero_for_unused_occasion` | a brand-new occasion reports `card_count == 0` from both create and list |
+| `test_patch_rename_occasion_reports_correct_card_count` | renaming an occasion with cards returns the real `card_count`, not 0 |
 | `test_search_matches_linked_occasion` | `?q=Convention` returns cards whose live occasion matches |
 | `test_search_matches_orphaned_label` | same query returns the same cards after the occasion is deleted |
+| `test_search_ignores_stale_label_on_relinked_card` | a card's stale label does not match `?q=` once the card has a live occasion again |
+| `test_patch_occasion_id_clears_stale_label` | PATCH with a new `occasion_id` clears the card's old label |
+| `test_patch_occasion_id_null_clears_stale_label` | PATCH with `occasion_id: null` also clears the label |
+| `test_patch_without_occasion_id_keeps_label` | a PATCH that omits `occasion_id` leaves the label untouched |
 | `test_legacy_card_falls_back_to_label` | `occasion_name` in the DTO survives deletion |
+
+Re-linking a card to a different occasion, or explicitly unlinking it, clears its
+`occasion_label` — see §6.1's PATCH rule. A stale label is dead weight once the card
+has (or explicitly loses) a live link, so it is wiped rather than left to resurface later.
 
 **Frontend.** No test runner exists and this spec does not add one. Verification is
 `cd frontend && npm run build` (which runs `tsc -b`) plus browser verification of the
