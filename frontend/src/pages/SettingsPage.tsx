@@ -288,10 +288,14 @@ export function SettingsPage() {
   const isOccYearCollapsed = (year: number) =>
     occYearOverrides.get(year) ?? year !== thisYear
 
+  // Reads the collapsed state from `prev`, not from isOccYearCollapsed: that helper
+  // closes over this render's map, so two toggles queued before a re-render would both
+  // compute the same target and the second would no-op instead of flipping back.
   const toggleOccYear = (year: number) =>
     setOccYearOverrides(prev => {
+      const wasCollapsed = prev.get(year) ?? year !== thisYear
       const next = new Map(prev)
-      next.set(year, !isOccYearCollapsed(year))
+      next.set(year, !wasCollapsed)
       return next
     })
 

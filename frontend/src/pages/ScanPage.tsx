@@ -9,7 +9,7 @@
  *  confirm  → Write permanent records
  *  done     → Show summary with links
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   analyzeSession,
@@ -1219,7 +1219,8 @@ function OccasionPicker({
 
   // Group into year → month buckets (newest first) for the <optgroup> list below.
   // A <select> can't nest optgroups, so this is the flat one-level-per-month form.
-  const months = flattenOccasionMonths(occasions)
+  // Memoised so typing a new occasion name does not regroup the list on every keystroke.
+  const months = useMemo(() => flattenOccasionMonths(occasions), [occasions])
 
   return (
     <div>
