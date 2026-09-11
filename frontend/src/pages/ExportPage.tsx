@@ -12,6 +12,7 @@ import { listCards, listMyCompanies, listOccasions } from '../api'
 import { useLang } from '../LangContext'
 import { ExportDestinationSelector } from '../components/ExportDestinationSelector'
 import type { CardListItem, MyCompany, Occasion } from '../types'
+import { formatFilingDate } from '../lib/dates'
 
 type Step = 'select' | 'destinations'
 
@@ -258,7 +259,7 @@ export function ExportPage() {
                 {card.person_name ?? '—'}
               </p>
               <p className="text-xs text-gray-400">
-                {card.received_date ?? card.created_at.slice(0, 10)}
+                {formatFilingDate(card, lang)}
               </p>
             </div>
             {/* Sync badges */}

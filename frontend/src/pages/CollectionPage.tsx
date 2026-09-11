@@ -7,6 +7,7 @@ import { MergeModal } from '../components/MergeModal'
 import { MonthSection } from '../components/MonthSection'
 import { LoadError } from '../components/LoadMore'
 import { monthKey } from '../lib/monthKey'
+import { formatDate, formatFilingDate } from '../lib/dates'
 
 // Fallback country names must follow the UI language, so the DisplayNames instance
 // is built per-locale by the caller rather than pinned at module load.
@@ -398,7 +399,7 @@ export function CollectionPage() {
                               </div>
                               <div>
                                 <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
-                                <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
+                                <p className="text-xs text-gray-400">{formatDate(p.created_at, lang)}</p>
                               </div>
                             </div>
                           )
@@ -414,7 +415,7 @@ export function CollectionPage() {
                             </div>
                             <div>
                               <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
-                              <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
+                              <p className="text-xs text-gray-400">{formatDate(p.created_at, lang)}</p>
                             </div>
                           </a>
                         )
@@ -455,7 +456,7 @@ export function CollectionPage() {
 }
 
 function CardThumbnail({ card }: { card: CardListItem }) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   return (
     <a
       href={`/cards/${card.external_id}`}
@@ -474,7 +475,8 @@ function CardThumbnail({ card }: { card: CardListItem }) {
       )}
       <div className="p-2">
         <p className="text-xs font-medium text-gray-800 truncate">{card.person_name ?? t.noName}</p>
-        <p className="text-xs text-gray-400">{card.received_date ?? new Date(card.created_at).toLocaleDateString()}</p>
+        {/* Received date, falling back to scan date — one formatter for both branches. */}
+        <p className="text-xs text-gray-400">{formatFilingDate(card, lang)}</p>
       </div>
     </a>
   )

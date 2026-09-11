@@ -11,6 +11,7 @@ import { LoadError } from '../components/LoadMore'
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
 import type { Person, CardListItem } from '../types'
+import { formatFilingDate } from '../lib/dates'
 
 function usePersonExtId(): string {
   // URL is /persons/:external_id
@@ -19,7 +20,7 @@ function usePersonExtId(): string {
 }
 
 export function PersonDetailPage() {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const { showToast } = useToast()
   const qc = useQueryClient()
   const extId = usePersonExtId()
@@ -157,7 +158,7 @@ export function PersonDetailPage() {
                 )}
                 <div className="px-2 py-1.5">
                   <p className="text-xs text-gray-400">
-                    {card.received_date ?? new Date(card.created_at).toLocaleDateString()}
+                    {formatFilingDate(card, lang)}
                   </p>
                 </div>
               </a>
