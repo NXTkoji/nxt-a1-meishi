@@ -1057,6 +1057,9 @@ def test_person_facets_respect_q(client_with_test_db):
 
     The organisation match has no contact details, so it lands in the null bucket; the
     name match lives in JP; the bystander in TW proves the narrowing discriminates.
+
+    Whether ?country=&q= on the list and /count agrees with these facets is owned by
+    test_person_facets_with_q_agree_with_country_groups.
     """
     _seed_person_with_names(
         "p-name-match", names=[("en", "Taro Matsumoto", True)],
@@ -1081,15 +1084,74 @@ def test_person_facets_respect_q(client_with_test_db):
     by_org = client_with_test_db.get("/api/v2/persons/facets", params={"q": "Rotary"}).json()
     assert by_org == [{"country_code": None, "count": 1}]
 
-    # q and country combine on the list and on count exactly as on the facet.
-    rows = client_with_test_db.get(
-        "/api/v2/persons", params={"q": "Rotary", "country": "none", "limit": 500}
-    ).json()
-    total = client_with_test_db.get(
-        "/api/v2/persons/count", params={"q": "Rotary", "country": "none"}
-    ).json()["total"]
-    assert [r["external_id"] for r in rows] == ["p-org-match"]
-    assert total == 1
+
+def test_person_facets_with_q_agree_with_country_groups(client_with_test_db):
+    """During a search, each facet count == its ?country=&q= rows == its /count?country=&q=.
+
+    This is the path the frontend walks while searching: GET /facets?q=X for the group
+    headers, then each open group pages ?country=C&q=X while loaded < the facet's count.
+    If the list or /count dropped q once country is set, a group would hold more rows
+    than its header says.
+
+    The seed makes a dropped q observable in EVERY bucket: each holds at least one person
+    the search matches and at least one it does not. A bucket holding only matches would
+    return the same rows with or without q, and the agreement check would be vacuous.
+      * TW:   p-tw-tanaka matches by name; p-tw-wang does not
+      * JP:   p-jp-tanaka matches by name; p-jp-sato does not
+      * null: p-none-tanaka matches by name; p-org-tanaka matches only through its
+              organisation "Tanaka Trading"; p-none-jones matches neither
+    """
+    _seed_person_with_names("p-tw-tanaka", [("en", "Ken Tanaka", True, "Tanaka")],
+                            contact_details=[("address_home", "TW")])
+    _seed_person_with_names("p-tw-wang", [("en", "Mei Wang", True, "Wang")],
+                            contact_details=[("address_home", "TW")])
+    _seed_person_with_names("p-jp-tanaka", [("en", "Yuki Tanaka", True, "Tanaka")],
+                            contact_details=[("address_home", "JP")])
+    _seed_person_with_names("p-jp-sato", [("en", "Hiro Sato", True, "Sato")],
+                            contact_details=[("address_home", "JP")])
+    _seed_person_with_names("p-none-tanaka", [("en", "Aiko Tanaka", True, "Tanaka")])
+    _seed_person_with_names("p-none-jones", [("en", "Bob Jones", True, "Jones")])
+    # The person's own name shares nothing with the query, so only the organisation join
+    # can match. _seed_person_at_org adds no contact details: this person is in null.
+    _seed_person_at_org("p-org-tanaka", person_name="Alice Smith", org_name="Tanaka Trading")
+
+    # Guard against vacuity: without q every bucket is larger than with it, so a list or
+    # count that ignores q cannot equal the q facet by accident.
+    assert client_with_test_db.get("/api/v2/persons/facets").json() == [
+        {"country_code": "JP", "count": 2},
+        {"country_code": "TW", "count": 2},
+        {"country_code": None, "count": 3},
+    ]
+
+    facets = client_with_test_db.get("/api/v2/persons/facets", params={"q": "Tanaka"}).json()
+    assert facets == [
+        {"country_code": "JP", "count": 1},
+        {"country_code": "TW", "count": 1},
+        {"country_code": None, "count": 2},
+    ]
+
+    # Every facet, not a sample: the null bucket takes the IS NULL branch.
+    rows_by_country = {}
+    for f in facets:
+        params = {"country": _country_param(f["country_code"]), "q": "Tanaka"}
+        rows = client_with_test_db.get(
+            "/api/v2/persons", params={**params, "limit": 500}
+        ).json()
+        total = client_with_test_db.get("/api/v2/persons/count", params=params).json()["total"]
+        assert f["count"] == len(rows) == total, (
+            f"facet {params['country']} with q=Tanaka says {f['count']}, "
+            f"list returned {len(rows)}, count says {total}"
+        )
+        rows_by_country[f["country_code"]] = [r["external_id"] for r in rows]
+
+    # Absolute membership, so the loop cannot pass on three equal wrong numbers. Exact
+    # equality also proves each non-match (p-tw-wang, p-jp-sato, p-none-jones) is absent.
+    # Within a group rows arrive in sort-name order: "alice smith" before "tanaka".
+    assert rows_by_country == {
+        "TW": ["p-tw-tanaka"],
+        "JP": ["p-jp-tanaka"],
+        None: ["p-org-tanaka", "p-none-tanaka"],
+    }
 
 
 def test_person_facets_order(client_with_test_db):
@@ -1119,12 +1181,19 @@ def test_person_group_order_is_by_sort_name(client_with_test_db):
       * p-doe-1 and p-doe-2 tie on "doe" (cased differently) and come back in id order
       * p-baker's lowest-id name is NOT current and would sort first ("aardvark") if
         the rule forgot is_current
+      * p-baker also has a SECOND current name, inserted after "Zed Baker" so it holds
+        the higher id; its key "aaa" would sort p-baker first if the rule took the
+        highest-id current name instead of the lowest
     Insertion order is scrambled so neither id order nor newest-first matches.
     """
     tw = [("address_home", "TW")]
     _seed_person_with_names(
         "p-baker",
-        [("en", "Aardvark Old", False, "Aardvark"), ("en", "Zed Baker", True, "Baker")],
+        [
+            ("en", "Aardvark Old", False, "Aardvark"),
+            ("en", "Zed Baker", True, "Baker"),
+            ("ja", "Aaa", True, "Aaa"),
+        ],
         contact_details=tw,
     )
     _seed_person_with_names("p-carter", [("en", "carter Xavier", True, None)], contact_details=tw)

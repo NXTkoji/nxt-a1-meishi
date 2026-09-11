@@ -213,10 +213,18 @@ def _person_country():
 def _person_sort_name():
     """The tab's display order: family name, else full name, of the lowest-id current name.
 
-    Lowercased so "adams" sorts before "Baker". This matches the frontend's
+    Lowercased so "adams" sorts before "Baker". The key follows the frontend's
     `(family_name ?? primary_name ?? '').toLowerCase()`, with two known differences:
-    SQLite's lower() folds ASCII only, and SQLite compares code points where the
-    frontend uses localeCompare. Neither matters for CJK names, which have no case.
+      * SQLite's lower() folds ASCII only.
+      * SQLite compares Unicode code points, where localeCompare uses the locale's
+        collation. With an "en" locale the two agree on CJK names; with "ja" or
+        "zh-TW" they do not (李/王 and 陳/林 order differently), because those locales
+        collate by reading or stroke order.
+    So CJK names are ordered by code point, not by the UI locale's stroke or reading
+    order. This is intentional: the frontend renders this server order as it arrives,
+    with no client re-sort, because a re-sort would move rows already on screen when a
+    later page arrives. A Japanese or Traditional Chinese UI therefore shows CJK names
+    in code-point order.
 
     "Lowest-id current name" is the same row the batched name fold in list_persons
     picks, so the key a person is sorted by belongs to the name the row displays.
@@ -378,7 +386,8 @@ async def person_facets(
 ):
     """Country groups with counts: codes ascending, the no-country group last.
 
-    One statement, however many persons exist. Each group's count equals what
+    One statement (plus the two id lookups _person_ids_matching runs first when ?q= is
+    given), however many persons exist. Each group's count equals what
     GET ?country=<code> (or ?country=none for the null group) returns, because all
     three endpoints filter through _filter_persons and derive the country through
     _person_country.
