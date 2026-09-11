@@ -6,11 +6,11 @@ from __future__ import annotations
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_api_key
-from app.db.models import Occasion
+from app.db.models import Card, Occasion
 from app.db.session import get_db
 from app.schemas.api import OccasionCreate, OccasionOut, OccasionUpdate
 
@@ -57,4 +57,16 @@ async def delete_occasion(occasion_id: int, db: AsyncSession = Depends(get_db)):
     occ = await db.get(Occasion, occasion_id)
     if not occ:
         raise HTTPException(404, "Occasion not found")
+
+    # Stamp the name onto every card that points here BEFORE deleting, so the card
+    # keeps a readable record. SQLAlchemy will null out occasion_id as part of the
+    # delete; occasion_label is a different column and survives that.
+    # Cards that already carry a label (from an earlier deletion) are left alone.
+    await db.execute(
+        update(Card)
+        .where(Card.occasion_id == occasion_id, Card.occasion_label.is_(None))
+        .values(occasion_label=occ.name)
+        .execution_options(synchronize_session=False)
+    )
+
     await db.delete(occ)
