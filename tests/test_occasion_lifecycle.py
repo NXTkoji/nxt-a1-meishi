@@ -319,3 +319,19 @@ def test_legacy_card_falls_back_to_label(client_with_test_db):
     asyncio.run(_run())
 
     assert holder["occasion_name"] == "RI Convention"
+
+
+def test_card_detail_exposes_label_after_delete(client_with_test_db):
+    """GET /cards/{ext_id} carries the stamped name, so the detail page can show it."""
+    occ_id, _ = _seed(client_with_test_db, occasion_name="RI Convention", n_cards=1)
+    ext_id = "c-occ-0"  # matches the external_id _seed gives card 0
+
+    linked = client_with_test_db.get(f"/api/v2/cards/{ext_id}").json()
+    assert linked["occasion_id"] == occ_id
+    assert linked["occasion_label"] is None
+
+    client_with_test_db.delete(f"/api/v2/occasions/{occ_id}")
+
+    orphaned = client_with_test_db.get(f"/api/v2/cards/{ext_id}").json()
+    assert orphaned["occasion_id"] is None
+    assert orphaned["occasion_label"] == "RI Convention"

@@ -125,6 +125,9 @@ class CardOut(BaseModel):
     person_id: int
     person_external_id: Optional[str] = None
     occasion_id: Optional[int]
+    # Name stamped onto the card when its occasion was deleted (see Card.occasion_label).
+    # Only meaningful while occasion_id is None — a live link always wins.
+    occasion_label: Optional[str] = None
     received_date: Optional[date]
     received_location: Optional[str]
     notes: Optional[str]

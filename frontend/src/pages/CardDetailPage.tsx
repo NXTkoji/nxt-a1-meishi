@@ -237,6 +237,14 @@ export function CardDetailPage() {
                 .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                 .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
+            {/* The linked occasion was deleted: the dropdown can only show "None", so show
+                the name that was kept on the card. Picking an occasion above re-links it,
+                and the live link then takes precedence. Picking "None" instead clears the
+                label too (backend rule: any PATCH touching occasion_id wipes the stale
+                label), so this line disappears again — that is intended, not a bug. */}
+            {card.occasion_id == null && card.occasion_label && (
+              <p className="text-xs text-gray-500">{t.occasionDeleted(card.occasion_label)}</p>
+            )}
             {addingOccasion ? (
               <div className="flex gap-1">
                 <input

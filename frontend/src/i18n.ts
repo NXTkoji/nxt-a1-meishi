@@ -49,6 +49,7 @@ const translations = {
     // ScanPage — review metadata
     myCompanyLabel: '対面時の立場',
     occasionLabel: '場面',
+    occasionDeleted: (name: string) => `削除された場面: ${name}`,
     occasionAddNew: '＋ 新しい場面',
     occasionNewPlaceholder: '場面名を入力…',
     receivedDateLabel: '受取日',
@@ -280,6 +281,7 @@ const translations = {
     // ScanPage — review metadata
     myCompanyLabel: 'Met As',
     occasionLabel: 'Occasion',
+    occasionDeleted: (name: string) => `Deleted occasion: ${name}`,
     occasionAddNew: '+ New Occasion',
     occasionNewPlaceholder: 'Occasion name…',
     receivedDateLabel: 'Received',
@@ -510,6 +512,7 @@ const translations = {
     // ScanPage — review metadata
     myCompanyLabel: '見面身分',
     occasionLabel: '場合',
+    occasionDeleted: (name: string) => `已刪除的場合：${name}`,
     occasionAddNew: '＋ 新增場合',
     occasionNewPlaceholder: '輸入場合名稱…',
     receivedDateLabel: '收到日期',

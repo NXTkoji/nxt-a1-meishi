@@ -118,6 +118,8 @@ export interface Card {
   person_id: number
   person_external_id?: string
   occasion_id?: number
+  /** Name kept from a deleted occasion. Shown only while occasion_id is unset. */
+  occasion_label?: string | null
   received_date?: string
   notes?: string
   display_name_language?: string
