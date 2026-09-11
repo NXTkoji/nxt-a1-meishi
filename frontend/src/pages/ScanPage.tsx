@@ -37,6 +37,7 @@ import CardOutlineSelector from '../components/CardOutlineSelector'
 import type { Point } from '../api/sessions'
 import { useLang } from '../LangContext'
 import { todayLocalISODate } from '../lib/dates'
+import { flattenOccasionMonths } from '../lib/occasionGrouping'
 import type {
   AnalysisEvent,
   CardDraft,
@@ -1216,13 +1217,9 @@ function OccasionPicker({
     },
   })
 
-  // Sort by created_at desc; take first 3 as "recent", rest as "all"
-  const sorted = [...occasions].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  )
-  const recent = sorted.slice(0, 3)
-  const recentIds = new Set(recent.map(o => o.id))
-  const older = sorted.filter(o => !recentIds.has(o.id))
+  // Group into year → month buckets (newest first) for the <optgroup> list below.
+  // A <select> can't nest optgroups, so this is the flat one-level-per-month form.
+  const months = flattenOccasionMonths(occasions)
 
   return (
     <div>
@@ -1233,16 +1230,14 @@ function OccasionPicker({
         className="w-full border border-gray-300 rounded px-2 py-0.5 text-xs"
       >
         <option value="">{t.noneOption}</option>
-        {recent.length > 0 && (
-          <optgroup label="Recent">
-            {recent.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        {months.map(({ year, month, occasions: os }) => (
+          <optgroup
+            key={`${year}-${month}`}
+            label={year === 0 ? t.occasionUndated : t.monthLabel(year, month)}
+          >
+            {os.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
           </optgroup>
-        )}
-        {older.length > 0 && (
-          <optgroup label="All">
-            {older.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </optgroup>
-        )}
+        ))}
       </select>
 
       {adding ? (

@@ -74,6 +74,11 @@ const translations = {
     existingPersonLabel: '既存人物',
     createNew: '✕ 新規作成',
     noneOption: 'なし',
+    monthLabel: (y: number, m: number) => `${y}年${m}月`,
+    occasionUndated: '日付不明',
+    occasionCardCount: (n: number) => `${n}枚`,
+    occasionDeleteWarn: (name: string, n: number) =>
+      `「${name}」を削除しますか？\n\nこの場面は ${n} 枚の名刺で使われています。名刺には「${name}」がテキストとして残りますが、名前の変更や絞り込みができる場面とのリンクはなくなります。`,
 
     // ScanPage — actions
     retryAnalysis: '再解析 ↺',
@@ -345,6 +350,11 @@ const translations = {
     existingPersonLabel: 'Existing Person',
     createNew: '✕ Create New',
     noneOption: 'None',
+    monthLabel: (y: number, m: number) => `${y}-${String(m).padStart(2, '0')}`,
+    occasionUndated: 'Undated',
+    occasionCardCount: (n: number) => `${n} card${n === 1 ? '' : 's'}`,
+    occasionDeleteWarn: (name: string, n: number) =>
+      `Delete "${name}"?\n\n${n} card${n === 1 ? '' : 's'} use this occasion. They will keep "${name}" as a plain text label, but will no longer be linked to an occasion you can rename or filter by.`,
 
     // ScanPage — actions
     retryAnalysis: 'Retry Analysis ↺',
@@ -615,6 +625,11 @@ const translations = {
     existingPersonLabel: '既有人物',
     createNew: '✕ 建立新的',
     noneOption: '無',
+    monthLabel: (y: number, m: number) => `${y}年${m}月`,
+    occasionUndated: '日期不明',
+    occasionCardCount: (n: number) => `${n} 張`,
+    occasionDeleteWarn: (name: string, n: number) =>
+      `要刪除「${name}」嗎？\n\n有 ${n} 張名片使用此場合。名片會保留「${name}」文字標籤，但將不再連結到可重新命名或篩選的場合。`,
 
     // ScanPage — actions
     retryAnalysis: '重新解析 ↺',

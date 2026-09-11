@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   listMyCompanies, createMyCompany, updateMyCompany, deleteMyCompany,
@@ -7,6 +7,7 @@ import {
 } from '../api'
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
+import { groupOccasionsByMonth } from '../lib/occasionGrouping'
 import type { Country, MyCompany, Occasion } from '../types'
 
 
@@ -153,12 +154,21 @@ function OccasionRow({ occasion }: { occasion: Occasion }) {
               {occasion.name}
               <span className="opacity-0 group-hover:opacity-60 text-xs text-blue-400">✏️</span>
             </button>
-            {occasion.event_date && (
-              <p className="text-xs text-gray-400 mt-0.5">{occasion.event_date}</p>
-            )}
+            <p className="text-xs text-gray-400 mt-0.5">
+              {occasion.event_date && <span className="mr-2">{occasion.event_date}</span>}
+              {t.occasionCardCount(occasion.card_count)}
+            </p>
           </div>
           <button
-            onClick={() => { if (window.confirm(`${t.confirmDelete}\n"${occasion.name}"`)) deleteMutation.mutate() }}
+            onClick={() => {
+              // "0 cards use this occasion…" reads badly, so only show the card-count
+              // warning once there's actually a count worth warning about; an occasion
+              // with no cards keeps the plain confirm.
+              const confirmed = occasion.card_count > 0
+                ? window.confirm(t.occasionDeleteWarn(occasion.name, occasion.card_count))
+                : window.confirm(`${t.confirmDelete}\n"${occasion.name}"`)
+              if (confirmed) deleteMutation.mutate()
+            }}
             disabled={deleteMutation.isPending}
             className="text-xs text-red-400 hover:text-red-600 disabled:opacity-50 shrink-0"
           >{t.deleteBtn}</button>
@@ -265,6 +275,26 @@ export function SettingsPage() {
     queryFn: listOccasions,
   })
 
+  const occasionYears = useMemo(() => groupOccasionsByMonth(occasions), [occasions])
+
+  // Years the user has explicitly toggled. Anything absent follows the default rule:
+  // the current year expanded, earlier years collapsed — so the list stays roughly one
+  // screen however many years accumulate. Deliberately not seeded via useEffect: the
+  // occasions arrive asynchronously, and an effect reading occasionYears (a fresh array
+  // every render) would re-run and stomp the user's toggles on every re-render.
+  const [occYearOverrides, setOccYearOverrides] = useState<Map<number, boolean>>(new Map())
+  const thisYear = new Date().getFullYear()
+
+  const isOccYearCollapsed = (year: number) =>
+    occYearOverrides.get(year) ?? year !== thisYear
+
+  const toggleOccYear = (year: number) =>
+    setOccYearOverrides(prev => {
+      const next = new Map(prev)
+      next.set(year, !isOccYearCollapsed(year))
+      return next
+    })
+
   const { data: countries = [] } = useQuery<Country[]>({
     queryKey: ['countries'],
     queryFn: listCountries,
@@ -335,7 +365,30 @@ export function SettingsPage() {
       <section>
         <h2 className="text-sm font-medium text-gray-700 mb-3">{t.occasionsTitle}</h2>
         <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-          {occasions.map(o => <OccasionRow key={o.id} occasion={o} />)}
+          {occasionYears.map(({ year, months }) => {
+            const collapsed = isOccYearCollapsed(year)
+            const yearCount = months.reduce((n, m) => n + m.occasions.length, 0)
+            return (
+              <div key={year}>
+                <button
+                  className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 px-4 py-2 bg-gray-50 border-b border-gray-100 hover:text-blue-600 text-left"
+                  onClick={() => toggleOccYear(year)}
+                >
+                  <span className="text-xs text-gray-400">{collapsed ? '▶' : '▼'}</span>
+                  <span>{year === 0 ? t.occasionUndated : year}</span>
+                  <span className="text-xs text-gray-400">({yearCount})</span>
+                </button>
+                {!collapsed && months.map(({ month, occasions: os }) => (
+                  <div key={`${year}-${month}`}>
+                    <p className="text-xs font-medium text-gray-500 px-4 py-1 bg-gray-50/50">
+                      {year === 0 ? t.occasionUndated : t.monthLabel(year, month)}
+                    </p>
+                    {os.map(o => <OccasionRow key={o.id} occasion={o} />)}
+                  </div>
+                ))}
+              </div>
+            )
+          })}
           {occasions.length === 0 && (
             <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
           )}
