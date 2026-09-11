@@ -845,6 +845,7 @@ export function ScanPage() {
               isManual={isManual}
               splittingIds={splittingIds}
               splitFeedback={splitFeedback}
+              imgCacheBust={imgCacheBust}
               onSplitImage={handleSplitGrouped}
               onParsedChange={parsed =>
                 setGroups(prev =>
@@ -1101,7 +1102,7 @@ function OccasionPicker({
 
 function CardGroupCard({
   group, index, sessionId, companies, occasions, stage,
-  splittingIds, splitFeedback, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
+  splittingIds, splitFeedback, imgCacheBust, onSplitImage, onParsedChange, onMetaChange, onCorrection, onAddImage, onMoveImage, onAssignUngrouped, onSwapImages, onDeleteGroup,
   onDupNotDuplicate, onDupDiscard, onDupMerge, onRotateImage, isManual,
 }: {
   group: CardGroup
@@ -1112,6 +1113,9 @@ function CardGroupCard({
   stage: Stage
   splittingIds: Set<number>
   splitFeedback: Record<number, string>
+  /** Shared with ScanPage so a rotation done while the image was ungrouped is still
+   *  reflected once it lands in a group. Must not be duplicated into local state. */
+  imgCacheBust: Record<number, number>
   onSplitImage: (img: SessionImage, groupId: string) => void
   onParsedChange: (p: ParsedCard) => void
   onMetaChange: (meta: Partial<CardGroup>) => void
@@ -1130,7 +1134,6 @@ function CardGroupCard({
   const { t } = useLang()
   const [cropImg, setCropImg] = useState<SessionImage | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [localCacheBust, setLocalCacheBust] = useState<Record<number, number>>({})
   const canDragDrop = stage === 'grouping' || stage === 'review'
 
   const sideLabel = (order: number) => {
@@ -1211,7 +1214,7 @@ function CardGroupCard({
                 } : undefined}
               >
                 <LightboxImage
-                  src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${localCacheBust[img.id] ? `?t=${localCacheBust[img.id]}` : ''}`}
+                  src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
                   alt={`side ${img.side_order}`}
                   className="h-28 w-auto rounded border border-gray-200 object-contain bg-gray-50"
                 />
@@ -1239,20 +1242,14 @@ function CardGroupCard({
                     )}
                     <button
                       className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
-                      onClick={async () => {
-                        await onRotateImage(img, 'ccw')
-                        setLocalCacheBust(prev => ({ ...prev, [img.id]: Date.now() }))
-                      }}
+                      onClick={() => onRotateImage(img, 'ccw')}
                       title="Rotate 90° counter-clockwise"
                     >
                       ↺
                     </button>
                     <button
                       className="bg-gray-100 text-xs px-1.5 py-0.5 rounded text-gray-600 hover:bg-gray-300"
-                      onClick={async () => {
-                        await onRotateImage(img)
-                        setLocalCacheBust(prev => ({ ...prev, [img.id]: Date.now() }))
-                      }}
+                      onClick={() => onRotateImage(img)}
                       title="Rotate 90° clockwise"
                     >
                       ↻
