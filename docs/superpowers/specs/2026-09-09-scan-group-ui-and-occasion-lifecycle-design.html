@@ -315,9 +315,9 @@ occasion_clause = or_(
     and_(Card.occasion_id.is_(None), Card.occasion_label.ilike(like)),
 )
 </code></pre>
-<p>The label is a snapshot, not a live value — once <code>occasion_id</code> is set again (see §6.1),
-the label is stale and must not match, even though the column itself is only cleared on
-the next PATCH that touches <code>occasion_id</code>.</p>
+<p>The label is a snapshot, not a live value. Through the API a card never holds a live
+<code>occasion_id</code> and a label at once — a PATCH that sets <code>occasion_id</code> clears the label
+(see §6.1). The <code>occasion_id IS NULL</code> guard protects rows written before that rule.</p>
 <p><strong>Placeholder copy.</strong> <code>searchPlaceholder</code> ([i18n.ts:72]) already understates search — it says
 "by name" while covering company and phone number. Widened:</p>
 <table>
@@ -414,6 +414,10 @@ of <code>test_cards_filter.py</code>; the delete path has 48 real cards riding o
 <tr>
 <td><code>test_patch_without_occasion_id_keeps_label</code></td>
 <td>a PATCH that omits <code>occasion_id</code> leaves the label untouched</td>
+</tr>
+<tr>
+<td><code>test_card_detail_exposes_label_after_delete</code></td>
+<td><code>GET /cards/{ext_id}</code> has <code>occasion_label</code> null while linked, and the occasion's name after it is deleted</td>
 </tr>
 <tr>
 <td><code>test_legacy_card_falls_back_to_label</code></td>

@@ -242,9 +242,9 @@ def test_search_count_and_facets_include_occasion_matches(client_with_test_db):
 def test_patch_occasion_id_clears_stale_label(client_with_test_db):
     """Re-linking a card to a (different) live occasion clears its stale label.
 
-    Once occasion_id is live again, the label is dead weight that could otherwise
-    resurface (e.g. if this occasion is later deleted without ever having been
-    re-stamped) — so any PATCH that touches occasion_id wipes it.
+    The label names an occasion the card is no longer linked to. Keeping it would let
+    it resurface in search or on the detail page if the card is later unlinked, so any
+    PATCH that sets occasion_id wipes it.
     """
     occ_id, card_ids = _seed(
         client_with_test_db, occasion_name="Second Event", n_cards=1, label="Original Event"
@@ -252,7 +252,7 @@ def test_patch_occasion_id_clears_stale_label(client_with_test_db):
     other = client_with_test_db.post("/api/v2/occasions", json={"name": "Third Event"}).json()
 
     resp = client_with_test_db.patch(
-        f"/api/v2/cards/c-occ-0", json={"occasion_id": other["id"]}
+        "/api/v2/cards/c-occ-0", json={"occasion_id": other["id"]}
     )
     assert resp.status_code == 200
 
@@ -267,7 +267,7 @@ def test_patch_occasion_id_null_clears_stale_label(client_with_test_db):
         client_with_test_db, occasion_name="Second Event", n_cards=1, label="Original Event"
     )
 
-    resp = client_with_test_db.patch(f"/api/v2/cards/c-occ-0", json={"occasion_id": None})
+    resp = client_with_test_db.patch("/api/v2/cards/c-occ-0", json={"occasion_id": None})
     assert resp.status_code == 200
 
     rows = _load_cards(client_with_test_db, card_ids)
@@ -281,7 +281,7 @@ def test_patch_without_occasion_id_keeps_label(client_with_test_db):
         client_with_test_db, occasion_name="Second Event", n_cards=1, label="Original Event"
     )
 
-    resp = client_with_test_db.patch(f"/api/v2/cards/c-occ-0", json={"notes": "x"})
+    resp = client_with_test_db.patch("/api/v2/cards/c-occ-0", json={"notes": "x"})
     assert resp.status_code == 200
 
     rows = _load_cards(client_with_test_db, card_ids)

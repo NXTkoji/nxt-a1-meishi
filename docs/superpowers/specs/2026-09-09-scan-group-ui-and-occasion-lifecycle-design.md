@@ -306,9 +306,9 @@ occasion_clause = or_(
 )
 ```
 
-The label is a snapshot, not a live value — once `occasion_id` is set again (see §6.1),
-the label is stale and must not match, even though the column itself is only cleared on
-the next PATCH that touches `occasion_id`.
+The label is a snapshot, not a live value. Through the API a card never holds a live
+`occasion_id` and a label at once — a PATCH that sets `occasion_id` clears the label
+(see §6.1). The `occasion_id IS NULL` guard protects rows written before that rule.
 
 **Placeholder copy.** `searchPlaceholder` ([i18n.ts:72]) already understates search — it says
 "by name" while covering company and phone number. Widened:
@@ -355,6 +355,7 @@ of `test_cards_filter.py`; the delete path has 48 real cards riding on it.
 | `test_patch_occasion_id_clears_stale_label` | PATCH with a new `occasion_id` clears the card's old label |
 | `test_patch_occasion_id_null_clears_stale_label` | PATCH with `occasion_id: null` also clears the label |
 | `test_patch_without_occasion_id_keeps_label` | a PATCH that omits `occasion_id` leaves the label untouched |
+| `test_card_detail_exposes_label_after_delete` | `GET /cards/{ext_id}` has `occasion_label` null while linked, and the occasion's name after it is deleted |
 | `test_legacy_card_falls_back_to_label` | `occasion_name` in the DTO survives deletion |
 
 Re-linking a card to a different occasion, or explicitly unlinking it, clears its
