@@ -26,10 +26,13 @@ const translations = {
 
     // ScanPage — grouping
     ungroupedN: (n: number) => `未グループ (${n}枚)`,
+    separatedN: (n: number) => `分割済みの名刺 (${n}枚)`,
+    ungroupedHint: 'まだ分割していない写真',
+    separatedHint: '各写真の1枚目どうしが、表と裏のペアになります。',
     autoGroup1: '1枚ずつ（片面）',
     autoGroup2: '2枚ペア（両面）',
     autoPairByPos: '位置でペア',
-    mixedCropWarning: '切り抜き済みの画像と未切り抜き画像が混在しています。「位置でペア」を使う前に、すべての複数名刺画像を切り抜いてください。',
+    mixedCropWarning: '「未グループ」にまだ分割していない写真があります。分割してから「位置でペア」を使わないと、ペアが正しくなりません。',
     splitCards: '名刺を分割',
     rotateCcw: '左に90°回転',
     rotateCw: '右に90°回転',
@@ -261,10 +264,13 @@ const translations = {
 
     // ScanPage — grouping
     ungroupedN: (n: number) => `Ungrouped (${n})`,
+    separatedN: (n: number) => `Separated cards (${n})`,
+    ungroupedHint: 'Whole photos, not yet split',
+    separatedHint: 'Card #1 of each photo pairs with card #1 of the next photo, as front and back.',
     autoGroup1: '1 per card (single-sided)',
     autoGroup2: 'Pairs of 2 (double-sided)',
     autoPairByPos: 'Pair by position',
-    mixedCropWarning: 'Some images are cropped and some are not. Crop all multi-card photos before using "Pair by position" — otherwise uncropped images will each land in their own group.',
+    mixedCropWarning: 'Some photos in Ungrouped have not been split yet. Split them before pairing by position, or the pairing will be wrong.',
     splitCards: 'Split Cards',
     rotateCcw: 'Rotate 90° counter-clockwise',
     rotateCw: 'Rotate 90° clockwise',
@@ -495,10 +501,13 @@ const translations = {
 
     // ScanPage — grouping
     ungroupedN: (n: number) => `未分組 (${n})`,
+    separatedN: (n: number) => `已分割的名片 (${n})`,
+    ungroupedHint: '尚未分割的整張照片',
+    separatedHint: '每張照片的第 1 張名片會互相配對，成為正面與背面。',
     autoGroup1: '每張一組（單面）',
     autoGroup2: '兩張一組（雙面）',
     autoPairByPos: '依位置配對',
-    mixedCropWarning: '部分影像已裁切、部分尚未裁切。使用「依位置配對」前請先裁切所有含多張名片的照片，否則未裁切的影像會各自成為一組。',
+    mixedCropWarning: '「未分組」中還有尚未分割的照片。請先分割，再使用「依位置配對」，否則配對會出錯。',
     splitCards: '分割名片',
     rotateCcw: '逆時針旋轉 90°',
     rotateCw: '順時針旋轉 90°',

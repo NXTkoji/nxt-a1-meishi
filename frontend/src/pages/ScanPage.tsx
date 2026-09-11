@@ -113,6 +113,21 @@ function nextSideOrder(images: SessionImage[]): number {
   return images.reduce((max, i) => Math.max(max, i.side_order ?? 0), -1) + 1
 }
 
+// Extract the _cardN position index from a split filename (e.g. "photo_card2.jpg" → 2).
+// Pure and stateless, so it lives at module scope — the "Ungrouped" / "Separated"
+// partition derived from it needs to run before any component-scope declaration that
+// might otherwise create a temporal-dead-zone hazard for a `const` arrow function.
+function getCardPos(filename: string): number | null {
+  const m = filename.match(/_card(\d+)\./i)
+  return m ? parseInt(m[1], 10) : null
+}
+
+// Extract the source prefix from a split filename (e.g. "IMG_6433_card2.jpg" → "IMG_6433")
+function getSourcePrefix(filename: string): string | null {
+  const m = filename.match(/^(.+)_card\d+\./i)
+  return m ? m[1] : null
+}
+
 type SavedGroupState = Pick<
   CardGroup,
   'tempCardId' | 'parsed' | 'status' | 'matchPersonId' | 'matchPersonExtId' | 'matchName' | 'matchConfidence' |
@@ -150,6 +165,82 @@ function loadGroupsState(sessionExtId: string): Record<string, SavedGroupState> 
   } catch {
     return {}
   }
+}
+
+/**
+ * One draggable image tile in the Ungrouped or Separated cards row.
+ * Extracted so the two rows (Task 8) don't duplicate this JSX — everything that
+ * differs between the rows is passed in as a prop; everything else (icon layout,
+ * aria-labels, drag data, split feedback overlay, filename) is verbatim from the
+ * single-row version.
+ */
+function UngroupedTile({
+  img, sessionId, cacheBust, splitting, feedback, onSplit, onRotate, t,
+}: {
+  img: SessionImage
+  sessionId: string
+  cacheBust?: number
+  splitting: boolean
+  feedback?: string
+  onSplit: (img: SessionImage) => void
+  onRotate: (img: SessionImage, direction?: 'cw' | 'ccw') => void
+  t: ReturnType<typeof useLang>['t']
+}) {
+  return (
+    <div
+      className="relative w-32 cursor-grab active:cursor-grabbing"
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.setData('imgId', String(img.id))
+        e.dataTransfer.setData('fromGroupId', '__ungrouped__')
+        e.dataTransfer.effectAllowed = 'move'
+      }}
+    >
+      {/* Fixed 128px box: rotating swaps the image's aspect ratio but the
+          tile keeps its footprint, so the buttons below never move. */}
+      <div className="w-32 h-32 rounded border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
+        <LightboxImage
+          src={`/api/v2/sessions/${sessionId}/temp/${img.image_filename}${cacheBust ? `?t=${cacheBust}` : ''}`}
+          alt={img.image_filename}
+          className="max-w-full max-h-full object-contain"
+        />
+      </div>
+      {/* Action buttons always visible below the image */}
+      <div className="flex gap-1 mt-1">
+        <button
+          className={`${ICON_BTN} bg-yellow-100 text-yellow-700 hover:bg-yellow-400 hover:text-gray-900`}
+          disabled={splitting}
+          onClick={() => onSplit(img)}
+          title={t.splitCards}
+          aria-label={t.splitCards}
+        >
+          {splitting ? '…' : '✂️'}
+        </button>
+        <button
+          className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+          onClick={() => onRotate(img, 'ccw')}
+          title={t.rotateCcw}
+          aria-label={t.rotateCcw}
+        >
+          ↺
+        </button>
+        <button
+          className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
+          onClick={() => onRotate(img)}
+          title={t.rotateCw}
+          aria-label={t.rotateCw}
+        >
+          ↻
+        </button>
+      </div>
+      {feedback && (
+        <div className="absolute top-0 left-0 right-0 bg-black/70 text-white text-xs text-center py-0.5 rounded-t">
+          {feedback}
+        </div>
+      )}
+      <p className="text-xs text-gray-500 mt-1 truncate w-32">{img.image_filename}</p>
+    </div>
+  )
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -298,77 +389,68 @@ export function ScanPage() {
     )
   }
 
-  const autoGroup1 = async () => {
-    // Each image becomes its own single-sided card
+  // Each image becomes its own single-sided card. Takes the images to act on
+  // (Ungrouped row passes `unsplit`, Separated row passes `separated`) rather than
+  // closing over the whole `ungrouped` array, so each row's button only touches
+  // that row's images.
+  const autoGroup1 = async (images: SessionImage[]) => {
     // Remove any existing empty groups first
     const keepGroups = groups.filter(g => g.images.length > 0)
     setGroups(keepGroups)
-    const imgs = [...ungrouped]
-    for (const img of imgs) {
+    for (const img of images) {
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(img, id, 0)
     }
   }
 
-  const autoGroup2 = async () => {
-    // Pair every 2 ungrouped images as front+back of one card
+  const autoGroup2 = async (images: SessionImage[]) => {
+    // Pair every 2 images as front+back of one card
     const keepGroups = groups.filter(g => g.images.length > 0)
     setGroups(keepGroups)
-    const imgs = [...ungrouped]
-    for (let i = 0; i < imgs.length; i += 2) {
+    for (let i = 0; i < images.length; i += 2) {
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
-      await assignToGroup(imgs[i], id, 0)
-      if (imgs[i + 1]) await assignToGroup(imgs[i + 1], id, 1)
+      await assignToGroup(images[i], id, 0)
+      if (images[i + 1]) await assignToGroup(images[i + 1], id, 1)
     }
   }
 
-  // Extract the _cardN position index from a split filename (e.g. "photo_card2.jpg" → 2)
-  const getCardPos = (filename: string): number | null => {
-    const m = filename.match(/_card(\d+)\./i)
-    return m ? parseInt(m[1], 10) : null
-  }
+  // Display-only partition of `ungrouped`. Images produced by the scissors carry a
+  // _cardN suffix (see module-scope `getCardPos`); everything else is a whole photo
+  // that has not been split yet.
+  // NOTE: `separated` is a SUBSET of `ungrouped`, never an addition to it — every
+  // image is in exactly one of `separated` / `unsplit`.
+  const separated = ungrouped.filter(i => getCardPos(i.image_filename) !== null)
+  const unsplit   = ungrouped.filter(i => getCardPos(i.image_filename) === null)
 
-  // Extract the source prefix from a split filename (e.g. "IMG_6433_card2.jpg" → "IMG_6433")
-  const getSourcePrefix = (filename: string): string | null => {
-    const m = filename.match(/^(.+)_card\d+\./i)
-    return m ? m[1] : null
-  }
-
-  // "Pair by position": group images by their _cardN suffix.
-  // Images with the same position number (from different source photos) become
-  // front/back sides of the same card group.
-  // Only shown when ≥2 ungrouped images share at least one _cardN suffix.
-  const canAutoPairByPos = (() => {
-    const positions = ungrouped.map(i => getCardPos(i.image_filename)).filter(p => p !== null)
-    return positions.length >= 2 && new Set(positions).size < positions.length
-  })()
-
-  // True when some ungrouped images have _cardN suffix and some do not — mixing
-  // cropped splits with uncropped originals would give wrong pairing results.
+  // True when an un-split photo shares a base name with images that were split —
+  // pairing by position while that photo is still whole would give wrong results.
   const hasMixedCropState = (() => {
-    if (!canAutoPairByPos) return false
+    if (separated.length === 0) return false
     // Collect the source prefixes of all cropped (_cardN) images
     const croppedPrefixes = new Set(
-      ungrouped
+      separated
         .map(i => getSourcePrefix(i.image_filename))
         .filter((p): p is string => p !== null)
     )
     if (croppedPrefixes.size === 0) return false
-    // An un-suffixed image is "problematically uncropped" only if its base name
+    // An un-split photo is "problematically uncropped" only if its base name
     // matches a source prefix that also produced cropped siblings.
-    return ungrouped.some(i => {
-      if (getCardPos(i.image_filename) !== null) return false  // is itself cropped
+    return unsplit.some(i => {
       const base = i.image_filename.replace(/\.[^.]+$/, '')   // strip extension
       return croppedPrefixes.has(base)
     })
   })()
 
-  const autoPairByPosition = async () => {
+  // "Pair by position": group images by their _cardN suffix.
+  // Images with the same position number (from different source photos) become
+  // front/back sides of the same card group. Also handles a fronts-only batch
+  // (odd trailing prefix) correctly — see the loop below.
+  const autoPairByPosition = async (images: SessionImage[]) => {
     const keepGroups = groups.filter(g => g.images.length > 0)
     setGroups(keepGroups)
-    const imgs = [...ungrouped]
+    const imgs = [...images]
 
     // Separate images with _cardN suffix from those without
     const withPos = imgs.filter(i => getCardPos(i.image_filename) !== null)
@@ -732,28 +814,62 @@ export function ScanPage() {
         <DropZone onFiles={handleFiles} />
       )}
 
-      {/* Ungrouped images */}
-      {ungrouped.length > 0 && (
+      {/* Ungrouped — whole photos that have not been split. Only the two grouping
+          buttons that make sense on a whole photo appear here; "Pair by position"
+          needs a _cardN suffix that these files don't have (see the Separated row). */}
+      {unsplit.length > 0 && (
         <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-gray-700">{t.ungroupedN(ungrouped.length)}</h2>
-            <div className="flex gap-1">
-              <button onClick={autoGroup1} className="btn-sm">{t.autoGroup1}</button>
-              <button onClick={autoGroup2} className="btn-sm">{t.autoGroup2}</button>
-              {stage === 'grouping' && groups.length === 0 && (
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-medium text-gray-700">{t.ungroupedN(unsplit.length)}</h2>
+              <p className="text-xs text-gray-400">{t.ungroupedHint}</p>
+            </div>
+            {stage === 'grouping' && (
+              <div className="flex gap-1 shrink-0">
+                <button onClick={() => autoGroup1(unsplit)} className="btn-sm">{t.autoGroup1}</button>
+                <button onClick={() => autoGroup2(unsplit)} className="btn-sm">{t.autoGroup2}</button>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {unsplit.map(img => (
+              <UngroupedTile
+                key={img.id}
+                img={img}
+                sessionId={session?.external_id ?? ''}
+                cacheBust={imgCacheBust[img.id]}
+                splitting={splittingIds.has(img.id)}
+                feedback={splitFeedback[img.id]}
+                onSplit={handleSplit}
+                onRotate={handleRotate}
+                t={t}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Separated cards — output of the scissors. "Pair by position" is the primary
+          action here: it matches the confirmed workflow of shooting all fronts in
+          one photo, flipping in place, then shooting all backs. */}
+      {separated.length > 0 && (
+        <section className="space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-medium text-gray-700">{t.separatedN(separated.length)}</h2>
+              <p className="text-xs text-gray-400">{t.separatedHint}</p>
+            </div>
+            {stage === 'grouping' && (
+              <div className="flex gap-1 shrink-0">
                 <button
-                  onClick={async () => { await autoGroup1(); startAnalysis() }}
+                  onClick={() => autoPairByPosition(separated)}
                   className="btn-primary text-sm"
                 >
-                  {t.startAnalysis}
-                </button>
-              )}
-              {canAutoPairByPos && (
-                <button onClick={autoPairByPosition} className="btn-sm bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100" title="Group images from different photos by matching card position">
                   {t.autoPairByPos}
                 </button>
-              )}
-            </div>
+                <button onClick={() => autoGroup1(separated)} className="btn-sm">{t.autoGroup1}</button>
+              </div>
+            )}
           </div>
           {hasMixedCropState && (
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
@@ -761,61 +877,18 @@ export function ScanPage() {
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            {ungrouped.map(img => (
-              <div
+            {separated.map(img => (
+              <UngroupedTile
                 key={img.id}
-                className="relative w-32 cursor-grab active:cursor-grabbing"
-                draggable
-                onDragStart={e => {
-                  e.dataTransfer.setData('imgId', String(img.id))
-                  e.dataTransfer.setData('fromGroupId', '__ungrouped__')
-                  e.dataTransfer.effectAllowed = 'move'
-                }}
-              >
-                {/* Fixed 128px box: rotating swaps the image's aspect ratio but the
-                    tile keeps its footprint, so the buttons below never move. */}
-                <div className="w-32 h-32 rounded border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden">
-                  <LightboxImage
-                    src={`/api/v2/sessions/${session?.external_id}/temp/${img.image_filename}${imgCacheBust[img.id] ? `?t=${imgCacheBust[img.id]}` : ''}`}
-                    alt={img.image_filename}
-                    className="max-w-full max-h-full object-contain"
-                  />
-                </div>
-                {/* Action buttons always visible below the image */}
-                <div className="flex gap-1 mt-1">
-                  <button
-                    className={`${ICON_BTN} bg-yellow-100 text-yellow-700 hover:bg-yellow-400 hover:text-gray-900`}
-                    disabled={splittingIds.has(img.id)}
-                    onClick={() => handleSplit(img)}
-                    title={t.splitCards}
-                    aria-label={t.splitCards}
-                  >
-                    {splittingIds.has(img.id) ? '…' : '✂️'}
-                  </button>
-                  <button
-                    className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
-                    onClick={() => handleRotate(img, 'ccw')}
-                    title={t.rotateCcw}
-                    aria-label={t.rotateCcw}
-                  >
-                    ↺
-                  </button>
-                  <button
-                    className={`${ICON_BTN} bg-gray-100 text-gray-600 hover:bg-gray-300`}
-                    onClick={() => handleRotate(img)}
-                    title={t.rotateCw}
-                    aria-label={t.rotateCw}
-                  >
-                    ↻
-                  </button>
-                </div>
-                {splitFeedback[img.id] && (
-                  <div className="absolute top-0 left-0 right-0 bg-black/70 text-white text-xs text-center py-0.5 rounded-t">
-                    {splitFeedback[img.id]}
-                  </div>
-                )}
-                <p className="text-xs text-gray-500 mt-1 truncate w-32">{img.image_filename}</p>
-              </div>
+                img={img}
+                sessionId={session?.external_id ?? ''}
+                cacheBust={imgCacheBust[img.id]}
+                splitting={splittingIds.has(img.id)}
+                feedback={splitFeedback[img.id]}
+                onSplit={handleSplit}
+                onRotate={handleRotate}
+                t={t}
+              />
             ))}
           </div>
         </section>
