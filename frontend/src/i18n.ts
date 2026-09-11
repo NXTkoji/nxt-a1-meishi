@@ -275,6 +275,9 @@ const translations = {
     outlineHintDrag: '各名刺を囲むようにドラッグしてください',
     outlineHintReady: 'すべての名刺を指定したら、下の緑のボタンを押してください。',
     outlineHintAmber: '黄色の点線は角の推定です — 名刺の端に合わせてドラッグしてください。',
+    // Footer prompt before the first outline — shorter than the instruction bar above it.
+    outlineFooterTap: '各名刺の中心をクリックしてください。',
+    outlineFooterDrag: 'ドラッグで名刺を1枚ずつ囲んでください。',
     // Extra strings the plan's list missed: the <img> alt text differs per mode.
     outlineAltTap: '各名刺の中心をタップ',
     outlineAltDrag: 'ドラッグして名刺の範囲を選択',
@@ -543,16 +546,19 @@ const translations = {
     outlineTapHeader: (n: number) => `Click the centre of each card (${n} detected)`,
     outlineDragHeader: (n: number) => `Drag around each card (${n} detected)`,
     outlineDragging: (n: number) => `Card ${n} — drag to define boundary`,
-    outlineSelectedN: (n: number) => `${n} card${n > 1 ? 's' : ''} outlined — outline more, or crop`,
-    outlineCropN: (n: number) => `Crop ${n} card${n > 1 ? 's' : ''}`,
+    outlineSelectedN: (n: number) => `${n} card${n === 1 ? '' : 's'} outlined — outline more, or crop`,
+    outlineCropN: (n: number) => `Crop ${n} card${n === 1 ? '' : 's'}`,
     outlineAlreadyOutlined: 'That card is already outlined',
     outlineDetectFailed: 'Corner detection failed — try again',
     outlineHintTap: 'Click the centre of a card once — its 4 corners are found automatically. Then drag any corner to adjust.',
     outlineHintDrag: 'Press and drag to draw a box around each card',
     outlineHintReady: 'When every card is outlined, press the green button below.',
     outlineHintAmber: 'A dashed amber outline means the corners are a guess — drag them onto the card edges.',
+    // Footer prompt before the first outline — shorter than the instruction bar above it.
+    outlineFooterTap: 'Click the centre of each business card.',
+    outlineFooterDrag: 'Drag a box around each business card.',
     // Extra strings the plan's list missed: the <img> alt text differs per mode.
-    outlineAltTap: 'Tap the center of each card',
+    outlineAltTap: 'Click the centre of each card',
     outlineAltDrag: 'Drag to select card boundaries',
   },
   'zh-TW': {
@@ -826,6 +832,9 @@ const translations = {
     outlineHintDrag: '請按住並拖曳，框選每一張名片',
     outlineHintReady: '所有名片都指定完成後，請按下方的綠色按鈕。',
     outlineHintAmber: '黃色虛線表示邊角是推測的 — 請拖曳到名片邊緣。',
+    // Footer prompt before the first outline — shorter than the instruction bar above it.
+    outlineFooterTap: '請點選每張名片的中心。',
+    outlineFooterDrag: '請逐一拖曳框住每張名片。',
     // Extra strings the plan's list missed: the <img> alt text differs per mode.
     outlineAltTap: '點選每張名片的中心',
     outlineAltDrag: '拖曳以選取名片範圍',

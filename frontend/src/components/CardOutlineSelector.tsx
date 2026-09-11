@@ -386,8 +386,11 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
             </button>
           </>
         ) : (
+          // A short prompt, deliberately not the instruction bar's full sentence: both
+          // are on screen at once before the first outline, and spec §5 gives the
+          // footer its own brief copy.
           <p className="text-center text-gray-400 text-sm">
-            {tapMode ? t.outlineHintTap : t.outlineHintDrag}
+            {tapMode ? t.outlineFooterTap : t.outlineFooterDrag}
           </p>
         )}
       </div>
