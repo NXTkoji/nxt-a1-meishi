@@ -35,13 +35,20 @@ export function CollectionPage() {
   // Browse mode: one small request describing every year/month bucket in the whole
   // collection. The page no longer fetches a fixed slab of cards and groups it in the
   // browser — that slab silently dropped everything past its limit.
-  // `isError` matters as much as `data`: a failed request leaves `facets` at its `[]`
-  // default, which would otherwise fall through to the "scan your first card" empty
-  // state and tell a user with hundreds of cards that their collection is empty.
+  //
+  // Status order — every list on this page renders in this order: `isLoadingError`
+  // (failed AND no data) → `data === undefined` (still loading) → empty → data.
+  // A retry that comes due in a hidden tab, or a dropped connection, PAUSES the query:
+  // it stays pending with no data while `isLoading` and `isError` are both false, so an
+  // `isLoading` guard falls through to "scan your first card" for a full collection.
+  // `isSuccess` fails the other way: `status` stays 'error' after a failed background
+  // refetch even though the cached data is still there, so gating on it would swap a
+  // loaded tree for a spinner and unmount every expanded month.
+  // `data` is taken without an `= []` default so "no data yet" stays distinguishable
+  // from "empty".
   const {
-    data: facets = [],
-    isLoading: facetsLoading,
-    isError: facetsError,
+    data: facets,
+    isLoadingError: facetsLoadError,
     isFetching: facetsFetching,
     refetch: refetchFacets,
   } = useQuery<CardFacet[]>({
@@ -54,9 +61,8 @@ export function CollectionPage() {
   // replaces this with a server-side search; until then it stays working so the app is
   // never broken between commits. Only fetched while a search is active.
   const {
-    data: cards = [],
-    isLoading: cardsLoading,
-    isError: cardsError,
+    data: cards,
+    isLoadingError: cardsLoadError,
     isFetching: cardsFetching,
     refetch: refetchCards,
   } = useQuery<CardListItem[]>({
@@ -69,9 +75,8 @@ export function CollectionPage() {
   // Task 7 makes the debounce real, no request fires per keystroke. (Only the search
   // input's own `value` uses `q`.)
   const {
-    data: persons = [],
-    isLoading: personsLoading,
-    isError: personsError,
+    data: persons,
+    isLoadingError: personsLoadError,
     isFetching: personsFetching,
     refetch: refetchPersons,
   } = useQuery<PersonListItem[]>({
@@ -94,8 +99,8 @@ export function CollectionPage() {
   // term as the card list; reading raw `q` here would defeat the debounce for the
   // expensive half of the search.
   const {
-    data: searchPersons = [],
-    isError: searchPersonsError,
+    data: searchPersons,
+    isLoadingError: searchPersonsLoadError,
     isFetching: searchPersonsFetching,
     refetch: refetchSearchPersons,
   } = useQuery<PersonListItem[]>({
@@ -107,27 +112,30 @@ export function CollectionPage() {
   })
 
   // Search results are built from BOTH the card list and the cross-search, so either
-  // one failing makes the results incomplete. Treat that as an error, not as
-  // "no results" (or as a silently shorter list).
-  const searchError = cardsError || searchPersonsError
+  // one failing to load makes the results incomplete. Treat that as an error, not as
+  // "no results" (or as a silently shorter list). Retry refetches only what failed.
+  const searchLoadError = cardsLoadError || searchPersonsLoadError
   const retrySearch = () => {
-    if (cardsError) refetchCards()
-    if (searchPersonsError) refetchSearchPersons()
+    if (cardsLoadError) refetchCards()
+    if (searchPersonsLoadError) refetchSearchPersons()
   }
 
   const matchingPersonIds = useMemo(
-    () => new Set(searchPersons.map(p => p.id)),
+    () => new Set((searchPersons ?? []).map(p => p.id)),
     [searchPersons],
   )
 
+  // `undefined` until BOTH queries have data: filtering without the cross-search would
+  // silently drop cards matched only through their person.
   const filteredCards = useMemo(() => {
+    if (cards === undefined || searchPersons === undefined) return undefined
     if (!debouncedQ) return cards
     return cards.filter(
       c =>
         c.person_name?.toLowerCase().includes(debouncedQ.toLowerCase()) ||
         matchingPersonIds.has(c.person_id),
     )
-  }, [cards, debouncedQ, matchingPersonIds])
+  }, [cards, searchPersons, debouncedQ, matchingPersonIds])
 
   // The three most recent months open on load. Facets arrive newest-first, so those are
   // simply the first three entries — no date arithmetic, and no assumption that "recent"
@@ -135,14 +143,14 @@ export function CollectionPage() {
   // Keys go through the shared monthKey() so they cannot drift from the format the
   // MonthSection keys below are built with.
   const eagerMonths = useMemo(
-    () => new Set(facets.slice(0, 3).map(f => monthKey(f.year, f.month))),
+    () => new Set((facets ?? []).slice(0, 3).map(f => monthKey(f.year, f.month))),
     [facets],
   )
 
   // Facets → year groups for the tree. Both levels stay newest-first.
   const facetsByYear = useMemo(() => {
     const years = new Map<number, CardFacet[]>()
-    for (const f of facets) {
+    for (const f of facets ?? []) {
       if (!years.has(f.year)) years.set(f.year, [])
       years.get(f.year)!.push(f)
     }
@@ -151,7 +159,7 @@ export function CollectionPage() {
 
   // Group persons by country_code (home first, then work), sorted by family name within
   const personsByCountry = useMemo(() => {
-    const sorted = [...persons].sort((a, b) => {
+    const sorted = [...(persons ?? [])].sort((a, b) => {
       const fa = (a.family_name ?? a.primary_name ?? '').toLowerCase()
       const fb = (b.family_name ?? b.primary_name ?? '').toLowerCase()
       return fa.localeCompare(fb)
@@ -178,7 +186,8 @@ export function CollectionPage() {
   const toggleSelect = (extId: string) =>
     setSelectedIds(prev => {
       const next = new Set(prev)
-      next.has(extId) ? next.delete(extId) : next.add(extId)
+      if (next.has(extId)) next.delete(extId)
+      else next.add(extId)
       return next
     })
 
@@ -189,21 +198,23 @@ export function CollectionPage() {
   }
 
   const selectedPersons = useMemo(
-    () => persons.filter(p => selectedIds.has(p.external_id)),
+    () => (persons ?? []).filter(p => selectedIds.has(p.external_id)),
     [persons, selectedIds],
   )
 
   const toggleYear = (year: number) =>
     setCollapsedYears(prev => {
       const next = new Set(prev)
-      next.has(year) ? next.delete(year) : next.add(year)
+      if (next.has(year)) next.delete(year)
+      else next.add(year)
       return next
     })
 
   const toggleCountry = (key: string) =>
     setCollapsedCountries(prev => {
       const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
 
@@ -266,14 +277,15 @@ export function CollectionPage() {
       {view === 'cards' && (
         debouncedQ ? (
           // Search mode (temporary shape; Task 7 makes this a server-side search).
-          cardsLoading ? (
-            <div className="text-center text-gray-400 py-12">{t.loading}</div>
-          ) : searchError ? (
-            // Checked before the empty check: a failed request is not "no results".
+          // Status order as described on the facets query: a failed request is not
+          // "no results", and neither is one that is still pending or paused.
+          searchLoadError ? (
             <LoadError
               onRetry={retrySearch}
               isRetrying={cardsFetching || searchPersonsFetching}
             />
+          ) : filteredCards === undefined ? (
+            <div className="text-center text-gray-400 py-12">{t.loading}</div>
           ) : filteredCards.length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-12">{t.noResults(debouncedQ)}</p>
           ) : (
@@ -290,11 +302,11 @@ export function CollectionPage() {
           // Browse mode: the whole collection as a year → month tree. Counts come from
           // the facets response, so every card in the database is reachable even though
           // only the expanded months are fetched.
-          facetsLoading ? (
-            <div className="text-center text-gray-400 py-12">{t.loading}</div>
-          ) : facetsError ? (
-            // Must come before the `facets.length === 0` check — see the query above.
+          // Status order — see the note on the facets query above.
+          facetsLoadError ? (
             <LoadError onRetry={() => refetchFacets()} isRetrying={facetsFetching} />
+          ) : facets === undefined ? (
+            <div className="text-center text-gray-400 py-12">{t.loading}</div>
           ) : facets.length === 0 ? (
             <EmptyState />
           ) : (
@@ -339,11 +351,12 @@ export function CollectionPage() {
 
       {/* Persons grouped by country */}
       {view === 'persons' && (
-        personsLoading ? (
-          <div className="text-center text-gray-400 py-12">{t.loading}</div>
-        ) : personsError ? (
-          // Same rule as the facets tree: a failed request must not render EmptyState.
+        // Status order — see the note on the facets query: a failed, pending or paused
+        // request must not render EmptyState.
+        personsLoadError ? (
           <LoadError onRetry={() => refetchPersons()} isRetrying={personsFetching} />
+        ) : persons === undefined ? (
+          <div className="text-center text-gray-400 py-12">{t.loading}</div>
         ) : persons.length === 0 ? (
           <EmptyState />
         ) : (

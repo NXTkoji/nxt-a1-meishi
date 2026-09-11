@@ -7,6 +7,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getPerson, listCards, deletePerson } from '../api'
 import { PersonEditor } from '../components/PersonEditor'
+import { LoadError } from '../components/LoadMore'
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
 import type { Person, CardListItem } from '../types'
@@ -23,13 +24,29 @@ export function PersonDetailPage() {
   const qc = useQueryClient()
   const extId = usePersonExtId()
 
-  const { data: person, isLoading, error } = useQuery<Person>({
+  // Rendered by query status in the order described on the facets query in
+  // CollectionPage.tsx: loading error → no data yet → data. Neither `isLoading` nor
+  // `isSuccess` is used, because a PAUSED query (retry due in a hidden tab, or offline)
+  // is neither loading nor errored yet has no data.
+  const {
+    data: person,
+    isLoadingError: personLoadError,
+    error: personError,
+    isFetching: personFetching,
+    refetch: refetchPerson,
+  } = useQuery<Person>({
     queryKey: ['person', extId],
     queryFn: () => getPerson(extId),
     enabled: !!extId,
   })
 
-  const { data: cards = [] } = useQuery<CardListItem[]>({
+  // No `= []` default: `undefined` (not loaded yet) must stay distinct from `[]` (no cards).
+  const {
+    data: cards,
+    isLoadingError: cardsLoadError,
+    isFetching: cardsFetching,
+    refetch: refetchCards,
+  } = useQuery<CardListItem[]>({
     queryKey: ['cards', { person_id: person?.id }],
     // Explicit 500 (the endpoint's cap, as ExportPage uses): without it the backend
     // default of 50 silently truncates a person's card list with no indication.
@@ -47,11 +64,24 @@ export function PersonDetailPage() {
     onError: () => showToast(t.saveError, 'error'),
   })
 
-  if (isLoading) {
-    return <div className="max-w-4xl mx-auto py-12 text-center text-gray-400">{t.loading}</div>
+  const notFound = (
+    <div className="max-w-4xl mx-auto py-12 text-center text-red-400">{t.personNotFound}</div>
+  )
+  // No id in the URL: the query is disabled and would stay pending (loading) forever.
+  if (!extId) return notFound
+  if (personLoadError) {
+    // Only a real 404 means the person does not exist. The API client throws
+    // `Error("404 Not Found: …")`; any other failure is "unreachable", not "missing".
+    if (personError?.message.startsWith('404')) return notFound
+    return (
+      <div className="max-w-4xl mx-auto py-12 px-4">
+        <LoadError onRetry={() => refetchPerson()} isRetrying={personFetching} />
+      </div>
+    )
   }
-  if (error || !person) {
-    return <div className="max-w-4xl mx-auto py-12 text-center text-red-400">{t.personNotFound}</div>
+  if (person === undefined) {
+    // Pending — whether the request is in flight or paused.
+    return <div className="max-w-4xl mx-auto py-12 text-center text-gray-400">{t.loading}</div>
   }
 
   const primaryName = person.names.find(n => n.is_current)?.full_name ?? t.noName
@@ -91,8 +121,20 @@ export function PersonDetailPage() {
         onUpdated={() => qc.invalidateQueries({ queryKey: ['person', extId] })}
       />
 
-      {/* Linked business cards */}
-      {cards.length > 0 && (
+      {/* Linked business cards — same status order as the person query above. A failed or
+          still-pending request must not look like "this person has no cards". */}
+      {cardsLoadError ? (
+        <section>
+          <h2 className="text-sm font-medium text-gray-700 mb-3">{t.linkedCards}</h2>
+          <LoadError onRetry={() => refetchCards()} isRetrying={cardsFetching} />
+        </section>
+      ) : cards === undefined ? (
+        // Pending — whether the request is in flight or paused.
+        <section>
+          <h2 className="text-sm font-medium text-gray-700 mb-3">{t.linkedCards}</h2>
+          <p className="text-xs text-gray-400">{t.loading}</p>
+        </section>
+      ) : cards.length > 0 && (
         <section>
           <h2 className="text-sm font-medium text-gray-700 mb-3">{t.linkedCards} ({cards.length})</h2>
           <div className="flex flex-wrap gap-3">
