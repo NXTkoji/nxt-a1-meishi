@@ -1591,6 +1591,24 @@ git commit -m "feat: browse the collection via a facets tree with lazily loaded 
 
 ## Task 7: Search mode — server-side, debounced, paginated
 
+> **Render loading / error / empty from data presence and `isLoadingError` — never from `isLoading` or `isSuccess`.**
+> In TanStack Query v5 (installed: 5.95.2) `isLoading` is `isPending && isFetching`. A query can
+> sit at `status: 'pending'` with `fetchStatus: 'paused'` — when a retry comes due while the tab
+> is **hidden** (tab visibility, not window focus), or after the connection drops once the page
+> has loaded (TanStack's `onlineManager` starts online and changes only on the browser's
+> `online`/`offline` events). Then `isLoading` and `isError` are both false and `data` is
+> undefined, so `isLoading ? … : isError ? … : data.length === 0 ? <Empty/>` shows the empty
+> state — "Scan your first card" to a user with 205 cards. Separately, `status` stays `'error'`
+> even when earlier data is cached, so gating on `!isSuccess` would hide loaded data behind a
+> spinner after a failed background refetch. Order the branches:
+> 1. `isLoadingError` (error **and** no data) → error UI with retry
+> 2. `data === undefined` (pending — fetching or paused) → loading
+> 3. data empty → empty state
+> 4. otherwise the data (a failed background refetch keeps it on screen)
+> Where several queries feed one view (card search results depend on the persons cross-search
+> too), the view has no data until **all** of them do.
+> Caught in the browser during Task 6 verification: the code passed build, grep and review.
+
 **Files:**
 - Create: `frontend/src/hooks/useDebounced.ts`
 - Modify: `frontend/src/pages/CollectionPage.tsx`, `frontend/src/i18n.ts`
@@ -1720,6 +1738,24 @@ git commit -m "feat: server-side debounced paginated card search"
 ---
 
 ## Task 8: Persons tab pagination
+
+> **Render loading / error / empty from data presence and `isLoadingError` — never from `isLoading` or `isSuccess`.**
+> In TanStack Query v5 (installed: 5.95.2) `isLoading` is `isPending && isFetching`. A query can
+> sit at `status: 'pending'` with `fetchStatus: 'paused'` — when a retry comes due while the tab
+> is **hidden** (tab visibility, not window focus), or after the connection drops once the page
+> has loaded (TanStack's `onlineManager` starts online and changes only on the browser's
+> `online`/`offline` events). Then `isLoading` and `isError` are both false and `data` is
+> undefined, so `isLoading ? … : isError ? … : data.length === 0 ? <Empty/>` shows the empty
+> state — "Scan your first card" to a user with 205 cards. Separately, `status` stays `'error'`
+> even when earlier data is cached, so gating on `!isSuccess` would hide loaded data behind a
+> spinner after a failed background refetch. Order the branches:
+> 1. `isLoadingError` (error **and** no data) → error UI with retry
+> 2. `data === undefined` (pending — fetching or paused) → loading
+> 3. data empty → empty state
+> 4. otherwise the data (a failed background refetch keeps it on screen)
+> Where several queries feed one view (card search results depend on the persons cross-search
+> too), the view has no data until **all** of them do.
+> Caught in the browser during Task 6 verification: the code passed build, grep and review.
 
 **Files:**
 - Modify: `frontend/src/pages/CollectionPage.tsx`
