@@ -248,6 +248,19 @@ class PersonListItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PersonFacet(BaseModel):
+    """One country group of the Persons tab and how many persons fall in it.
+
+    Returned by GET /api/v2/persons/facets. `country_code` is null for persons with no
+    home or work address carrying a country code; that group is requested as
+    ?country=none, since a query string cannot carry a null. `count` must equal what
+    GET /api/v2/persons?country=... returns and what /persons/count?country=... reports.
+    """
+    # Required but nullable: the null group is a real group, always sent explicitly.
+    country_code: Optional[str]
+    count: int
+
+
 class PersonCreate(BaseModel):
     names: List[dict]           # [{language, name_type, family_name, given_name, full_name}]
     notes: Optional[str] = None

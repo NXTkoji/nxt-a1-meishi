@@ -365,7 +365,8 @@ def _seed_person_with_names(person_ext_id, names, cards=(), contact_details=()):
 
     `names` is a list of (language, full_name, is_current) in INSERTION order, and that
     order is load-bearing: PersonName.id ascending is the resolver's tiebreak, so the
-    first current entry is the fallback name.
+    first current entry is the fallback name. A name may carry an optional fourth
+    element, family_name — the Persons tab sorts on it — which defaults to None.
     `cards` is a list of (external_id, display_name_language); it defaults to empty
     because the persons endpoint does not need cards to exist at all.
     `contact_details` is a list of (detail_type, country_code) in INSERTION order, and
@@ -382,15 +383,20 @@ def _seed_person_with_names(person_ext_id, names, cards=(), contact_details=()):
             db.add(person)
             await db.flush()
 
-            for language, full_name, is_current in names:
+            for name in names:
+                language, full_name, is_current = name[:3]
+                family_name = name[3] if len(name) > 3 else None
                 db.add(PersonName(
                     person_id=person.id,
                     language=language,
                     name_type="legal",
                     full_name=full_name,
+                    family_name=family_name,
                     is_current=is_current,
                 ))
-            await db.flush()
+                # Flushed one at a time so PersonName.id ascends in the order given;
+                # both the name fold and the sort-name rule tiebreak on it.
+                await db.flush()
 
             # Inserted one at a time with a flush between, so the ids ascend in the
             # order given — the ordering the country preference rule tiebreaks on.
@@ -885,3 +891,325 @@ def test_persons_with_no_name_or_country_are_still_listed(client_with_test_db):
     assert bare[0]["primary_name"] is None
     assert bare[0]["family_name"] is None
     assert bare[0]["country_code"] is None
+
+
+# ---------------------------------------------------------------------------
+# Persons tab as country groups. GET /api/v2/persons/facets returns each country with
+# its count; each group then loads its own people with ?country=, in display order.
+#
+# The load-bearing guarantee mirrors the card tree's: a facet count must equal what its
+# ?country= query returns and what /count?country= reports. Otherwise a group header
+# shows one number and opening the group shows another.
+#
+# A `null` facet (no home or work address carrying a country code) is queried as
+# ?country=none — a query string cannot carry a null.
+# ---------------------------------------------------------------------------
+
+
+def _country_param(code):
+    """The ?country= value that selects a facet: the code itself, or "none" for null."""
+    return "none" if code is None else code
+
+
+def _seed_country_mix():
+    """Seven persons covering every branch of the country rule.
+
+    Expected buckets: JP 1, TW 3, US 1, null 2. Each person exists to pin one rule:
+      * p-tw-home, p-jp-home — the plain case, a home address
+      * p-tw-work           — a work address alone still counts
+      * p-mixed             — work JP inserted FIRST, then home TW: home wins, and
+                              a lower ContactDetail.id cannot be why
+      * p-nullhome          — home address with a NULL code falls back to work US
+      * p-phone             — a country code on a phone row is never a country
+      * p-bare              — no contact details at all
+    """
+    _seed_person_with_names("p-tw-home", [("en", "Tw Home", True)],
+                            contact_details=[("address_home", "TW")])
+    _seed_person_with_names("p-tw-work", [("en", "Tw Work", True)],
+                            contact_details=[("address_work", "TW")])
+    _seed_person_with_names("p-jp-home", [("en", "Jp Home", True)],
+                            contact_details=[("address_home", "JP")])
+    _seed_person_with_names("p-mixed", [("en", "Mixed", True)],
+                            contact_details=[("address_work", "JP"), ("address_home", "TW")])
+    _seed_person_with_names("p-nullhome", [("en", "Null Home", True)],
+                            contact_details=[("address_home", None), ("address_work", "US")])
+    _seed_person_with_names("p-phone", [("en", "Phone", True)],
+                            contact_details=[("phone_work", "FR")])
+    _seed_person_with_names("p-bare", [("en", "Bare", True)])
+
+
+def test_person_facets_counts_match_country_query(client_with_test_db):
+    """Every facet count == its ?country= row count == its /count?country=. The guarantee."""
+    _seed_country_mix()
+
+    facets = client_with_test_db.get("/api/v2/persons/facets").json()
+
+    # Absolute expectation first, for the same reason as the card test: the loop below
+    # only proves the three endpoints agree with EACH OTHER. All three are built on
+    # _person_country, so breaking that helper moves them together and the loop still
+    # passes. This pins the buckets themselves.
+    assert facets == [
+        {"country_code": "JP", "count": 1},
+        {"country_code": "TW", "count": 3},
+        {"country_code": "US", "count": 1},
+        {"country_code": None, "count": 2},
+    ]
+
+    # Every facet, not a sample — the null bucket takes a different SQL branch
+    # (IS NULL rather than =) and is exactly where a disagreement would hide.
+    for f in facets:
+        country = _country_param(f["country_code"])
+        rows = client_with_test_db.get(
+            "/api/v2/persons", params={"country": country, "limit": 500}
+        ).json()
+        total = client_with_test_db.get(
+            "/api/v2/persons/count", params={"country": country}
+        ).json()["total"]
+        assert f["count"] == len(rows) == total, (
+            f"facet {country} says {f['count']}, list returned {len(rows)}, count says {total}"
+        )
+
+
+def test_person_facets_sum_to_total(client_with_test_db):
+    """The groups partition the collection: no person is in two buckets or in none."""
+    _seed_country_mix()
+
+    facets = client_with_test_db.get("/api/v2/persons/facets").json()
+    total = client_with_test_db.get("/api/v2/persons/count").json()["total"]
+    assert total == 7
+    assert sum(f["count"] for f in facets) == total
+
+
+def test_person_country_filter_agrees_with_row_country(client_with_test_db):
+    """Rows from ?country=XX all report country_code XX; rows from none report null.
+
+    This is what pins the SQL helper (_person_country, used by the filter) against the
+    Python fold in list_persons (which fills each row's country_code). They are two
+    encodings of one rule; if they drift, a person shows a TW flag inside the JP group.
+    p-mixed and p-nullhome are the persons on which a drifted helper would disagree.
+    """
+    _seed_country_mix()
+
+    facets = client_with_test_db.get("/api/v2/persons/facets").json()
+    seen = 0
+    for f in facets:
+        rows = client_with_test_db.get(
+            "/api/v2/persons",
+            params={"country": _country_param(f["country_code"]), "limit": 500},
+        ).json()
+        assert rows, f"facet {f} returned no rows — the agreement check would be vacuous"
+        for r in rows:
+            assert r["country_code"] == f["country_code"], (
+                f"{r['external_id']} is in group {f['country_code']} "
+                f"but its row says {r['country_code']}"
+            )
+        seen += len(rows)
+    # Guard the guard: every seeded person was actually checked.
+    assert seen == 7
+
+
+def test_person_facets_prefer_home_over_work(client_with_test_db):
+    """Work JP plus home TW counts under TW, and only ?country=TW returns the person.
+
+    The work address is inserted first, so it holds the lower ContactDetail.id: only the
+    detail_type ordering (home before work) can make this pass.
+    """
+    _seed_person_with_names(
+        "p-mixed",
+        names=[("en", "Home And Work", True)],
+        contact_details=[("address_work", "JP"), ("address_home", "TW")],
+    )
+
+    facets = client_with_test_db.get("/api/v2/persons/facets").json()
+    assert facets == [{"country_code": "TW", "count": 1}]
+
+    tw = client_with_test_db.get("/api/v2/persons", params={"country": "TW"}).json()
+    jp = client_with_test_db.get("/api/v2/persons", params={"country": "JP"}).json()
+    assert [r["external_id"] for r in tw] == ["p-mixed"]
+    assert jp == []
+
+
+def test_person_facets_ignore_non_address_and_null_codes(client_with_test_db):
+    """A phone-only country is no country; a NULL home code falls back to work."""
+    _seed_person_with_names(
+        "p-phone", names=[("en", "Phone Only", True)],
+        contact_details=[("phone_work", "FR")],
+    )
+    _seed_person_with_names(
+        "p-nullhome", names=[("en", "Null Home", True)],
+        contact_details=[("address_home", None), ("address_work", "US")],
+    )
+
+    facets = client_with_test_db.get("/api/v2/persons/facets").json()
+    assert facets == [
+        {"country_code": "US", "count": 1},
+        {"country_code": None, "count": 1},
+    ]
+
+    none_rows = client_with_test_db.get("/api/v2/persons", params={"country": "none"}).json()
+    assert [r["external_id"] for r in none_rows] == ["p-phone"]
+    # The phone's code must not be reachable as a group either.
+    assert client_with_test_db.get("/api/v2/persons", params={"country": "FR"}).json() == []
+
+
+def test_person_facets_respect_q(client_with_test_db):
+    """?q= narrows the buckets, through both halves of _person_ids_matching.
+
+    The organisation match has no contact details, so it lands in the null bucket; the
+    name match lives in JP; the bystander in TW proves the narrowing discriminates.
+    """
+    _seed_person_with_names(
+        "p-name-match", names=[("en", "Taro Matsumoto", True)],
+        contact_details=[("address_home", "JP")],
+    )
+    _seed_person_with_names(
+        "p-bystander", names=[("en", "Bob Jones", True)],
+        contact_details=[("address_home", "TW")],
+    )
+    _seed_person_at_org("p-org-match", person_name="Alice Smith", org_name="Rotary Club of Taipei")
+
+    unfiltered = client_with_test_db.get("/api/v2/persons/facets").json()
+    assert unfiltered == [
+        {"country_code": "JP", "count": 1},
+        {"country_code": "TW", "count": 1},
+        {"country_code": None, "count": 1},
+    ]
+
+    by_name = client_with_test_db.get("/api/v2/persons/facets", params={"q": "Matsumoto"}).json()
+    assert by_name == [{"country_code": "JP", "count": 1}]
+
+    by_org = client_with_test_db.get("/api/v2/persons/facets", params={"q": "Rotary"}).json()
+    assert by_org == [{"country_code": None, "count": 1}]
+
+    # q and country combine on the list and on count exactly as on the facet.
+    rows = client_with_test_db.get(
+        "/api/v2/persons", params={"q": "Rotary", "country": "none", "limit": 500}
+    ).json()
+    total = client_with_test_db.get(
+        "/api/v2/persons/count", params={"q": "Rotary", "country": "none"}
+    ).json()["total"]
+    assert [r["external_id"] for r in rows] == ["p-org-match"]
+    assert total == 1
+
+
+def test_person_facets_order(client_with_test_db):
+    """Codes ascending, null last — the frontend's current group order.
+
+    Seeded out of order so insertion order cannot produce the expected sequence. The
+    null bucket is seeded first: SQLite sorts NULL FIRST under a plain ASC, so a
+    missing null-last rule puts it at the head.
+    """
+    _seed_person_with_names("p-none", [("en", "None", True)])
+    _seed_person_with_names("p-us", [("en", "Us", True)], contact_details=[("address_home", "US")])
+    _seed_person_with_names("p-jp", [("en", "Jp", True)], contact_details=[("address_home", "JP")])
+    _seed_person_with_names("p-tw", [("en", "Tw", True)], contact_details=[("address_home", "TW")])
+
+    facets = client_with_test_db.get("/api/v2/persons/facets").json()
+    assert [f["country_code"] for f in facets] == ["JP", "TW", "US", None]
+
+
+def test_person_group_order_is_by_sort_name(client_with_test_db):
+    """Within a group: lower(family_name, else full_name), then id.
+
+    Each seeded person pins one part of the rule:
+      * "adams" before "Baker" — case-insensitive; a binary compare puts "B" (66)
+        before "a" (97)
+      * p-carter has no family name and sorts on full name "carter Xavier"; without
+        the fallback its NULL key would sort first
+      * p-doe-1 and p-doe-2 tie on "doe" (cased differently) and come back in id order
+      * p-baker's lowest-id name is NOT current and would sort first ("aardvark") if
+        the rule forgot is_current
+    Insertion order is scrambled so neither id order nor newest-first matches.
+    """
+    tw = [("address_home", "TW")]
+    _seed_person_with_names(
+        "p-baker",
+        [("en", "Aardvark Old", False, "Aardvark"), ("en", "Zed Baker", True, "Baker")],
+        contact_details=tw,
+    )
+    _seed_person_with_names("p-carter", [("en", "carter Xavier", True, None)], contact_details=tw)
+    _seed_person_with_names("p-doe-1", [("en", "John Doe", True, "Doe")], contact_details=tw)
+    _seed_person_with_names("p-adams", [("en", "Yuri adams", True, "adams")], contact_details=tw)
+    _seed_person_with_names("p-doe-2", [("en", "Jane DOE", True, "DOE")], contact_details=tw)
+
+    rows = client_with_test_db.get("/api/v2/persons", params={"country": "TW", "limit": 500}).json()
+    assert [r["external_id"] for r in rows] == [
+        "p-adams", "p-baker", "p-carter", "p-doe-1", "p-doe-2",
+    ]
+
+
+def test_person_group_ordering_is_total(client_with_test_db, captured_statements):
+    """The ?country= ORDER BY must contain persons.id as its own sort key.
+
+    Structural for the same reason as test_persons_ordering_is_total: SQLite returns
+    tied sort names in rowid order, so paging cannot observe a missing tiebreaker.
+
+    The match is on the whole compiled clause, not a substring. The sort-name key is a
+    correlated subquery whose SQL contains `person_names.person_id = persons.id`, so a
+    substring test for "persons.id" would pass with the tiebreaker deleted.
+    """
+    _seed_person_with_names("p-a", [("en", "Same", True)], contact_details=[("address_home", "TW")])
+    _seed_person_with_names("p-b", [("en", "Same", True)], contact_details=[("address_home", "TW")])
+
+    captured = captured_statements()
+
+    assert client_with_test_db.get(
+        "/api/v2/persons", params={"country": "TW", "limit": 1}
+    ).status_code == 200
+
+    person_selects = [
+        s for s in captured
+        if getattr(s, "column_descriptions", None)
+        and s.column_descriptions[0].get("entity") is Person
+        and s._order_by_clauses
+    ]
+    assert person_selects, "no ordered Person select was executed by GET /api/v2/persons?country="
+
+    order_by_sql = [
+        str(clause.compile(dialect=sqlite_dialect())).strip()
+        for clause in person_selects[-1]._order_by_clauses
+    ]
+    assert any(clause in ("persons.id", "persons.id ASC", "persons.id DESC") for clause in order_by_sql), (
+        f"ORDER BY {order_by_sql} has no unique column — LIMIT/OFFSET paging is unsound"
+    )
+
+
+def test_person_group_pagination_is_stable(client_with_test_db):
+    """30 people with one identical sort name page through with no overlap or gap.
+
+    Like test_list_pagination_is_stable, an end-to-end smoke test: SQLite's rowid order
+    for ties means it cannot by itself guard the tiebreaker — the structural test above
+    does that.
+    """
+    for i in range(30):
+        _seed_person_with_names(
+            f"p-same-{i}", [("en", "Same Name", True, "Same")],
+            contact_details=[("address_home", "TW")],
+        )
+
+    pages = [
+        client_with_test_db.get(
+            "/api/v2/persons", params={"country": "TW", "limit": 10, "offset": offset}
+        ).json()
+        for offset in (0, 10, 20)
+    ]
+    assert [len(p) for p in pages] == [10, 10, 10]
+    ids = [r["id"] for page in pages for r in page]
+    assert len(set(ids)) == 30
+
+
+@pytest.mark.parametrize("endpoint", ["/api/v2/persons", "/api/v2/persons/count"])
+@pytest.mark.parametrize("country", [
+    "tw",    # lowercase — codes are stored uppercase, so this would silently match nothing
+    "TWN",   # alpha-3
+    "",      # empty — must not be read as "no filter"
+])
+def test_person_country_param_rejects_malformed(client_with_test_db, endpoint, country):
+    assert client_with_test_db.get(endpoint, params={"country": country}).status_code == 422
+
+
+@pytest.mark.parametrize("endpoint", ["/api/v2/persons", "/api/v2/persons/count"])
+def test_person_country_param_validated(client_with_test_db, endpoint):
+    """The pattern accepts what the endpoints take: an alpha-2 code and the none sentinel."""
+    assert client_with_test_db.get(endpoint, params={"country": "none"}).status_code == 200
+    assert client_with_test_db.get(endpoint, params={"country": "TW"}).status_code == 200

@@ -32,6 +32,7 @@ BOUNDED_ENDPOINTS = [
     "/api/v2/cards/facets",
     "/api/v2/cards/count",
     "/api/v2/persons",
+    "/api/v2/persons/facets",
     "/api/v2/persons/count",
 ]
 
@@ -59,10 +60,38 @@ def test_card_list_costs_a_constant_number_of_queries(
     # GET /api/v2/cards is the busiest, at four statements: the card page, its
     # eager-loaded sides (selectinload), the sync-history lookup, and the batched name
     # lookup. GET /api/v2/persons is three: the person page, the batched name lookup
-    # and the batched country lookup. /facets and both /count endpoints are one
+    # and the batched country lookup. Both /facets and both /count endpoints are one
     # statement each. The bound sits just above four on purpose — the previous `< 15`
     # left room for a 3.5x constant regression.
     assert n <= 6, f"{n} queries for 60 rows on {endpoint} — N+1 regression"
+
+
+def test_person_country_group_costs_three_statements(client_with_test_db, query_counter):
+    """?country= adds a filter and a different ORDER BY, not statements.
+
+    Both new pieces (the derived-country filter and the sort-name key) are correlated
+    subqueries inside the one paginated Person statement, so a country group costs
+    the same three statements as the unfiltered list. The bound here is exact rather
+    than the shared `<= 6`, because three is the whole claim.
+
+    `country=none` is used because the seeder creates no contact details: all 60
+    persons land in the null bucket, so the batched lookups run over a full page.
+    """
+    _seed_cards(
+        [(date(2026, 9, 1), datetime(2026, 9, 1, 0, i % 60), f"Person {i}") for i in range(60)],
+        prefix="qc-country",
+    )
+
+    resp, n = query_counter(
+        client_with_test_db,
+        lambda: client_with_test_db.get(
+            "/api/v2/persons", params={"country": "none", "limit": 500}
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert len(resp.json()) == 60, "country=none returned too few rows — the bound would be vacuous"
+    assert n <= 3, f"{n} statements for one country group — expected the page plus two lookups"
 
 
 # Only the list endpoints: /facets and /count return a scalar or a handful of buckets,
