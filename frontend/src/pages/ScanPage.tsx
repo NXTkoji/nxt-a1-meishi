@@ -393,28 +393,46 @@ export function ScanPage() {
   // (Ungrouped row passes `unsplit`, Separated row passes `separated`) rather than
   // closing over the whole `ungrouped` array, so each row's button only touches
   // that row's images.
-  const autoGroup1 = async (images: SessionImage[]) => {
-    // Remove any existing empty groups first
-    const keepGroups = groups.filter(g => g.images.length > 0)
-    setGroups(keepGroups)
+  // Grouping runs are async — one request per image — and each starts by pruning
+  // empty groups. A second grouping click while a run is in flight (easy now that
+  // the Ungrouped and Separated rows each have buttons) would prune the groups the
+  // first run just created but has not filled yet, stranding its images. So only
+  // one run at a time: a click during a run is ignored. A ref, not state, because
+  // the guard must flip synchronously, before any re-render.
+  const groupingInFlight = useRef(false)
+  const runExclusive = async (run: () => Promise<void>) => {
+    if (groupingInFlight.current) return
+    groupingInFlight.current = true
+    try {
+      await run()
+    } finally {
+      groupingInFlight.current = false
+    }
+  }
+
+  // Drop groups that hold no images. A functional update, so it prunes the latest
+  // groups rather than the snapshot captured when the click handler rendered.
+  const pruneEmptyGroups = () => setGroups(prev => prev.filter(g => g.images.length > 0))
+
+  const autoGroup1 = (images: SessionImage[]) => runExclusive(async () => {
+    pruneEmptyGroups()
     for (const img of images) {
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(img, id, 0)
     }
-  }
+  })
 
-  const autoGroup2 = async (images: SessionImage[]) => {
+  const autoGroup2 = (images: SessionImage[]) => runExclusive(async () => {
     // Pair every 2 images as front+back of one card
-    const keepGroups = groups.filter(g => g.images.length > 0)
-    setGroups(keepGroups)
+    pruneEmptyGroups()
     for (let i = 0; i < images.length; i += 2) {
       const id = crypto.randomUUID()
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(images[i], id, 0)
       if (images[i + 1]) await assignToGroup(images[i + 1], id, 1)
     }
-  }
+  })
 
   // Display-only partition of `ungrouped`. Images produced by the scissors carry a
   // _cardN suffix (see module-scope `getCardPos`); everything else is a whole photo
@@ -447,9 +465,8 @@ export function ScanPage() {
   // Images with the same position number (from different source photos) become
   // front/back sides of the same card group. Also handles a fronts-only batch
   // (odd trailing prefix) correctly — see the loop below.
-  const autoPairByPosition = async (images: SessionImage[]) => {
-    const keepGroups = groups.filter(g => g.images.length > 0)
-    setGroups(keepGroups)
+  const autoPairByPosition = (images: SessionImage[]) => runExclusive(async () => {
+    pruneEmptyGroups()
     const imgs = [...images]
 
     // Separate images with _cardN suffix from those without
@@ -499,7 +516,7 @@ export function ScanPage() {
       setGroups(prev => [...prev, newGroup(id)])
       await assignToGroup(img, id, 0)
     }
-  }
+  })
 
   const handleSplit = async (img: SessionImage) => {
     if (!session) return
