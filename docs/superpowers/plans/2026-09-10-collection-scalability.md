@@ -1787,7 +1787,10 @@ Hard-refresh, then:
 5. Search a term matching more than 50 cards → **Load more** appends the next 50 and disappears
    at the total.
 6. Search `徐子恆` → his card appears, even though he is outside the newest 200.
-7. Clear the box → the browse tree returns, still expanded as before.
+7. Clear the box → the browse tree returns about 300 ms later. Year collapse is kept and the three
+   newest months are open again, but months opened or closed **by hand** reset: the search branch
+   unmounts the tree. That predates Task 7 (verified in the browser: a hand-opened May came back
+   collapsed, a hand-closed September came back open), so it is not a regression.
 8. If the scan/occasion plan has landed: search an occasion name → its cards appear.
 
 - [ ] **Step 6: Commit**
