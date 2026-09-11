@@ -75,6 +75,14 @@ const translations = {
     emptyCta: '最初の名刺をスキャン',
     noName: '(名前なし)',
     unknownCountry: '国不明',
+    resultsN: (n: number) => `${n}件`,
+    loadMore: 'さらに読み込む',
+    showingNofM: (n: number, m: number) => `${m}件中 ${n}件を表示`,
+    noResults: (q: string) => `「${q}」に一致する名刺はありません`,
+    noPersonsMatch: (q: string) => `「${q}」に一致する人物はいません`,
+    // Shown when a list request fails — must never be confused with an empty result.
+    loadError: '読み込みに失敗しました',
+    retry: '再試行',
 
     // ParsedCardEditor
     nameSection: (n: number) => `名前 ${n}`,
@@ -298,6 +306,14 @@ const translations = {
     emptyCta: 'Scan your first card',
     noName: '(No name)',
     unknownCountry: 'Unknown Country',
+    resultsN: (n: number) => `${n} result${n === 1 ? '' : 's'}`,
+    loadMore: 'Load more',
+    showingNofM: (n: number, m: number) => `Showing ${n} of ${m}`,
+    noResults: (q: string) => `No cards match "${q}"`,
+    noPersonsMatch: (q: string) => `No persons match "${q}"`,
+    // Shown when a list request fails — must never be confused with an empty result.
+    loadError: 'Failed to load',
+    retry: 'Retry',
 
     // ParsedCardEditor
     nameSection: (n: number) => `Name ${n}`,
@@ -520,6 +536,14 @@ const translations = {
     emptyCta: '掃描第一張名片',
     noName: '(無姓名)',
     unknownCountry: '國家不明',
+    resultsN: (n: number) => `${n} 筆`,
+    loadMore: '載入更多',
+    showingNofM: (n: number, m: number) => `顯示 ${m} 筆中的 ${n} 筆`,
+    noResults: (q: string) => `沒有符合「${q}」的名片`,
+    noPersonsMatch: (q: string) => `沒有符合「${q}」的人物`,
+    // Shown when a list request fails — must never be confused with an empty result.
+    loadError: '載入失敗',
+    retry: '重試',
 
     // ParsedCardEditor
     nameSection: (n: number) => `姓名 ${n}`,

@@ -14,6 +14,20 @@ from app.schemas.parsed_card import MatchResult, ParsedCard
 
 
 # ---------------------------------------------------------------------------
+# Shared — models used by more than one resource
+# ---------------------------------------------------------------------------
+
+class CountOut(BaseModel):
+    """Total number of rows matching a filter set, with no rows fetched.
+
+    Deliberately resource-agnostic: this docstring is what FastAPI publishes as the
+    OpenAPI `description`, and the model backs both GET /api/v2/cards/count and
+    GET /api/v2/persons/count. Naming one resource here mislabels the other in /docs.
+    """
+    total: int
+
+
+# ---------------------------------------------------------------------------
 # Scan Sessions
 # ---------------------------------------------------------------------------
 
@@ -139,6 +153,17 @@ class CardListItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CardFacet(BaseModel):
+    """One year/month bucket and how many cards fall in it.
+
+    Returned by GET /api/v2/cards/facets. The Collection tree is built from these,
+    so `count` must equal what GET /api/v2/cards?month=YYYY-MM actually returns.
+    """
+    year: int
+    month: int
+    count: int
+
+
 # ---------------------------------------------------------------------------
 # Persons
 # ---------------------------------------------------------------------------
@@ -221,6 +246,19 @@ class PersonListItem(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PersonFacet(BaseModel):
+    """One country group of the Persons tab and how many persons fall in it.
+
+    Returned by GET /api/v2/persons/facets. `country_code` is null for persons with no
+    home or work address carrying a country code; that group is requested as
+    ?country=none, since a query string cannot carry a null. `count` must equal what
+    GET /api/v2/persons?country=... returns and what /persons/count?country=... reports.
+    """
+    # Required but nullable: the null group is a real group, always sent explicitly.
+    country_code: Optional[str]
+    count: int
 
 
 class PersonCreate(BaseModel):

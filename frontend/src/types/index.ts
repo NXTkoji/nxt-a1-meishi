@@ -139,6 +139,19 @@ export interface CardListItem {
   synced_destinations: string[]
 }
 
+/** One year/month bucket from GET /api/v2/cards/facets.
+ *
+ *  `month` is 1-12 (not 0-indexed like JS Date.getMonth()). `count` is authoritative:
+ *  the backend buckets by the same filing-date expression that `?month=YYYY-MM` filters
+ *  on, so a bucket's count always equals the number of rows that month query returns.
+ *  That equality is what lets the Collection tree show a correct count for a month it
+ *  has not fetched yet. */
+export interface CardFacet {
+  year: number
+  month: number
+  count: number
+}
+
 // Persons
 export interface PersonName {
   id: number
@@ -203,6 +216,14 @@ export interface PersonListItem {
   family_name?: string
   country_code?: string
   created_at: string
+}
+
+/** One country bucket of the Persons tab, from GET /api/v2/persons/facets.
+ *  `country_code` is null for persons with no derivable country; the endpoint sorts
+ *  codes ascending with that null bucket last. */
+export interface PersonFacet {
+  country_code: string | null
+  count: number
 }
 
 export interface MergeResult {

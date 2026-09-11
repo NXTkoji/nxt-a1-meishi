@@ -10,15 +10,13 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete as sa_delete, func, or_, select, update
+from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.auth import verify_api_key
 from app.db.models import (
     Card,
     ContactDetail,
-    Organization,
     OrganizationName,
     Person,
     PersonName,
@@ -29,10 +27,12 @@ from app.db.models import (
 from app.db.session import get_db
 from app.schemas.api import (
     ContactDetailOut,
+    CountOut,
     MergeRequest,
     MergeResult,
     OrgNameOut,
     PersonCreate,
+    PersonFacet,
     PersonListItem,
     PersonNameOut,
     PersonOut,
@@ -127,69 +127,310 @@ async def _load_person_out(db: AsyncSession, person: Person) -> PersonOut:
     )
 
 
+async def _person_ids_matching(db: AsyncSession, q: str) -> set[int]:
+    """Person ids whose current name or current organisation name matches q.
+
+    Shared by list_persons and count_persons so the two cannot disagree — a pager
+    sized from /count that does not match the rows the list returns is worse than no
+    pager at all.
+
+    The ids are materialised into a Python set and fed to an `IN (...)`, which is
+    bounded by the number of persons in the database, not by `limit`. That is fine at
+    the scale this app runs at (hundreds).
+
+    At tens of thousands of rows the fix is NOT a correlated subquery: that would move
+    the same work inside the outer query without reducing it. Both predicates here are
+    `ilike('%q%')`, a leading-wildcard match, which no B-tree index can serve — every
+    row of person_names and organization_names is scanned either way. The real answer
+    at that scale is a full-text index (SQLite FTS5) over the two name columns, with
+    this function querying that instead of LIKE.
+    """
+    like = f"%{q}%"
+    # Current person names.
+    matched_name_ids = (await db.execute(
+        select(PersonName.person_id)
+        .where(PersonName.is_current == True, PersonName.full_name.ilike(like))  # noqa: E712
+    )).scalars().all()
+    # Current organisation names, reached through the person's positions.
+    matched_org_ids = (await db.execute(
+        select(Position.person_id)
+        .join(OrganizationName, OrganizationName.org_id == Position.org_id)
+        .where(OrganizationName.is_current == True, OrganizationName.name.ilike(like))  # noqa: E712
+    )).scalars().all()
+    return set(matched_name_ids) | set(matched_org_ids)
+
+
+# ── Country groups ────────────────────────────────────────────────────────────
+#
+# The Persons tab shows people grouped by country, each group sorted by family name.
+# GET /facets lists the groups with their counts; each group then pages through its
+# own people with GET ?country=XX, already in display order. The two helpers below are
+# the single SQL encoding of "which country" and "which order" — facets, list and count
+# all go through them, so a group header's count cannot disagree with the group's rows.
+
+# The ?country= value selecting persons with NO derived country. A query string cannot
+# carry a null, and "none" cannot collide with a real code: the pattern admits only two
+# UPPERCASE letters or this exact lowercase word.
+COUNTRY_NONE = "none"
+COUNTRY_PATTERN = r"^([A-Z]{2}|none)$"
+COUNTRY_DESCRIPTION = (
+    "Restrict to one country group: an uppercase ISO alpha-2 code (the person's home "
+    "address country, else work address country), or 'none' for persons with neither. "
+    "With this set, rows come back in the tab's display order (family name) instead of "
+    "newest first."
+)
+
+
+def _person_country():
+    """First non-null country_code among address_home, then address_work.
+
+    A correlated scalar subquery on Person: usable in WHERE, and as a column of a
+    select over Person (person_facets groups by it that way).
+
+    Must agree with the batched country fold in list_persons, which fills each row's
+    country_code in Python from the same three predicates and the same ordering.
+    test_person_country_filter_agrees_with_row_country pins the two against each other.
+
+    `detail_type ASC` encodes home-before-work only because "address_home" <
+    "address_work" alphabetically; renaming either type silently changes the rule.
+    NULL codes are excluded in the WHERE rather than skipped afterwards, because a
+    NULL home address would otherwise sort first and win.
+    """
+    return (
+        select(ContactDetail.country_code)
+        .where(
+            ContactDetail.person_id == Person.id,
+            ContactDetail.detail_type.in_(["address_home", "address_work"]),
+            ContactDetail.country_code.isnot(None),
+        )
+        .order_by(ContactDetail.detail_type.asc(), ContactDetail.id.asc())
+        .limit(1)
+        .correlate(Person)
+        .scalar_subquery()
+    )
+
+
+def _person_sort_name():
+    """The tab's display order: family name, else full name, of the lowest-id current name.
+
+    Lowercased so "adams" sorts before "Baker". The key follows the frontend's
+    `(family_name ?? primary_name ?? '').toLowerCase()`, with two known differences:
+      * SQLite's lower() folds ASCII only.
+      * SQLite compares Unicode code points, where localeCompare uses the locale's
+        collation. With an "en" locale the two agree on CJK names; with "ja" or
+        "zh-TW" they do not (李/王 and 陳/林 order differently), because those locales
+        collate by reading or stroke order.
+    So CJK names are ordered by code point, not by the UI locale's stroke or reading
+    order. This is intentional: the frontend renders this server order as it arrives,
+    with no client re-sort, because a re-sort would move rows already on screen when a
+    later page arrives. A Japanese or Traditional Chinese UI therefore shows CJK names
+    in code-point order.
+
+    "Lowest-id current name" is the same row the batched name fold in list_persons
+    picks, so the key a person is sorted by belongs to the name the row displays.
+    A person with no current name yields NULL, which SQLite sorts FIRST under ASC —
+    the frontend's '' fallback sorts those first too.
+    """
+    return (
+        select(func.lower(func.coalesce(PersonName.family_name, PersonName.full_name)))
+        .where(PersonName.person_id == Person.id, PersonName.is_current == True)  # noqa: E712
+        .order_by(PersonName.id.asc())
+        .limit(1)
+        .correlate(Person)
+        .scalar_subquery()
+    )
+
+
+async def _filter_persons(db: AsyncSession, stmt, *, q: Optional[str], country: Optional[str]):
+    """Apply the Persons tab's filter set to a select whose FROM contains Person.
+
+    Single owner of the WHERE clause that list_persons, count_persons and person_facets
+    share, so the three cannot disagree on who is in a group. person_facets passes
+    country=None: it produces the country groups rather than consuming one.
+
+    `country` is pattern-validated at each endpoint, so it is either None, the
+    COUNTRY_NONE sentinel, or two uppercase letters.
+    """
+    if q:
+        stmt = stmt.where(Person.id.in_(await _person_ids_matching(db, q)))
+    if country == COUNTRY_NONE:
+        # `== None` would also compile to IS NULL, but say it explicitly: a plain
+        # `= :param` bound to NULL is never true in SQL.
+        stmt = stmt.where(_person_country().is_(None))
+    elif country is not None:
+        stmt = stmt.where(_person_country() == country)
+    return stmt
+
+
 @router.get("", response_model=List[PersonListItem])
 async def list_persons(
-    q: Optional[str] = Query(None, description="Search by name"),
-    limit: int = Query(50, le=200),
+    q: Optional[str] = Query(None, description="Search by name or organisation"),
+    country: Optional[str] = Query(None, pattern=COUNTRY_PATTERN, description=COUNTRY_DESCRIPTION),
+    # ge=1 is not cosmetic: SQLite reads LIMIT -1 as "no limit", so ?limit=-1 used to
+    # return every row. The 500 cap matches GET /api/v2/cards and is what bounds the
+    # two batched lookups below — both the IN (...) parameter count and the rows held
+    # in memory. It was 200, which is under the live person count, so the tail of the
+    # collection was unreachable at any offset the frontend asked for.
+    limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    if q:
-        # Search in current person names
-        matched_name_ids = (await db.execute(
-            select(PersonName.person_id)
-            .where(PersonName.is_current == True, PersonName.full_name.ilike(f"%{q}%"))  # noqa: E712
-        )).scalars().all()
-        # Also search in org names (via Position → OrganizationName)
-        matched_org_ids = (await db.execute(
-            select(Position.person_id)
-            .join(OrganizationName, OrganizationName.org_id == Position.org_id)
-            .where(OrganizationName.is_current == True, OrganizationName.name.ilike(f"%{q}%"))  # noqa: E712
-        )).scalars().all()
-        all_ids = set(matched_name_ids) | set(matched_org_ids)
-        stmt = select(Person).where(Person.id.in_(all_ids))
+    """One page of the collection's Persons tab, optionally filtered by ?q= and ?country=.
+
+    Shape: build one ordered, paginated statement (search, browse and country-group
+    requests all share it) → fetch the page of Person rows → two batched lookups keyed
+    on that page's ids, one for names and one for countries → assemble the list items
+    in the page's order. Fixed cost of three queries regardless of page size; the
+    country filter and sort-name key are subqueries inside the first statement, not
+    extra statements.
+    """
+    stmt = await _filter_persons(db, select(Person), q=q, country=country)
+
+    # ORDER BY has to be a *total* order or LIMIT/OFFSET paging is unsound: rows that
+    # tie on the leading key may come back in a different order per query, so page 2
+    # can repeat or skip a row from page 1. Person.id breaks every tie in both branches.
+    if country is None:
+        # Browse and search: newest first, unchanged — existing callers rely on it.
+        # Every person from one import batch ties on created_at.
+        stmt = stmt.order_by(Person.created_at.desc(), Person.id.desc())
     else:
-        stmt = select(Person).order_by(Person.created_at.desc()).limit(limit).offset(offset)
+        # A country group is paged in the order the tab DISPLAYS it. Groups load one
+        # page at a time, so if the server paged newest-first and the client sorted by
+        # name, "Load more" would insert people into the middle of the rows already on
+        # screen. Paging in display order means each page only ever appends.
+        # Same-family-name persons tie on the sort key, hence the id tiebreak.
+        stmt = stmt.order_by(_person_sort_name().asc(), Person.id.asc())
+    stmt = stmt.limit(limit).offset(offset)
 
     persons = (await db.execute(stmt)).scalars().all()
+    person_ids = [p.id for p in persons]
+    if not person_ids:
+        # Nothing to look up; also keeps the two `IN ()` statements below off the wire.
+        return []
 
-    items = []
-    for p in persons:
-        name_row = (await db.execute(
-            select(PersonName.full_name, PersonName.family_name)
-            .where(PersonName.person_id == p.id, PersonName.is_current == True)  # noqa: E712
-            .order_by(PersonName.id.asc())
-            .limit(1)
-        )).first()
-        primary_name = name_row[0] if name_row else None
-        family_name = name_row[1] if name_row else None
+    # Names for the whole page in ONE query. This used to be a per-person SELECT ...
+    # LIMIT 1 inside the item loop, costing one sequential round trip per row.
+    #
+    # The ORDER BY is the entire correctness argument: `person_id, id` means the first
+    # row seen for a person is its lowest-id current name, which is exactly the row the
+    # old LIMIT 1 returned. `setdefault` keeps that first row and ignores the rest.
+    # Unlike the cards list there is no per-row language preference to apply here, so
+    # this is a plain fold rather than a picker function.
+    name_rows = (await db.execute(
+        select(PersonName.person_id, PersonName.full_name, PersonName.family_name)
+        .where(
+            PersonName.person_id.in_(person_ids),
+            PersonName.is_current == True,  # noqa: E712
+        )
+        .order_by(PersonName.person_id.asc(), PersonName.id.asc())
+    )).all()
+    # Singular "name": this dict holds only the WINNING name per person. cards.py:303
+    # uses `names_by_person` for a dict of every candidate name per person, which the
+    # picker then chooses from — same identifier, different shape, in two files a
+    # reader opens side by side. Keep the two names distinct.
+    name_by_person: dict[int, tuple[Optional[str], Optional[str]]] = {}
+    for pid, full, family in name_rows:
+        name_by_person.setdefault(pid, (full, family))
 
-        # Country: home address first, then work address
-        country_row = (await db.execute(
-            select(ContactDetail.country_code)
-            .where(
-                ContactDetail.person_id == p.id,
-                ContactDetail.detail_type.in_(["address_home", "address_work"]),
-                ContactDetail.country_code.isnot(None),
-            )
-            .order_by(
-                # address_home sorts before address_work
-                ContactDetail.detail_type.asc(),
-                ContactDetail.id.asc(),
-            )
-            .limit(1)
-        )).first()
-        country_code = country_row[0] if country_row else None
+    # Countries for the whole page in ONE query — same story, same fold.
+    #
+    # This fold and _person_country are two encodings of one rule: this one fills the
+    # row's country_code, that one decides which ?country= group the row is in. Change
+    # them together; test_person_country_filter_agrees_with_row_country catches drift.
+    #
+    # The preference is "home address, else work address", and it is encoded as
+    # `detail_type ASC`. That works only because "address_home" sorts before
+    # "address_work" alphabetically: renaming either detail_type (to "address_office",
+    # say) silently changes which country a person shows. NULL country codes are
+    # filtered out in SQL rather than skipped in the fold, because a NULL home address
+    # would otherwise sort first and win.
+    country_rows = (await db.execute(
+        select(ContactDetail.person_id, ContactDetail.country_code)
+        .where(
+            ContactDetail.person_id.in_(person_ids),
+            ContactDetail.detail_type.in_(["address_home", "address_work"]),
+            ContactDetail.country_code.isnot(None),
+        )
+        .order_by(
+            ContactDetail.person_id.asc(),
+            ContactDetail.detail_type.asc(),
+            ContactDetail.id.asc(),
+        )
+    )).all()
+    country_by_person: dict[int, str] = {}
+    for pid, code in country_rows:
+        country_by_person.setdefault(pid, code)
 
-        items.append(PersonListItem(
+    return [
+        PersonListItem(
             id=p.id,
             external_id=p.external_id,
-            primary_name=primary_name,
-            family_name=family_name,
-            country_code=country_code,
+            # A person with no current name at all keeps both fields null, exactly as
+            # the old `if name_row else None` did.
+            primary_name=name_by_person.get(p.id, (None, None))[0],
+            family_name=name_by_person.get(p.id, (None, None))[1],
+            country_code=country_by_person.get(p.id),
             created_at=p.created_at,
-        ))
-    return items
+        )
+        for p in persons
+    ]
+
+
+# /facets and /count MUST precede GET /{person_ext_id} below. FastAPI matches routes in
+# declaration order, so declared after it, "facets" and "count" would be captured as
+# person external IDs and these endpoints would answer 404 "Person not found".
+@router.get("/facets", response_model=List[PersonFacet])
+async def person_facets(
+    q: Optional[str] = Query(None, description="Search by name or organisation"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Country groups with counts: codes ascending, the no-country group last.
+
+    One statement (plus the two id lookups _person_ids_matching runs first when ?q= is
+    given), however many persons exist. Each group's count equals what
+    GET ?country=<code> (or ?country=none for the null group) returns, because all
+    three endpoints filter through _filter_persons and derive the country through
+    _person_country.
+
+    Deliberately takes no ?country=: this endpoint PRODUCES the groups that filter
+    consumes. FastAPI ignores unknown query params, so ?country= here is a silent no-op.
+    """
+    # Derive each person's country once in an inner select, then group the outer one
+    # by that column. Grouping directly by the scalar subquery would make SQLAlchemy
+    # render the whole subquery again in GROUP BY, a second copy of the rule in the SQL.
+    inner = select(Person.id, _person_country().label("country_code"))
+    inner = (await _filter_persons(db, inner, q=q, country=None)).subquery()
+    code = inner.c.country_code
+
+    stmt = (
+        select(code, func.count().label("count"))
+        .group_by(code)
+        # Null last, then codes ascending. `code IS NULL` is 0 for real codes and 1 for
+        # the null group, so sorting on it first pushes null to the end. This matches
+        # the frontend's current group comparator (`if (!a) return 1`). A plain ASC
+        # would put null FIRST, which is SQLite's default for NULLs.
+        .order_by(code.is_(None).asc(), code.asc())
+    )
+
+    rows = (await db.execute(stmt)).all()
+    return [PersonFacet(country_code=r.country_code, count=r.count) for r in rows]
+
+
+@router.get("/count", response_model=CountOut)
+async def count_persons(
+    q: Optional[str] = Query(None, description="Search by name or organisation"),
+    country: Optional[str] = Query(None, pattern=COUNTRY_PATTERN, description=COUNTRY_DESCRIPTION),
+    db: AsyncSession = Depends(get_db),
+):
+    """How many persons match ?q= and ?country=, without fetching any rows.
+
+    Takes the same filters as list_persons minus limit/offset, so the caller can size a
+    pager before requesting a page.
+    """
+    stmt = await _filter_persons(db, select(func.count(Person.id)), q=q, country=country)
+    # COUNT(...) with no GROUP BY always yields a row holding an integer, so the
+    # `or 0` is belt-and-braces against a driver returning None, not a real NULL case.
+    return CountOut(total=await db.scalar(stmt) or 0)
 
 
 @router.get("/{person_ext_id}", response_model=PersonOut)

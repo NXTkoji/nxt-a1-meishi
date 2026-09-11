@@ -36,6 +36,7 @@ import { CropModal } from '../components/CropModal'
 import CardOutlineSelector from '../components/CardOutlineSelector'
 import type { Point } from '../api/sessions'
 import { useLang } from '../LangContext'
+import { todayLocalISODate } from '../lib/dates'
 import type {
   AnalysisEvent,
   CardDraft,
@@ -74,8 +75,26 @@ type Stage = 'idle' | 'uploading' | 'grouping' | 'analyzing' | 'review' | 'confi
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// A fresh card group. Every non-manual group starts here: photo uploads, "add card",
+// splits, and groups rebuilt from a stored session.
+//
+// receivedDate defaults to today on the user's local calendar. Without it, a card
+// scanned from a photo was confirmed with received_date = null unless the user
+// touched the date input — the input *looked* filled (it had its own "today"
+// fallback) but nothing was sent, so the backend filed the card by its UTC
+// created_at instead, up to a day (or a month section) off in Taipei.
+//
+// Restoring a stored session spreads the saved state over this object
+// ({ ...newGroup(id), ...saved }), so a date the user picked still wins; only groups
+// saved without one pick up this default.
 function newGroup(tempCardId: string): CardGroup {
-  return { tempCardId, images: [], myCompanyIds: [], status: 'pending' }
+  return {
+    tempCardId,
+    images: [],
+    myCompanyIds: [],
+    receivedDate: todayLocalISODate(),
+    status: 'pending',
+  }
 }
 
 // Next free side_order for a group.
@@ -204,7 +223,9 @@ export function ScanPage() {
           images: [],
           myCompanyIds: [],
           occasionId: undefined,
-          receivedDate: new Date().toISOString().slice(0, 10),
+          // Local calendar date, not toISOString() (UTC): in Taipei a card entered
+          // before 08:00 would otherwise be dated yesterday.
+          receivedDate: todayLocalISODate(),
           notes: undefined,
           status: 'done',
           parsed: {
@@ -621,7 +642,10 @@ export function ScanPage() {
         match_person_id: g.matchPersonId,
         my_company_ids: g.myCompanyIds,
         occasion_id: g.occasionId,
-        received_date: g.receivedDate,
+        // A cleared date input gives "" — send "no date" instead. The backend's
+        // Optional[date] rejects "", which failed the confirm for EVERY card in the
+        // session with a 422. Same rule as CardDetailPage (value || null).
+        received_date: g.receivedDate || undefined,
         notes: g.notes,
       }))
     try {
@@ -1351,7 +1375,12 @@ function CardGroupCard({
                 <label className="text-gray-500 block mb-1">{t.receivedDateLabel}</label>
                 <input
                   type="date"
-                  value={group.receivedDate ?? new Date().toISOString().slice(0, 10)}
+                  // Show exactly what confirm will send. Every group gets a default
+                  // date when it is created (newGroup / the manual-entry group), so
+                  // the '' branch is only a guard for the optional type. Do not put a
+                  // "today" fallback here: that once made the input look filled while
+                  // received_date was actually sent as null.
+                  value={group.receivedDate ?? ''}
                   onChange={e => onMetaChange({ receivedDate: e.target.value })}
                   className="border border-gray-300 rounded px-2 py-0.5 text-xs"
                 />

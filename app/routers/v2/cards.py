@@ -7,14 +7,15 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.auth import verify_api_key
-from app.db.models import Card, CardMyCompany, CardSide, Person, PersonName
+from app.db.models import Card, CardMyCompany, CardSide, CardSyncHistory, Person, PersonName
 from app.db.session import get_db
-from app.schemas.api import CardListItem, CardOut, CardSideOut
+from app.schemas.api import CardFacet, CardListItem, CardOut, CardSideOut, CountOut
 from app.services import image_store
 from app.services.contact_sync import auto_sync_card
 
@@ -27,36 +28,57 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=List[CardListItem])
-async def list_cards(
-    person_id: Optional[int] = Query(None),
-    occasion_id: Optional[int] = Query(None),
-    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
-    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
-    year: Optional[int] = Query(None),
-    month: Optional[str] = Query(None, description="YYYY-MM"),
-    date: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
-    limit: int = Query(50, le=500),
-    offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
-):
-    from datetime import date as date_type
-    from sqlalchemy import exists, or_, and_, extract
-    from app.db.models import (
-        CardMyCompany, ContactDetail, Organization, OrganizationName,
-        PersonName as PersonNameModel, Position, PositionDetail,
-        CardSyncHistory,
-    )
+def _filing_date() -> ColumnElement:
+    """The date a card is filed under: received_date, or created_at when it is NULL.
 
-    stmt = (
-        select(Card)
-        .where(Card.deleted_at.is_(None))
-        .order_by(Card.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-        .options(selectinload(Card.sides))
-    )
+    Every date filter and the facets GROUP BY are built from this one expression, so a
+    month header count cannot disagree with the cards that month actually returns.
+    Spec: docs/superpowers/specs/2026-09-09-collection-scalability-design.md §3
+    """
+    return func.coalesce(Card.received_date, Card.created_at)
+
+
+def _filing_year() -> ColumnElement:
+    """Year of the filing date, as a real Python int."""
+    return func.extract('year', _filing_date())
+
+
+def _filing_month() -> ColumnElement:
+    """Month (1-12) of the filing date, as a real Python int."""
+    return func.extract('month', _filing_date())
+
+
+def _apply_card_filters(
+    stmt,
+    *,
+    person_id: Optional[int] = None,
+    occasion_id: Optional[int] = None,
+    my_company_id: Optional[int] = None,
+    q: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[str] = None,
+    date: Optional[str] = None,
+    not_exported: bool = False,
+):
+    """Apply the shared Collection/Export filter set to a Card select.
+
+    Single owner of four rules that list_cards, count_cards and card_facets must agree on:
+      * date bucketing — received_date, falling back to created_at when null
+      * what ?q= matches — current person name, contact details, position title/department
+        and current organization name
+      * not_exported — a card counts as exported only when it has sync history to
+        "odoo" or "google_contacts" whose result is "created" or "updated"
+      * soft-deleted cards are excluded — this helper owns that predicate, so callers
+        must NOT repeat it on their own select
+    If list_cards, count_cards and card_facets ever disagree on any of these rules, a
+    month header count will not match the cards that appear when it is expanded.
+    """
+    from datetime import date as date_type
+
+    from app.db.models import ContactDetail, Organization, OrganizationName, Position, PositionDetail
+
+    # Soft-deleted cards are never visible through any of these endpoints.
+    stmt = stmt.where(Card.deleted_at.is_(None))
 
     if person_id:
         stmt = stmt.where(Card.person_id == person_id)
@@ -66,37 +88,28 @@ async def list_cards(
         mc_subq = select(CardMyCompany.card_id).where(CardMyCompany.my_company_id == my_company_id)
         stmt = stmt.where(Card.id.in_(mc_subq))
 
-    # Date filters (prefer received_date, fall back to created_at)
+    # Date filters. All three go through the _filing_* expressions, which are the
+    # single encoding of "received_date, falling back to created_at" — the same
+    # expressions card_facets groups by, so a facet count and its ?month= query
+    # match by construction rather than by coincidence.
+    # `month` and `date` are pattern-validated at the endpoint, so the *shape* of
+    # both is guaranteed here — int(month[:4]) and int(month[5:7]) below cannot
+    # raise, and the month pattern already pins 01-12. `date` is different: no
+    # regex can tell a real day from an impossible one, so its parse is guarded.
     if date:
-        d = date_type.fromisoformat(date)
-        stmt = stmt.where(
-            or_(
-                func.date(Card.received_date) == d,
-                and_(Card.received_date.is_(None), func.date(Card.created_at) == d),
-            )
-        )
+        try:
+            d = date_type.fromisoformat(date)
+        except ValueError:
+            # The endpoint's pattern catches malformed shapes, but no regex can reject
+            # a well-shaped impossible date like 2026-02-30 without leap-year rules.
+            # Without this guard such input escaped as an uncaught ValueError -> 500.
+            raise HTTPException(422, f"Invalid date: {date}")
+        stmt = stmt.where(func.date(_filing_date()) == d)
     elif month:
         y, m = int(month[:4]), int(month[5:7])
-        stmt = stmt.where(
-            or_(
-                and_(
-                    extract('year', Card.received_date) == y,
-                    extract('month', Card.received_date) == m,
-                ),
-                and_(
-                    Card.received_date.is_(None),
-                    extract('year', Card.created_at) == y,
-                    extract('month', Card.created_at) == m,
-                ),
-            )
-        )
+        stmt = stmt.where(and_(_filing_year() == y, _filing_month() == m))
     elif year:
-        stmt = stmt.where(
-            or_(
-                extract('year', Card.received_date) == year,
-                and_(Card.received_date.is_(None), extract('year', Card.created_at) == year),
-            )
-        )
+        stmt = stmt.where(_filing_year() == year)
 
     # not_exported: no successful sync history to odoo or google_contacts
     if not_exported:
@@ -113,20 +126,14 @@ async def list_cards(
     # Full-text search across person data
     if q:
         like = f"%{q}%"
-        text_subq = (
-            select(PersonNameModel.person_id)
-            .where(
-                PersonNameModel.person_id == Card.person_id,
-                PersonNameModel.is_current == True,  # noqa: E712
-                PersonNameModel.full_name.ilike(like),
-            )
+        text_subq = select(PersonName.person_id).where(
+            PersonName.person_id == Card.person_id,
+            PersonName.is_current == True,  # noqa: E712
+            PersonName.full_name.ilike(like),
         )
-        contact_subq = (
-            select(ContactDetail.person_id)
-            .where(
-                ContactDetail.person_id == Card.person_id,
-                ContactDetail.value.ilike(like),
-            )
+        contact_subq = select(ContactDetail.person_id).where(
+            ContactDetail.person_id == Card.person_id,
+            ContactDetail.value.ilike(like),
         )
         pos_subq = (
             select(PositionDetail.position_id)
@@ -158,10 +165,112 @@ async def list_cards(
             )
         )
 
+    return stmt
+
+
+def _pick_name(candidates: list[tuple[str, str]], lang: Optional[str]) -> Optional[str]:
+    """Resolve one card's display name from its person's current names.
+
+    `candidates` is that person's (language, full_name) pairs for every *current*
+    PersonName, already ordered by PersonName.id ascending. The caller owns that
+    ordering, because "lowest id wins" is the whole tiebreak — hand this an
+    unordered list and the fallback silently picks an arbitrary name.
+    `lang` is the card's display_name_language preference, or None.
+
+    Rule (user-visible — it decides which script a name appears in on a thumbnail):
+      1. If the card names a preferred language, take the lowest-id current name
+         whose language *starts with* it. "zh" therefore matches a "zh-TW" name,
+         which is why this is a prefix test and not an equality test.
+      2. If that yields nothing usable, fall back to the lowest-id current name
+         regardless of language.
+      3. No current names at all -> None.
+
+    This replaced a per-card SQL lookup (`_get_name`, deleted in 4c0ad00) that ran the
+    same rule as one or two queries. It reproduces that rule apart from the divergence
+    listed last below.
+
+      * The prefix comparison is case-insensitive. The old query used SQL LIKE,
+        and SQLite's LIKE is case-insensitive for ASCII by default, so "EN-GB"
+        matched a preference of "en". Python's str.startswith is not, so the
+        operands are lowered to keep the old outcome.
+      * Step 1 only ever considers the FIRST language match. The old code took
+        `LIMIT 1` and then tested `if preferred:`, so a lowest-id language match
+        with an empty full_name fell through to step 2 rather than to the next
+        language match. full_name is NOT NULL in the schema, so this can only
+        differ for the empty string, but it costs nothing to keep identical.
+      * SQL LIKE treats `_` as a single-character wildcard and `%` as a multi-character
+        one, and the old query interpolated `lang` unescaped — so a preference of "zh_TW"
+        used to match the language "zh-TW". str.startswith is literal, and that is
+        deliberately NOT replicated: matching a language by wildcard was an accident of
+        using LIKE for a prefix test, never intended behaviour. Reachable only if
+        display_name_language ever contains `_` or `%`, which no writer produces today.
+    """
+    if not candidates:
+        return None
+    if lang:
+        wanted = lang.lower()
+        for cand_lang, full in candidates:
+            # PersonName.language is NOT NULL, so cand_lang is always a real string —
+            # no emptiness guard here, matching how full_name is reasoned about above.
+            if cand_lang.lower().startswith(wanted):
+                if full:
+                    return full
+                break  # first match unusable -> fall through, as the old LIMIT 1 did
+    # Fallback: the lowest-id current name, returned as-is (the old db.scalar did
+    # not filter empties out either).
+    return candidates[0][1]
+
+
+@router.get("", response_model=List[CardListItem])
+async def list_cards(
+    person_id: Optional[int] = Query(None),
+    occasion_id: Optional[int] = Query(None),
+    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
+    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
+    year: Optional[int] = Query(None),
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM"),
+    date: Optional[str] = Query(
+        None,
+        # \d{2} would accept month 13 and day 45; this rejects the cheap cases at
+        # the edge. It still cannot reject 2026-02-30 — see _apply_card_filters.
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$",
+        description="YYYY-MM-DD",
+    ),
+    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
+    # ge=1 is not cosmetic: SQLite reads LIMIT -1 as "no limit", so ?limit=-1 used
+    # to return every row. The 500 cap is also what bounds the batched name lookup
+    # below — both the IN (...) parameter count and the names held in memory.
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    # _apply_card_filters owns the soft-delete predicate — do not repeat it here.
+    #
+    # ORDER BY has to be a *total* order, or LIMIT/OFFSET paging is unsound: rows
+    # that tie on the leading key can come back in a different order per query, so
+    # page 2 may repeat or skip a row from page 1. Card.id breaks every tie.
+    # The leading key is the filing date, not created_at, so a card sorts in the same
+    # bucket it is counted in (and matches how the frontend already sorts today).
+    stmt = (
+        select(Card)
+        .order_by(_filing_date().desc(), Card.id.desc())
+        .limit(limit)
+        .offset(offset)
+        .options(selectinload(Card.sides))
+    )
+    stmt = _apply_card_filters(
+        stmt,
+        person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
+        q=q, year=year, month=month, date=date, not_exported=not_exported,
+    )
+
     rows = (await db.execute(stmt)).scalars().all()
 
-    # Fetch sync history for all returned cards in one query
-    card_ids = [c.id for c in rows]
+    # Fetch sync history for all returned cards in one query. A set, like
+    # person_ids below: both feed an `.in_()`, so the two batched lookups read the
+    # same way. (person_ids genuinely dedupes — several cards can share one person;
+    # card ids are already distinct, so here the set is only for consistency.)
+    card_ids = {c.id for c in rows}
     sync_rows: list = []
     if card_ids:
         sh_stmt = (
@@ -179,27 +288,36 @@ async def list_cards(
     for sh in sync_rows:
         synced_map.setdefault(sh.card_id, set()).add(sh.destination)
 
-    async def _get_name(pid: int, lang: Optional[str]) -> Optional[str]:
-        base = (PersonName.person_id == pid, PersonName.is_current == True)  # noqa: E712
-        if lang:
-            preferred = await db.scalar(
-                select(PersonName.full_name)
-                .where(*base, PersonName.language.like(f"{lang}%"))
-                .order_by(PersonName.id.asc())
-                .limit(1)
+    # Every current name for every person on this page, in ONE query. This used to be
+    # an `async def _get_name(...)` called once per card inside the loop below, costing
+    # 1-2 sequential round trips per row — invisible at 200 cards, 10,000-20,000
+    # queries at 10,000. The preference rule is unchanged; only where it is evaluated
+    # moved, from SQL to memory.
+    #
+    # Only the `id ASC` half of the ORDER BY is load-bearing: setdefault/append keeps
+    # each person's names in arrival order, so the lowest-id current name is simply
+    # entry [0] — which is what _pick_name's fallback relies on. The leading person_id
+    # is a planner hint, not a correctness requirement: rows belonging to different
+    # persons may interleave freely without changing the result.
+    person_ids = {c.person_id for c in rows}
+    names_by_person: dict[int, list[tuple[str, str]]] = {}
+    if person_ids:
+        name_rows = (await db.execute(
+            select(PersonName.person_id, PersonName.language, PersonName.full_name)
+            .where(
+                PersonName.person_id.in_(person_ids),
+                PersonName.is_current == True,  # noqa: E712
             )
-            if preferred:
-                return preferred
-        return await db.scalar(
-            select(PersonName.full_name)
-            .where(*base)
-            .order_by(PersonName.id.asc())
-            .limit(1)
-        )
+            .order_by(PersonName.person_id.asc(), PersonName.id.asc())
+        )).all()
+        for pid, lang, full in name_rows:
+            names_by_person.setdefault(pid, []).append((lang, full))
 
     items = []
     for card in rows:
-        name = await _get_name(card.person_id, card.display_name_language)
+        name = _pick_name(
+            names_by_person.get(card.person_id, []), card.display_name_language
+        )
         front = next(
             (s.image_path for s in sorted(card.sides, key=lambda s: s.side_order)), None
         )
@@ -215,6 +333,83 @@ async def list_cards(
             synced_destinations=sorted(synced_map.get(card.id, set())),
         ))
     return items
+
+
+# ---------------------------------------------------------------------------
+# Facets and count. MUST be declared before GET /{card_ext_id}, or FastAPI
+# matches "facets" and "count" as card external IDs.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/facets", response_model=List[CardFacet])
+async def card_facets(
+    person_id: Optional[int] = Query(None),
+    occasion_id: Optional[int] = Query(None),
+    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
+    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
+    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Year/month buckets with counts, newest first.
+
+    One GROUP BY — the response stays small however many cards exist, which is what
+    lets the Collection tree be complete at any scale.
+
+    Deliberately takes no year/month/date filter: this endpoint *produces* the date
+    buckets that those filters consume. Callers holding one filter object and
+    spreading it into every request should note that passing year/month/date here has
+    no effect — FastAPI ignores unknown query params, so /facets?month=1999-01 returns
+    the full unfiltered bucket list with a 200, not an error.
+    """
+    y = _filing_year().label("year")
+    m = _filing_month().label("month")
+
+    # No deleted_at filter here — _apply_card_filters owns it.
+    stmt = select(y, m, func.count(Card.id).label("count"))
+    stmt = _apply_card_filters(
+        stmt,
+        person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
+        q=q, not_exported=not_exported,
+    )
+    stmt = stmt.group_by(y, m).order_by(y.desc(), m.desc())
+
+    rows = (await db.execute(stmt)).all()
+    return [CardFacet(year=r.year, month=r.month, count=r.count) for r in rows]
+
+
+@router.get("/count", response_model=CountOut)
+async def count_cards(
+    person_id: Optional[int] = Query(None),
+    occasion_id: Optional[int] = Query(None),
+    my_company_id: Optional[int] = Query(None, description="Filter by Met As (my company) ID"),
+    q: Optional[str] = Query(None, description="Full-text search across names, org, contacts, titles"),
+    year: Optional[int] = Query(None),
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM"),
+    date: Optional[str] = Query(
+        None,
+        # \d{2} would accept month 13 and day 45; this rejects the cheap cases at
+        # the edge. It still cannot reject 2026-02-30 — see _apply_card_filters.
+        pattern=r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$",
+        description="YYYY-MM-DD",
+    ),
+    not_exported: bool = Query(False, description="Only cards with no sync history to odoo or google_contacts"),
+    db: AsyncSession = Depends(get_db),
+):
+    """How many cards match a filter set, without fetching any rows.
+
+    Takes the same filters as list_cards minus limit/offset, so the caller can size a
+    pager before requesting a page.
+    """
+    # _apply_card_filters owns the soft-delete predicate — do not repeat it here.
+    stmt = select(func.count(Card.id))
+    stmt = _apply_card_filters(
+        stmt,
+        person_id=person_id, occasion_id=occasion_id, my_company_id=my_company_id,
+        q=q, year=year, month=month, date=date, not_exported=not_exported,
+    )
+    # COUNT(...) with no GROUP BY always yields a row holding an integer, so there is
+    # no NULL case to defend against here.
+    return CountOut(total=await db.scalar(stmt))
 
 
 async def _load_card(db: AsyncSession, card_ext_id: str) -> Card:

@@ -1,17 +1,23 @@
 import { get, post, patch, del, uploadFile } from './client'
 import type {
   Card,
+  CardFacet,
   CardListItem,
   Country,
   MyCompany,
   Occasion,
   Person,
+  PersonFacet,
   PersonListItem,
   RelationshipType,
 } from '../types'
 
 // Cards
-export const listCards = (params?: {
+
+/** The filter set shared by GET /api/v2/cards, /cards/count and /cards/facets.
+ *  `offset`/`limit` page the list only — the count and facets endpoints take no
+ *  pagination and ignore them. */
+export interface CardFilters {
   person_id?: number
   occasion_id?: number
   my_company_id?: number
@@ -22,7 +28,14 @@ export const listCards = (params?: {
   not_exported?: boolean
   offset?: number
   limit?: number
-}) => {
+}
+
+/** Serialise the filter half of CardFilters (everything except offset/limit).
+ *
+ *  Single owner of the wire format so the list, the count and the facets calls can
+ *  never disagree about what one filter object means — a count that does not match
+ *  the rows the list returns would make every "showing n of m" pager lie. */
+const cardFilterQS = (params?: CardFilters) => {
   const qs = new URLSearchParams()
   if (params?.person_id) qs.set('person_id', String(params.person_id))
   if (params?.occasion_id) qs.set('occasion_id', String(params.occasion_id))
@@ -32,10 +45,33 @@ export const listCards = (params?: {
   if (params?.month) qs.set('month', params.month)
   if (params?.date) qs.set('date', params.date)
   if (params?.not_exported) qs.set('not_exported', 'true')
+  return qs
+}
+
+export const listCards = (params?: CardFilters) => {
+  const qs = cardFilterQS(params)
   if (params?.offset) qs.set('offset', String(params.offset))
   if (params?.limit) qs.set('limit', String(params.limit))
   return get<CardListItem[]>(`/api/v2/cards?${qs}`)
 }
+
+/** Year/month buckets with counts, newest first — the shape of the Collection tree.
+ *
+ *  One row per bucket regardless of how many cards exist, so this stays cheap at any
+ *  scale. Note the endpoint *produces* the date buckets, so it accepts no
+ *  year/month/date filter: passing one is silently ignored (200 with the full list),
+ *  not an error. */
+export const listCardFacets = (params?: CardFilters) =>
+  get<CardFacet[]>(`/api/v2/cards/facets?${cardFilterQS(params)}`)
+
+/** How many cards match a filter set, without fetching any rows.
+ *
+ *  NOT named `countCards`: this module re-exports `./sessions`, which already exports a
+ *  `countCards` — the Claude Vision "how many business cards are in this photo?" call
+ *  used by ScanPage. A local export silently wins over a star re-export, so reusing the
+ *  name would quietly redirect that caller to a different endpoint. */
+export const countCardsTotal = (params?: CardFilters) =>
+  get<{ total: number }>(`/api/v2/cards/count?${cardFilterQS(params)}`)
 
 export const getCard = (id: string) => get<Card>(`/api/v2/cards/${id}`)
 
@@ -57,8 +93,34 @@ export const promoteCardSideToFront = (cardExtId: string, sideOrder: number) =>
   post<void>(`/api/v2/cards/${cardExtId}/sides/${sideOrder}/promote`, {})
 
 // Persons
-export const listPersons = (q?: string) =>
-  get<PersonListItem[]>(`/api/v2/persons${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+
+/** One page of persons, optionally filtered by `q` and/or one country group.
+ *
+ *  `limit` defaults to the endpoint's own default of 50 — callers that render a whole
+ *  list rather than a page MUST pass an explicit limit, because a missing one silently
+ *  truncates with no error shown. (The backend caps limit at 500; its `if q:` branch
+ *  once applied no LIMIT at all, which is why the callers below say 500 out loud.)
+ *
+ *  `country` is a two-letter code, or `'none'` for the bucket with no country — the
+ *  backend validates `^([A-Z]{2}|none)$` and answers anything else with 422. It is sent
+ *  only when defined. With a country the rows come back in display order (family name,
+ *  else full name, case-insensitive, then id); without one they stay newest-first. */
+export const listPersons = (q?: string, limit = 50, offset = 0, country?: string) => {
+  const qs = new URLSearchParams()
+  if (q) qs.set('q', q)
+  if (country !== undefined) qs.set('country', country)
+  qs.set('limit', String(limit))
+  qs.set('offset', String(offset))
+  return get<PersonListItem[]>(`/api/v2/persons?${qs}`)
+}
+
+/** Country buckets with counts — the shape of the Persons tab.
+ *
+ *  One row per derived country (codes ascending, the null bucket last), so this stays
+ *  cheap at any collection size. `q` narrows the buckets with the same match logic
+ *  listPersons uses, so a facet count always equals the rows its group can page to. */
+export const listPersonFacets = (q?: string) =>
+  get<PersonFacet[]>(`/api/v2/persons/facets${q ? `?q=${encodeURIComponent(q)}` : ''}`)
 
 export const getPerson = (id: string) => get<Person>(`/api/v2/persons/${id}`)
 
