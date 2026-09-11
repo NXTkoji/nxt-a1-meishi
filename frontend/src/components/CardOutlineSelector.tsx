@@ -15,6 +15,7 @@
  */
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import type { Point } from '../api/sessions'
+import { useLang } from '../LangContext'
 
 interface Props {
   imageUrl: string
@@ -33,6 +34,7 @@ interface DragHandle { polyIdx: number; cornerIdx: number }
 interface PolyMeta { confidence: number }
 
 export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, onCancel, onDetectCorners }: Props) {
+  const { t } = useLang()
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgRect, setImgRect] = useState<DOMRect | null>(null)
 
@@ -135,7 +137,7 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
 
     // Block-outright: a tap inside an already-defined card must not spawn a new candidate.
     if (insideExistingCard(seed)) {
-      setDetectError('That card is already outlined')
+      setDetectError(t.outlineAlreadyOutlined)
       return
     }
 
@@ -147,7 +149,7 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
       setPolygons(prev => [...prev, corners as Polygon])
       setPolyMeta(prev => [...prev, { confidence }])
     } catch {
-      setDetectError('Corner detection failed — try again')
+      setDetectError(t.outlineDetectFailed)
     } finally {
       setDetecting(false)
     }
@@ -199,7 +201,7 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
       const rect = rectFromPoints(dragStart, dragEnd)
       // Block-outright: a box centered on an already-defined card must not spawn a new candidate.
       if (insideExistingCard(centroid(rect))) {
-        setDetectError('That card is already outlined')
+        setDetectError(t.outlineAlreadyOutlined)
       } else {
         setPolygons(prev => [...prev, rect])
         setPolyMeta(prev => [...prev, { confidence: 1.0 }])
@@ -279,30 +281,39 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
   // ── Instructions ──────────────────────────────────────────────────────────
 
   const headerText = detecting
-    ? 'Detecting corners…'
+    ? t.outlineDetecting
     : tapMode
       ? polygons.length === 0
-        ? `Tap the center of each card (${cardCount} detected)`
-        : `${polygons.length} card${polygons.length > 1 ? 's' : ''} tapped — tap more or Crop`
+        ? t.outlineTapHeader(cardCount)
+        : t.outlineSelectedN(polygons.length)
       : dragStart
-        ? `Card ${polygons.length + 1} — drag to define boundary`
+        ? t.outlineDragging(polygons.length + 1)
         : polygons.length === 0
-          ? `Drag around each card (${cardCount} detected)`
-          : `${polygons.length} card${polygons.length > 1 ? 's' : ''} outlined — draw more or tap Crop`
+          ? t.outlineDragHeader(cardCount)
+          : t.outlineSelectedN(polygons.length)
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-900 text-white shrink-0">
-        <button onClick={onCancel} className="text-sm text-gray-300 hover:text-white">Cancel</button>
+        <button onClick={onCancel} className="text-sm text-gray-300 hover:text-white">{t.outlineCancel}</button>
         <div className="text-sm font-semibold text-center flex-1">{headerText}</div>
         <button
           onClick={undoLast}
           className="text-sm text-gray-300 hover:text-white disabled:opacity-30"
           disabled={polygons.length === 0 || detecting}
+          title={t.outlineUndoHint}
         >
-          Undo
+          {t.outlineUndo}
         </button>
+      </div>
+
+      {/* Standing instructions — the interaction is not discoverable without them. */}
+      <div className="bg-gray-800 px-4 py-2 text-xs text-gray-300 shrink-0 space-y-1">
+        <p>{tapMode ? t.outlineHintTap : t.outlineHintDrag}</p>
+        {polyMeta.some(m => m.confidence === 0) && (
+          <p className="text-amber-300">{t.outlineHintAmber}</p>
+        )}
       </div>
 
       {/* Image + overlay */}
@@ -331,7 +342,7 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
         <img
           ref={imgRef}
           src={imageUrl}
-          alt={tapMode ? 'Tap the center of each card' : 'Drag to select card boundaries'}
+          alt={tapMode ? t.outlineAltTap : t.outlineAltDrag}
           className="max-w-full max-h-full object-contain"
           onLoad={() => { const r = getFreshRect(); if (r) setImgRect(r) }}
           draggable={false}
@@ -349,7 +360,7 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
         {detecting && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="bg-black/60 text-white text-sm px-4 py-2 rounded-full">
-              Detecting corners…
+              {t.outlineDetecting}
             </div>
           </div>
         )}
@@ -365,17 +376,18 @@ export default function CardOutlineSelector({ imageUrl, cardCount, onComplete, o
       {/* Footer */}
       <div className="bg-gray-900 px-4 py-3 shrink-0">
         {canCrop ? (
-          <button
-            className="w-full bg-green-600 hover:bg-green-500 text-white font-semibold py-3 rounded-lg"
-            onClick={() => onComplete(polygons)}
-          >
-            Crop {polygons.length} card{polygons.length > 1 ? 's' : ''}
-          </button>
+          <>
+            <p className="text-center text-gray-400 text-xs mb-2">{t.outlineHintReady}</p>
+            <button
+              className="w-full bg-green-600 hover:bg-green-500 text-white font-semibold py-3 rounded-lg"
+              onClick={() => onComplete(polygons)}
+            >
+              {t.outlineCropN(polygons.length)}
+            </button>
+          </>
         ) : (
           <p className="text-center text-gray-400 text-sm">
-            {tapMode
-              ? 'Tap the center of each business card'
-              : 'Press and drag to draw a box around each card'}
+            {tapMode ? t.outlineHintTap : t.outlineHintDrag}
           </p>
         )}
       </div>
