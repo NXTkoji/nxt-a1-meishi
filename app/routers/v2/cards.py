@@ -64,8 +64,9 @@ def _apply_card_filters(
 
     Single owner of four rules that list_cards, count_cards and card_facets must agree on:
       * date bucketing — received_date, falling back to created_at when null
-      * what ?q= matches — current person name, contact details, position title/department
-        and current organization name
+      * what ?q= matches — current person name, contact details, position title/department,
+        current organization name, and the card's occasion (by live link or, once that
+        occasion is deleted, by the label snapshot left on the card)
       * not_exported — a card counts as exported only when it has sync history to
         "odoo" or "google_contacts" whose result is "created" or "updated"
       * soft-deleted cards are excluded — this helper owns that predicate, so callers
@@ -75,7 +76,14 @@ def _apply_card_filters(
     """
     from datetime import date as date_type
 
-    from app.db.models import ContactDetail, Organization, OrganizationName, Position, PositionDetail
+    from app.db.models import (
+        ContactDetail,
+        Occasion,
+        Organization,
+        OrganizationName,
+        Position,
+        PositionDetail,
+    )
 
     # Soft-deleted cards are never visible through any of these endpoints.
     stmt = stmt.where(Card.deleted_at.is_(None))
@@ -156,12 +164,21 @@ def _apply_card_filters(
                 OrganizationName.name.ilike(like),
             )
         )
+        # Occasion — matches the linked occasion's name, or the label stamped onto
+        # the card when that occasion was deleted. Covering both sides of the link
+        # means a search returns the same cards before and after a deletion.
+        occasion_subq = select(Occasion.id).where(
+            Occasion.id == Card.occasion_id,
+            Occasion.name.ilike(like),
+        )
         stmt = stmt.where(
             or_(
                 exists(text_subq),
                 exists(contact_subq),
                 exists(pos_subq),
                 exists(org_subq),
+                exists(occasion_subq),
+                Card.occasion_label.ilike(like),
             )
         )
 

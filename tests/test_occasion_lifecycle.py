@@ -137,3 +137,52 @@ def test_card_count_excludes_soft_deleted_cards(client_with_test_db):
     resp = client_with_test_db.get("/api/v2/occasions")
     row = next(o for o in resp.json() if o["id"] == occ_id)
     assert row["card_count"] == 2
+
+
+def test_search_matches_linked_occasion(client_with_test_db):
+    """Typing an occasion name finds its cards while the link is live."""
+    _seed(client_with_test_db, occasion_name="RI Convention", n_cards=3)
+
+    resp = client_with_test_db.get("/api/v2/cards", params={"q": "Convention"})
+    assert resp.status_code == 200
+    assert len(resp.json()) == 3
+
+
+def test_search_matches_orphaned_label(client_with_test_db):
+    """The same query returns the same cards after the occasion is deleted."""
+    occ_id, _ = _seed(client_with_test_db, occasion_name="RI Convention", n_cards=3)
+
+    before = client_with_test_db.get("/api/v2/cards", params={"q": "Convention"}).json()
+    assert len(before) == 3
+
+    client_with_test_db.delete(f"/api/v2/occasions/{occ_id}")
+
+    after = client_with_test_db.get("/api/v2/cards", params={"q": "Convention"}).json()
+    assert len(after) == 3
+    # CardListItem exposes `id`, not `external_id` — use the key that actually exists.
+    assert {c["id"] for c in after} == {c["id"] for c in before}
+
+
+def test_search_does_not_match_unrelated_occasion(client_with_test_db):
+    _seed(client_with_test_db, occasion_name="RI Convention", n_cards=2)
+
+    resp = client_with_test_db.get("/api/v2/cards", params={"q": "Rotary"})
+    assert resp.json() == []
+
+
+def test_search_count_and_facets_include_occasion_matches(client_with_test_db):
+    """count and facets must agree with list_cards on what ?q= matches.
+
+    _apply_card_filters is the single owner of the q= rule for list_cards,
+    count_cards and card_facets — this guards the occasion branch against
+    reaching only one of the three.
+    """
+    _seed(client_with_test_db, occasion_name="RI Convention", n_cards=3)
+
+    count_resp = client_with_test_db.get("/api/v2/cards/count", params={"q": "Convention"})
+    assert count_resp.status_code == 200
+    assert count_resp.json()["total"] == 3
+
+    facets_resp = client_with_test_db.get("/api/v2/cards/facets", params={"q": "Convention"})
+    assert facets_resp.status_code == 200
+    assert sum(f["count"] for f in facets_resp.json()) == 3
