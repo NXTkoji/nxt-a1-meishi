@@ -209,11 +209,47 @@ This **deletes** the client-side `filteredCards` filter and the `searchPersons` 
 matches names, organisations, titles and contact values — and occasions, once the other
 spec's §6.3 lands.
 
-### 5.3 Persons tab
+### 5.3 Persons tab — country groups that load on demand (revised 2026-09-11)
 
-Same shape: server-side `q` (already the case), 50 per page, Load more against
-`/api/v2/persons/count`. The existing country grouping is preserved and applies to whatever
-is currently loaded.
+**Why the original design was dropped.** It paginated one newest-first list and grouped
+whatever had loaded. But the tab groups people by country and sorts each group by name, so
+every "Load more" inserted people into groups already on screen, and a group could look
+complete while it wasn't. Decided with Koji, 2026-09-11: mirror the card tree instead.
+
+**Backend.**
+
+- `GET /api/v2/persons/facets?q=` → `[{ "country_code": "TW" | null, "count": 139 }]`: one
+  row per derived country, including `null` for people with no country. Ordered by code
+  ascending, `null` last, which is the order the tab already uses. `q` narrows it, like the
+  list does.
+- `GET /api/v2/persons?country=XX|none&q=&limit=&offset=` returns one group. With `country`,
+  the order is the tab's display order: family name, falling back to full name,
+  case-insensitive, then `id` for a total order. Without `country`, the order is unchanged.
+  `country` is validated (`^([A-Z]{2}|none)$`), so a malformed value is a 422.
+- `GET /api/v2/persons/count` accepts the same `country`.
+- **One encoding of "a person's country":** the first non-null `country_code` among
+  `address_home`, then `address_work`. It's a single correlated SQL expression shared by
+  facets, the filter and count. It must agree with the `country_code` that the batched fold
+  puts on each list row; a test pins this.
+- `/facets` is declared before `GET /{person_ext_id}`.
+
+**Frontend.**
+
+- A `CountrySection` component, the counterpart of `MonthSection`. Its header shows the
+  facet count. It loads its people only when expanded, 500 per page, with Load more when a
+  group exceeds 500. It follows the query-status rule (§5.2), and its pager is gated on
+  `hasNextPage`.
+- **On load (no search):** the largest group opens and loads; the rest show their counts.
+  **While searching:** facets narrow to matches, and every group with a match opens.
+- **No matches while searching** → a "no persons match" message. The "scan your first card"
+  empty state is only for an empty collection. Today a failed person search wrongly shows it.
+- **Rows render in server order, with no client re-sort.** A re-sort would move rows already
+  on screen when a later page arrives. SQLite `lower()` is ASCII-only, so CJK names sort by
+  code point. That's near-identical to today's `localeCompare` for this data.
+- **Merge select spans groups.** The selected person records are held in a map, not
+  re-derived from one loaded list, because there no longer is one.
+
+Live data at decision time: TW 139, JP 49, no country 8, US 2, MO 2, PH 1, HK 1 (202 total).
 
 ### 5.4 New copy
 

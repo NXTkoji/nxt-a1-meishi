@@ -1802,136 +1802,144 @@ git commit -m "feat: server-side debounced paginated card search"
 
 ---
 
-## Task 8: Persons tab pagination
+## Task 8: Persons tab as country groups that load on demand (revised 2026-09-11)
 
-> **Render loading / error / empty from data presence and `isLoadingError` — never from `isLoading` or `isSuccess`.**
-> In TanStack Query v5 (installed: 5.95.2) `isLoading` is `isPending && isFetching`. A query can
-> sit at `status: 'pending'` with `fetchStatus: 'paused'` — when a retry comes due while the tab
-> is **hidden** (tab visibility, not window focus), or after the connection drops once the page
-> has loaded (TanStack's `onlineManager` starts online and changes only on the browser's
-> `online`/`offline` events). Then `isLoading` and `isError` are both false and `data` is
-> undefined, so `isLoading ? … : isError ? … : data.length === 0 ? <Empty/>` shows the empty
-> state — "Scan your first card" to a user with 205 cards. Separately, `status` stays `'error'`
-> even when earlier data is cached, so gating on `!isSuccess` would hide loaded data behind a
-> spinner after a failed background refetch. Order the branches:
-> 1. `isLoadingError` (error **and** no data) → error UI with retry
-> 2. `data === undefined` (pending — fetching or paused) → loading
-> 3. data empty → empty state
-> 4. otherwise the data (a failed background refetch keeps it on screen)
-> 5. under the rows: a failed **later** page (`isFetchNextPageError`) →
->    `<LoadError onRetry={() => fetchNextPage()} isRetrying={isFetchingNextPage} />` in place of
->    the pager; otherwise `<LoadMore … isLoading={isFetchingNextPage} />` — and render either one
->    only while `hasNextPage`, because `LoadMore` keeps its button whenever the total is unknown. Without this a failed
->    page 2 shows nothing at all. Use `isFetchingNextPage`, not `isFetching`, which is also true
->    while page one refetches in the background.
+> **Redesigned before implementation.** The original Task 8 paginated one newest-first list
+> and grouped whatever had loaded, so "Load more" inserted people into groups already on
+> screen. Koji chose on 2026-09-11 to mirror the card tree instead. See spec §5.3. Two
+> choices were settled then: **the largest group opens on load**, and **searching keeps the
+> country groups, opening every group that has a match**.
 >
-> Take rows as `data?.pages.flat()` with **no `?? []`**, so step 2 can test `=== undefined`.
-> Where several queries feed one view, the view has no data until **all** of them do. (The
-> persons list has a single rows query; its `/count` total only sizes the pager, so it gates
-> nothing — `LoadMore` treats an `undefined` total as "more may exist".)
-> Caught in the browser during Task 6 verification: the code passed build, grep and review.
-> `MonthSection.tsx` as committed is the reference implementation of all five steps.
+> The query-status rule from Task 7 applies to every view below:
+> 1. `isLoadingError` → error with retry
+> 2. `data === undefined` → loading
+> 3. empty → empty state
+> 4. rows
+> 5. the pager, only while `hasNextPage`: `isFetchNextPageError` → error, otherwise LoadMore
+>
+> Never use `?? []` on query data, and never gate on `isLoading` or `isSuccess`.
 
-**Files:**
-- Modify: `frontend/src/pages/CollectionPage.tsx`
+### Task 8a — Backend: country facets and a group filter
 
-- [ ] **Step 1: Paginate the persons query**
+**Files:** `app/routers/v2/persons.py`, `app/schemas/api.py`, `tests/test_collection_scalability.py`,
+`tests/test_query_counts.py`
 
-Replace the `persons` query:
+**One SQL encoding of a person's country, and one of the tab's sort key**, both correlated on
+`Person`. Every endpoint below uses them; nothing re-derives either.
 
-```tsx
-  const PERSON_PAGE = 50
+```python
+def _person_country():
+    """First non-null country_code among address_home, then address_work.
 
-  // Declared BEFORE the infinite query, for the same reason as `searchTotal` in Task 7:
-  // getNextPageParam reads it during render, so a later `const` would be in its TDZ.
-  const { data: personTotal } = useQuery<{ total: number }>({
-    queryKey: ['persons-count', debouncedQ],
-    queryFn: () => countPersons(debouncedQ || undefined),
-    enabled: view === 'persons',
-  })
+    Must agree with the batched country fold in list_persons (tested). `detail_type ASC`
+    encodes home-before-work only because "address_home" < "address_work".
+    """
+    return (
+        select(ContactDetail.country_code)
+        .where(
+            ContactDetail.person_id == Person.id,
+            ContactDetail.detail_type.in_(["address_home", "address_work"]),
+            ContactDetail.country_code.isnot(None),
+        )
+        .order_by(ContactDetail.detail_type.asc(), ContactDetail.id.asc())
+        .limit(1)
+        .correlate(Person)
+        .scalar_subquery()
+    )
 
-  // useInfiniteQuery for the same reason as the card search above.
-  // The load-error / fetching / refetch names match the committed `persons` query, so the
-  // persons-tab status ternary (`personsLoadError` → `persons === undefined` →
-  // `persons.length === 0` → groups) keeps working unchanged.
-  const {
-    data: personsData,
-    isLoadingError: personsLoadError,
-    isFetching: personsFetching,
-    isFetchingNextPage: personsFetchingMore,
-    isFetchNextPageError: personsMoreError,
-    hasNextPage: personsHasMore,
-    fetchNextPage: fetchMorePersons,
-    refetch: refetchPersons,
-  } = useInfiniteQuery({
-    queryKey: ['persons', debouncedQ],
-    queryFn: ({ pageParam }) =>
-      listPersons(debouncedQ || undefined, PERSON_PAGE, pageParam),
-    initialPageParam: 0,
-    getNextPageParam: (last, all) => {
-      const loaded = all.reduce((n, page) => n + page.length, 0)
-      // Same unknown-total rule as the card search above.
-      const total = personTotal?.total
-      if (total !== undefined) return loaded < total ? loaded : undefined
-      return last.length === PERSON_PAGE ? loaded : undefined
-    },
-    enabled: view === 'persons',
-  })
-  // No `?? []`: `undefined` is "no page yet", which the status ternary tests for.
-  // (The `persons ?? []` inside the personsByCountry and selectedPersons memos stays — those
-  // only derive from whatever is loaded, they don't decide what state to render.)
-  const persons = personsData?.pages.flat()
+
+def _person_sort_name():
+    """The tab's display order: family name, else full name, of the lowest-id current name."""
+    return (
+        select(func.lower(func.coalesce(PersonName.family_name, PersonName.full_name)))
+        .where(PersonName.person_id == Person.id, PersonName.is_current == True)  # noqa: E712
+        .order_by(PersonName.id.asc())
+        .limit(1)
+        .correlate(Person)
+        .scalar_subquery()
+    )
 ```
 
-New import: `countPersons` from `../api` (`useInfiniteQuery` and `LoadMore` arrive in Task 7).
+- **`GET /api/v2/persons/facets?q=`** → `List[PersonFacet]`, where
+  `PersonFacet(country_code: Optional[str], count: int)`. Group by `_person_country()`.
+  Order by code ascending with `null` last. Apply `q` through `_person_ids_matching`.
+  Declare it before `/{person_ext_id}`.
+- **`list_persons`** gains `country: Optional[str] = Query(None, pattern=r"^([A-Z]{2}|none)$")`.
+  - With `country`: filter on `_person_country() == country`, or `.is_(None)` for `none`.
+  - Order by `_person_sort_name().asc(), Person.id.asc()`.
+  - Without `country`: order unchanged (`created_at desc, id desc`).
+  - Still three statements per page.
+- **`count_persons`** gains the same `country` parameter and filter.
 
-- [ ] **Step 2: Render the pager — or a failed-page error — under the persons list**
+**Tests** (data-backed; reuse `_seed_persons`, `_seed_person_with_names(..., contact_details=)`,
+`query_counter`, `captured_statements`). Mutation-prove the starred ones.
 
-Inside the **rows branch** of the persons-tab status ternary — the `<div className="space-y-2">`
-wrapping `personsByCountry.map(…)` — after the country groups. Not after the ternary: there the
-pager would also render under the loading and error states.
+| Test | Asserts |
+|---|---|
+| `test_person_facets_counts_match_country_query` ★ | for every facet, including `null` as `none`: count == rows from `?country=` at `limit=500` == `/persons/count?country=` |
+| `test_person_facets_sum_to_total` | sum of facet counts == `/persons/count` |
+| `test_person_country_filter_agrees_with_row_country` ★ | every row returned for `?country=XX` has `country_code == XX`; for `none`, `null` |
+| `test_person_facets_prefer_home_over_work` ★ | a person with work JP and home TW is counted under TW |
+| `test_person_facets_ignore_non_address_and_null_codes` | phone-only country → `null` bucket; a null home code falls back to work |
+| `test_person_facets_respect_q` | name and organisation matches narrow the facets |
+| `test_person_facets_order` | codes ascending, `null` last |
+| `test_person_group_order_is_by_sort_name` ★ | case-insensitive family name, full-name fallback, `id` tiebreak |
+| `test_person_group_ordering_is_total` | structural, via `captured_statements`: ORDER BY includes `persons.id` |
+| `test_person_group_pagination_is_stable` | 30 people in one country with the same sort name: pages neither overlap nor skip |
+| `test_person_country_param_validated` | `tw`, `TWN`, the empty string → 422; `none` → 200 |
 
-```tsx
-            {/* A later page failed: keep the persons already shown, and swap the pager for
-                an explicit error whose retry fetches just the missing page. */}
-            {/* Only while another page may exist. LoadMore keeps its button whenever the total
-                is unknown, but getNextPageParam already knows (known total, or a full last page),
-                so without this gate a short last page leaves a button that does nothing.
-                A failed next page leaves personsHasMore true, so its error stays reachable. */}
-            {personsHasMore && (personsMoreError ? (
-              <LoadError onRetry={() => fetchMorePersons()} isRetrying={personsFetchingMore} />
-            ) : (
-              <LoadMore
-                loaded={persons.length}
-                total={personTotal?.total}
-                // isFetchingNextPage, not isFetching — see the card search pager in Task 7.
-                isLoading={personsFetchingMore}
-                onLoadMore={() => fetchMorePersons()}
-              />
-            ))}
-```
+In `tests/test_query_counts.py`, add `/api/v2/persons/facets` to `BOUNDED_ENDPOINTS` and cover
+`?country=` in the constant-cost test.
 
-- [ ] **Step 3: Build**
+**Live checks** (reload the LaunchAgent):
+- Facets are `HK 1, JP 49, MO 2, PH 1, TW 139, US 2, null 8`, summing to 202.
+- For every facet, `?country=` row count and `/count?country=` agree.
+- `?limit=500` is unchanged at 202 rows, id-checksum 20790.
 
-Run: `cd nxt-a1-meishi/frontend && npm run build`
-Expected: no errors.
+### Task 8b — Frontend: `CountrySection` and the Persons tab
 
-- [ ] **Step 4: Verify in the browser**
+**Files:** create `frontend/src/components/CountrySection.tsx`; modify
+`frontend/src/pages/CollectionPage.tsx`, `frontend/src/api/index.ts`, `frontend/src/types/index.ts`,
+`frontend/src/i18n.ts`
 
-Hard-refresh, switch to the **Persons** tab:
-1. "Showing 50 of 202" appears with a Load more button. Before this task the tab stopped at 50
-   with no indication.
-2. Click Load more twice → all 202 persons are reachable and the button disappears.
-3. Search a name → results are bounded and the count reflects the filtered total.
+- **API and types.** Add `PersonFacet`, `listPersonFacets(q?)`, and a `country` argument on
+  `listPersons` (and `countPersons` if it is still used; delete it if nothing uses it).
+- **`CountrySection`** mirrors `MonthSection`:
+  - props: `code: string | null`, `label`, `count`, `defaultExpanded`, `q`, select-mode props
+  - owns its own `expanded` state
+  - `useInfiniteQuery` keyed `['persons', 'country', code ?? 'none', q]`, 500 per page
+  - `getNextPageParam`: `loaded < count` from the facet
+  - follows the status rule, with the pager gated on `hasNextPage`
+  - renders the existing row markup, the link and the select-mode checkbox, **in server order**
+  - exports only the component (react-refresh)
+- **Persons tab**:
+  - Replace the single `['persons', debouncedQ]` query, the `personsByCountry` memo,
+    `collapsedCountries` and `toggleCountry` with a facets query
+    `['persons', 'facets', debouncedQ]` rendered through the status rule, then one
+    `CountrySection` per facet in facet order.
+  - `defaultExpanded`: with no search, only the facet with the largest count (the first on a
+    tie); while searching, every facet.
+  - Key each section by `code + '|' + debouncedQ`, so a new search remounts them and the
+    default applies.
+- **Empty states.** No facets and no search → `EmptyState`. No facets while searching →
+  a new `noPersonsMatch(q)` message, added to all three language blocks.
+- **Merge select.** Replace `selectedIds: Set<string>` with a `Map<string, PersonListItem>`,
+  filled when a row is toggled. `selectedPersons = [...map.values()]` feeds `MergeModal`.
+  Selection survives collapsing a group. `MergeModal` already invalidates `['persons']`,
+  which covers both new keys.
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add frontend/src/pages/CollectionPage.tsx
-git commit -m "feat: paginate the persons tab instead of silently stopping at 50"
-```
-
----
+**Browser checks:**
+- Groups `HK, JP, MO, PH, TW, US, Unknown Country` with facet counts; only Taiwan open,
+  showing 139.
+- Japan loads its 49 on click.
+- Searching a surname shows the narrowed groups, all open. A no-match search shows the
+  no-match message, not the empty state.
+- Select one person in Taiwan and one in Japan, then Merge: the modal lists both. **Cancel,
+  do not merge.**
+- Failure states with the temporary `main.tsx` hooks:
+  - facets failing → Retry
+  - a group failing → error inside that group only
+  - paused → loading
 
 ## Final verification
 
