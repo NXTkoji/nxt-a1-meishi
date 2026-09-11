@@ -549,7 +549,7 @@ const translations = {
     scanHelpHide: '隱藏',
     scanHelpSplit: '✂️ 分割 — 將一張含多張名片的照片，切成每張名片一個影像。含多張名片的照片必須先分割才能解析。',
     scanHelpRotate: '↺ ↻ 旋轉 — 將影像轉正，讓文字能夠橫向閱讀。',
-    analysisBlockedUngrouped: (n: number) => `還有 ${n} 個影像尚未加入名片群組。請先分割含多張名片的照片，再使用上方的群組按鈕。`,
+    analysisBlockedUngrouped: (n: number) => `還有 ${n} 張影像尚未加入名片群組。請先分割含多張名片的照片，再使用上方的群組按鈕。`,
     analysisBlockedEmpty: '目前沒有可解析的名片。',
     tipDragPair: '將影像拖曳到另一張名片上，即可配成正面與背面。',
     tipFrontSide: '有姓名與聯絡資訊的那一面應設為「正面」。可用 ⇅ 交換正面與背面。',

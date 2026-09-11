@@ -257,20 +257,23 @@ function GroupingHelp() {
     }
   })
 
+  // Persist outside the state updater: updaters must stay pure (StrictMode runs
+  // them twice in development), and this click handler runs exactly once.
   const toggle = () => {
-    setCollapsed(prev => {
-      try {
-        localStorage.setItem('scan.help.collapsed', prev ? '0' : '1')
-      } catch {
-        // Storage unavailable — collapse state just won't persist across reloads.
-      }
-      return !prev
-    })
+    const next = !collapsed
+    try {
+      localStorage.setItem('scan.help.collapsed', next ? '1' : '0')
+    } catch {
+      // Storage unavailable — collapse state just won't persist across reloads.
+    }
+    setCollapsed(next)
   }
 
+  // Both toggle buttons carry aria-expanded so assistive tech announces whether
+  // the explanation is currently shown.
   if (collapsed) {
     return (
-      <button onClick={toggle} className="text-xs text-blue-500 hover:text-blue-700">
+      <button onClick={toggle} aria-expanded={false} className="text-xs text-blue-500 hover:text-blue-700">
         ⓘ {t.scanHelpShow}
       </button>
     )
@@ -280,7 +283,7 @@ function GroupingHelp() {
     <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 space-y-1.5">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-blue-900">{t.scanHelpTitle}</h3>
-        <button onClick={toggle} className="text-xs text-blue-500 hover:text-blue-700">
+        <button onClick={toggle} aria-expanded={true} className="text-xs text-blue-500 hover:text-blue-700">
           {t.scanHelpHide}
         </button>
       </div>
@@ -1072,8 +1075,10 @@ export function ScanPage() {
                 disabled={analysisBlockedReason !== null}
                 onClick={startAnalysis}
                 className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                title={analysisBlockedReason ?? undefined}
               >
+                {/* No title here: the same reason is already shown in the amber
+                    banner directly above. The header button keeps its title because
+                    nothing next to it explains why it is disabled. */}
                 {t.startAnalysis}
               </button>
             </div>
