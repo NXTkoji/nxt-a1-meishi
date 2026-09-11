@@ -17,8 +17,8 @@ interface Props {
 /**
  * "Showing n of m" plus a button, rendering nothing once everything is loaded.
  *
- * Shared by the month sections of the Collection tree, and (in a later task) by the
- * search results and the Persons tab. The point of taking `total` from the server
+ * Shared by the month sections of the Collection tree and the search results, and
+ * later by the Persons tab once it is paginated. The point of taking `total` from the server
  * rather than inferring "there might be more" from a full page is that the pager can
  * be honest before anything is fetched, and cannot get stuck one page short.
  */
@@ -60,8 +60,8 @@ interface LoadErrorProps {
  * data is missing when it is only unreachable. It always offers a retry rather than
  * a dead end.
  *
- * It lives beside LoadMore because the same list views (month sections, and later the
- * search results and the Persons tab) need both.
+ * It lives beside LoadMore because the same list views (month sections, search
+ * results, and later the Persons tab) need both.
  */
 export function LoadError({ onRetry, isRetrying }: LoadErrorProps) {
   const { t } = useLang()

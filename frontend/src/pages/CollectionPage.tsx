@@ -35,7 +35,9 @@ export function CollectionPage() {
   // does), so typing fires one request after the user pauses rather than one per
   // keystroke. 300 ms is long enough to cover the gap between keystrokes of a normal
   // typist, and short enough that results still feel immediate after the last one.
-  const debouncedQ = useDebounced(q, 300)
+  // Trimmed before debouncing: a box holding only spaces is not a search, and "Rotary "
+  // reuses the cached "Rotary" results instead of issuing a second request.
+  const debouncedQ = useDebounced(q.trim(), 300)
   const [view, setView] = useState<'cards' | 'persons'>('cards')
   const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set())
   const [collapsedCountries, setCollapsedCountries] = useState<Set<string>>(new Set())
@@ -102,7 +104,8 @@ export function CollectionPage() {
     queryFn: ({ pageParam }) =>
       listCards({ q: debouncedQ, limit: SEARCH_PAGE, offset: pageParam }),
     initialPageParam: 0,
-    // The /count total stays the authority on whether more remain.
+    // A known /count total decides whether more remain; an empty page, or a short page
+    // while the total is unknown, ends the list. Each case is explained below.
     getNextPageParam: (last, all) => {
       // An empty page means the list ran out, whatever the total says. Without this, a
       // total that went stale (cards deleted between the two requests) would keep
