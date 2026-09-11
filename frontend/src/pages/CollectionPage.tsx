@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { listCardFacets, listCards, listPersons, listCountries } from '../api'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { countCardsTotal, listCardFacets, listCards, listPersons, listCountries } from '../api'
 import { useLang } from '../LangContext'
 import type { CardFacet, CardListItem, Country, PersonListItem } from '../types'
 import { MergeModal } from '../components/MergeModal'
 import { MonthSection } from '../components/MonthSection'
-import { LoadError } from '../components/LoadMore'
+import { LoadError, LoadMore } from '../components/LoadMore'
+import { useDebounced } from '../hooks/useDebounced'
 import { monthKey } from '../lib/monthKey'
 import { formatDate, formatFilingDate } from '../lib/dates'
 
@@ -22,13 +23,19 @@ function countryLabel(
   try { return intlNames.of(code) ?? code } catch { return code }
 }
 
+/** Search results per request. Smaller than the month pages (500): search is interactive,
+ *  so the first screenful should come back fast, and most searches narrow well below it. */
+const SEARCH_PAGE = 50
+
 export function CollectionPage() {
   const { t, lang } = useLang()
   const intlNames = useMemo(() => new Intl.DisplayNames([lang], { type: 'region' }), [lang])
   const [q, setQ] = useState('')
-  // Stand-in for the debounced search term that Task 7 introduces. Defined here so the
-  // browse/search switch below is already written against the value it will use.
-  const debouncedQ = q
+  // Every query key and request reads this, never raw `q` (only the input's own `value`
+  // does), so typing fires one request after the user pauses rather than one per
+  // keystroke. 300 ms is long enough to cover the gap between keystrokes of a normal
+  // typist, and short enough that results still feel immediate after the last one.
+  const debouncedQ = useDebounced(q, 300)
   const [view, setView] = useState<'cards' | 'persons'>('cards')
   const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set())
   const [collapsedCountries, setCollapsedCountries] = useState<Set<string>>(new Set())
@@ -58,23 +65,63 @@ export function CollectionPage() {
     enabled: view === 'cards' && !debouncedQ,
   })
 
-  // Search mode: still the old client-side filter over one page of cards. Task 7
-  // replaces this with a server-side search; until then it stays working so the app is
-  // never broken between commits. Only fetched while a search is active.
-  const {
-    data: cards,
-    isLoadingError: cardsLoadError,
-    isFetching: cardsFetching,
-    refetch: refetchCards,
-  } = useQuery<CardListItem[]>({
-    queryKey: ['cards'],
-    queryFn: () => listCards({ limit: 200 }),
-    enabled: view === 'cards' && !!debouncedQ,
+  // Search mode: the server matches the term (name, company, phone, …) across the WHOLE
+  // collection and pages the results, so no card is unreachable because it fell outside
+  // a client-side slab. Both queries run only while a search term is active.
+  //
+  // The total is declared FIRST, on purpose. getNextPageParam below reads `searchTotal`,
+  // and TanStack calls getNextPageParam synchronously inside useInfiniteQuery (to compute
+  // `hasNextPage`) on every render once a page is cached. Declared after the infinite
+  // query, `searchTotal` would still be in its temporal dead zone at that moment and the
+  // render would throw a ReferenceError as soon as the first page arrived.
+  const { data: searchTotal } = useQuery<{ total: number }>({
+    queryKey: ['cards', 'search-count', debouncedQ],
+    // countCardsTotal, NOT countCards: `countCards` from '../api' is the Claude Vision
+    // card-count call re-exported from ./sessions — see the note on countCardsTotal.
+    queryFn: () => countCardsTotal({ q: debouncedQ }),
+    enabled: view === 'cards' && debouncedQ.length > 0,
   })
 
-  // Every query key and request below reads `debouncedQ`, never raw `q`, so that when
-  // Task 7 makes the debounce real, no request fires per keystroke. (Only the search
-  // input's own `value` uses `q`.)
+  // useInfiniteQuery, NOT a useQuery whose key contains the page count. Keying on the
+  // page count makes every "Load more" a fresh cache entry: it re-requests every earlier
+  // page (n(n+1)/2 requests to reach page n), keeps overlapping copies, and blanks the
+  // grid while the new entry is empty. The page count belongs in the cache, not in state.
+  // `debouncedQ` is in the key, so each search term owns its pages: page 2 of an old term
+  // cannot leak into a new one, and there is no paging state to reset.
+  const {
+    data: searchData,
+    isLoadingError: searchLoadError,
+    isFetching: searchFetching,
+    isFetchingNextPage: searchFetchingMore,
+    isFetchNextPageError: searchMoreError,
+    hasNextPage: searchHasMore,
+    fetchNextPage: fetchMoreResults,
+    refetch: refetchSearch,
+  } = useInfiniteQuery({
+    queryKey: ['cards', 'search', debouncedQ],
+    queryFn: ({ pageParam }) =>
+      listCards({ q: debouncedQ, limit: SEARCH_PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    // The /count total stays the authority on whether more remain.
+    getNextPageParam: (last, all) => {
+      // An empty page means the list ran out, whatever the total says. Without this, a
+      // total that went stale (cards deleted between the two requests) would keep
+      // `hasNextPage` true forever and leave a button that fetches nothing.
+      if (last.length === 0) return undefined
+      const loaded = all.reduce((n, page) => n + page.length, 0)
+      // Known total: stop exactly at it. Unknown total (the count query is still in
+      // flight, or failed): a full last page means more may exist, so keep offering the
+      // next offset. Defaulting the total to 0 here would disable Load more entirely.
+      const total = searchTotal?.total
+      if (total !== undefined) return loaded < total ? loaded : undefined
+      return last.length === SEARCH_PAGE ? loaded : undefined
+    },
+    enabled: view === 'cards' && debouncedQ.length > 0,
+  })
+  // No `?? []`: `undefined` means "no page yet" (in flight or paused), which the render
+  // must keep distinct from "zero results". Typed `CardListItem[] | undefined`.
+  const searchResults = searchData?.pages.flat()
+
   const {
     data: persons,
     isLoadingError: personsLoadError,
@@ -94,49 +141,6 @@ export function CollectionPage() {
     queryFn: listCountries,
     enabled: view === 'persons',
   })
-
-  // Cross-search: when searching cards, also fetch persons matching q to find cards by person
-  // It feeds matchingPersonIds → filteredCards, so it must follow the same debounced
-  // term as the card list; reading raw `q` here would defeat the debounce for the
-  // expensive half of the search.
-  const {
-    data: searchPersons,
-    isLoadingError: searchPersonsLoadError,
-    isFetching: searchPersonsFetching,
-    refetch: refetchSearchPersons,
-  } = useQuery<PersonListItem[]>({
-    queryKey: ['persons-search', debouncedQ],
-    // Explicit 500 for the same reason as above: a person matched only by organisation
-    // name must not fall off the Cards tab because the default page size hid them.
-    queryFn: () => listPersons(debouncedQ, 500),
-    enabled: view === 'cards' && debouncedQ.length > 0,
-  })
-
-  // Search results are built from BOTH the card list and the cross-search, so either
-  // one failing to load makes the results incomplete. Treat that as an error, not as
-  // "no results" (or as a silently shorter list). Retry refetches only what failed.
-  const searchLoadError = cardsLoadError || searchPersonsLoadError
-  const retrySearch = () => {
-    if (cardsLoadError) refetchCards()
-    if (searchPersonsLoadError) refetchSearchPersons()
-  }
-
-  const matchingPersonIds = useMemo(
-    () => new Set((searchPersons ?? []).map(p => p.id)),
-    [searchPersons],
-  )
-
-  // `undefined` until BOTH queries have data: filtering without the cross-search would
-  // silently drop cards matched only through their person.
-  const filteredCards = useMemo(() => {
-    if (cards === undefined || searchPersons === undefined) return undefined
-    if (!debouncedQ) return cards
-    return cards.filter(
-      c =>
-        c.person_name?.toLowerCase().includes(debouncedQ.toLowerCase()) ||
-        matchingPersonIds.has(c.person_id),
-    )
-  }, [cards, searchPersons, debouncedQ, matchingPersonIds])
 
   // The three most recent months open on load. Facets arrive newest-first, so those are
   // simply the first three entries — no date arithmetic, and no assumption that "recent"
@@ -277,26 +281,47 @@ export function CollectionPage() {
       {/* Cards — search results while a query is active, otherwise the browse tree */}
       {view === 'cards' && (
         debouncedQ ? (
-          // Search mode (temporary shape; Task 7 makes this a server-side search).
+          // Search mode: a flat grid of server-side results, no year/month tree.
           // Status order as described on the facets query: a failed request is not
           // "no results", and neither is one that is still pending or paused.
           searchLoadError ? (
-            <LoadError
-              onRetry={retrySearch}
-              isRetrying={cardsFetching || searchPersonsFetching}
-            />
-          ) : filteredCards === undefined ? (
+            // The first page failed and nothing is cached. Retrying re-runs the query.
+            <LoadError onRetry={() => refetchSearch()} isRetrying={searchFetching} />
+          ) : searchResults === undefined ? (
+            // No page has arrived yet — whether the request is in flight or paused.
             <div className="text-center text-gray-400 py-12">{t.loading}</div>
-          ) : filteredCards.length === 0 ? (
+          ) : searchResults.length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-12">{t.noResults(debouncedQ)}</p>
           ) : (
             <div className="space-y-2">
-              <p className="text-xs text-gray-400">{t.resultsN(filteredCards.length)}</p>
+              {/* Only a known total is printed. Falling back to the loaded count would
+                  read "50 results" while more exist, whenever /count is slow or failed. */}
+              {searchTotal?.total !== undefined && (
+                <p className="text-xs text-gray-400">{t.resultsN(searchTotal.total)}</p>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {filteredCards.map(card => (
+                {searchResults.map(card => (
                   <CardThumbnail key={card.id} card={card} />
                 ))}
               </div>
+              {/* Gated on `hasNextPage`, which getNextPageParam derives from both cases:
+                  a known total, or (unknown total) whether the last page was full.
+                  LoadMore alone keeps its button whenever the total is unknown, so after
+                  a short last page it would offer a button that loads nothing.
+                  A failed next page leaves `hasNextPage` true, so the error branch is
+                  reachable: it keeps the rows and retries just the missing page. */}
+              {searchHasMore && (searchMoreError ? (
+                <LoadError onRetry={() => fetchMoreResults()} isRetrying={searchFetchingMore} />
+              ) : (
+                <LoadMore
+                  loaded={searchResults.length}
+                  total={searchTotal?.total}
+                  // Only a next-page fetch makes the button busy. `isFetching` is also
+                  // true during a background refetch of page one, which is not "loading more".
+                  isLoading={searchFetchingMore}
+                  onLoadMore={() => fetchMoreResults()}
+                />
+              ))}
             </div>
           )
         ) : (
