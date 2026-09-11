@@ -44,6 +44,18 @@ const translations = {
     addGroup: '＋グループ追加',
     startAnalysis: '解析開始 →',
 
+    // ScanPage — grouping help panel & readiness gate
+    scanHelpTitle: '使い方',
+    scanHelpShow: '使い方を表示',
+    scanHelpHide: '隠す',
+    scanHelpSplit: '✂️ 分割 — 複数の名刺が写った写真を、名刺1枚ずつの画像に切り分けます。複数名刺の写真は解析前に必ず分割してください。',
+    scanHelpRotate: '↺ ↻ 回転 — 文字が横書きで読める向きに画像を回転します。',
+    analysisBlockedUngrouped: (n: number) => `${n}枚の画像がまだグループに入っていません。複数の名刺が写った写真を分割してから、上のボタンでグループ化してください。`,
+    analysisBlockedEmpty: '解析する名刺がありません。',
+    tipDragPair: '画像を他の名刺にドラッグすると、表と裏のペアになります。',
+    tipFrontSide: '名前と連絡先が載っている面を「表」にしてください。⇅ で表と裏を入れ替えられます。',
+    tipStartAnalysis: 'すべての名刺が正しく並んだら「解析開始」を押してください。',
+
     // ScanPage — card group card
     cardN: (n: number) => `名刺 #${n}`,
     analyzing: '解析中…',
@@ -282,6 +294,18 @@ const translations = {
     addGroup: '+ Add Group',
     startAnalysis: 'Start Analysis →',
 
+    // ScanPage — grouping help panel & readiness gate
+    scanHelpTitle: 'How this works',
+    scanHelpShow: 'How this works',
+    scanHelpHide: 'Hide',
+    scanHelpSplit: '✂️ Split — for a photo holding several cards, cut it into one image per card. Every multi-card photo must be split before analysis.',
+    scanHelpRotate: '↺ ↻ Rotate — turn an image upright so the text reads left to right.',
+    analysisBlockedUngrouped: (n: number) => `${n} image${n === 1 ? ' is' : 's are'} not in a card group yet. Split any photo holding more than one card, then use the grouping buttons above.`,
+    analysisBlockedEmpty: 'There are no cards to analyse yet.',
+    tipDragPair: 'Drag an image from one card into another to pair them as front and back.',
+    tipFrontSide: 'The side showing the name and contact details should be the Front. Use ⇅ Swap to change it.',
+    tipStartAnalysis: 'When every card is positioned correctly, press Start Analysis.',
+
     // ScanPage — card group card
     cardN: (n: number) => `Card #${n}`,
     analyzing: 'Analyzing…',
@@ -518,6 +542,18 @@ const translations = {
     cardGroupsN: (n: number) => `名片組 (${n})`,
     addGroup: '＋ 新增群組',
     startAnalysis: '開始解析 →',
+
+    // ScanPage — grouping help panel & readiness gate
+    scanHelpTitle: '操作說明',
+    scanHelpShow: '顯示操作說明',
+    scanHelpHide: '隱藏',
+    scanHelpSplit: '✂️ 分割 — 將一張含多張名片的照片，切成每張名片一個影像。含多張名片的照片必須先分割才能解析。',
+    scanHelpRotate: '↺ ↻ 旋轉 — 將影像轉正，讓文字能夠橫向閱讀。',
+    analysisBlockedUngrouped: (n: number) => `還有 ${n} 個影像尚未加入名片群組。請先分割含多張名片的照片，再使用上方的群組按鈕。`,
+    analysisBlockedEmpty: '目前沒有可解析的名片。',
+    tipDragPair: '將影像拖曳到另一張名片上，即可配成正面與背面。',
+    tipFrontSide: '有姓名與聯絡資訊的那一面應設為「正面」。可用 ⇅ 交換正面與背面。',
+    tipStartAnalysis: '當所有名片都排列正確後，請按「開始解析」。',
 
     // ScanPage — card group card
     cardN: (n: number) => `名片 #${n}`,

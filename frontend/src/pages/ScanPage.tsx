@@ -243,6 +243,53 @@ function UngroupedTile({
   )
 }
 
+/** Explains the ✂️ and ↺↻ actions. Collapsed state is remembered so a returning
+ *  user is not re-lectured, but it defaults to open for a first-time user.
+ *  localStorage can throw in some browser contexts (private mode, disabled
+ *  storage) — fall back to "always open, never persisted" rather than crash. */
+function GroupingHelp() {
+  const { t } = useLang()
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('scan.help.collapsed') === '1'
+    } catch {
+      return false
+    }
+  })
+
+  const toggle = () => {
+    setCollapsed(prev => {
+      try {
+        localStorage.setItem('scan.help.collapsed', prev ? '0' : '1')
+      } catch {
+        // Storage unavailable — collapse state just won't persist across reloads.
+      }
+      return !prev
+    })
+  }
+
+  if (collapsed) {
+    return (
+      <button onClick={toggle} className="text-xs text-blue-500 hover:text-blue-700">
+        ⓘ {t.scanHelpShow}
+      </button>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-blue-900">{t.scanHelpTitle}</h3>
+        <button onClick={toggle} className="text-xs text-blue-500 hover:text-blue-700">
+          {t.scanHelpHide}
+        </button>
+      </div>
+      <p className="text-xs text-blue-900/80">{t.scanHelpSplit}</p>
+      <p className="text-xs text-blue-900/80">{t.scanHelpRotate}</p>
+    </div>
+  )
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ScanPage() {
@@ -460,6 +507,16 @@ export function ScanPage() {
       return croppedPrefixes.has(base)
     })
   })()
+
+  // Images left in Ungrouped or Separated are silently dropped by the analysis, so
+  // block until every one is in a group. `ungrouped` covers both rows (see Task 8:
+  // `separated`/`unsplit` are just a display-only partition of it).
+  const analysisBlockedReason =
+    ungrouped.length > 0
+      ? t.analysisBlockedUngrouped(ungrouped.length)
+      : groups.every(g => g.images.length === 0)
+        ? t.analysisBlockedEmpty
+        : null
 
   // "Pair by position": group images by their _cardN suffix.
   // Images with the same position number (from different source photos) become
@@ -831,6 +888,9 @@ export function ScanPage() {
         <DropZone onFiles={handleFiles} />
       )}
 
+      {/* Explains the split/rotate icon buttons before the user reaches them. */}
+      {stage === 'grouping' && <GroupingHelp />}
+
       {/* Ungrouped — whole photos that have not been split. Only the two grouping
           buttons that make sense on a whole photo appear here; "Pair by position"
           needs a _cardN suffix that these files don't have (see the Separated row). */}
@@ -920,9 +980,10 @@ export function ScanPage() {
               <div className="flex gap-2">
                 <button onClick={addGroup} className="btn-sm">{t.addGroup}</button>
                 <button
-                  disabled={groups.every(g => g.images.length === 0)}
+                  disabled={analysisBlockedReason !== null}
                   onClick={startAnalysis}
-                  className="btn-primary text-sm"
+                  className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={analysisBlockedReason ?? undefined}
                 >
                   {t.startAnalysis}
                 </button>
@@ -930,10 +991,12 @@ export function ScanPage() {
             )}
           </div>
 
-          {stage === 'grouping' && groups.length >= 2 && (
-            <p className="text-xs text-gray-400">
-              Tip: Drag an image from one card into another card to pair them as front and back.
-            </p>
+          {stage === 'grouping' && (
+            <ul className="text-xs text-gray-400 list-disc pl-4 space-y-0.5">
+              {groups.length >= 2 && <li>{t.tipDragPair}</li>}
+              <li>{t.tipFrontSide}</li>
+              <li>{t.tipStartAnalysis}</li>
+            </ul>
           )}
 
           {groups.map((group, gi) => (
@@ -999,11 +1062,17 @@ export function ScanPage() {
           ))}
 
           {stage === 'grouping' && (
-            <div className="flex justify-end pt-2">
+            <div className="flex flex-col items-end gap-2 pt-2">
+              {analysisBlockedReason && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2 w-full">
+                  ⚠️ {analysisBlockedReason}
+                </p>
+              )}
               <button
-                disabled={groups.every(g => g.images.length === 0)}
+                disabled={analysisBlockedReason !== null}
                 onClick={startAnalysis}
-                className="btn-primary text-sm"
+                className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                title={analysisBlockedReason ?? undefined}
               >
                 {t.startAnalysis}
               </button>
