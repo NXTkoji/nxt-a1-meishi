@@ -249,8 +249,8 @@ export interface Occasion {
   location?: string
   notes?: string
   created_at: string
-  /** Live cards using this occasion. Present on the list endpoint; 0 elsewhere
-   *  (e.g. immediately after create, before any card is assigned to it). */
+  /** Live cards using this occasion. Computed by the list and update endpoints;
+   *  0 from create, where no card can be linked yet. */
   card_count: number
 }
 

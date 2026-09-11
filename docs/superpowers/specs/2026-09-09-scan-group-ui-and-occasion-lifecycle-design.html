@@ -180,7 +180,7 @@ button row below it re-lays out, and every sibling after it shifts. Clicking ↻
 requires re-aiming.</p>
 <p><strong>Change.</strong> Both rows use a <strong>fixed <code>w-32 h-32</code> tile</strong> with <code>object-contain</code>. A landscape card
 fills the width, a portrait card fills the height; the tile's footprint never changes, so nothing
-below or after it moves. Icon buttons become <code>h-9 min-w-9 text-lg</code> (~36px).</p>
+below or after it moves. Icon buttons become a fixed <code>h-9 w-9 text-lg</code> (~36px) — every one holds a single glyph, and the split button swaps ✂️ for … while splitting, so a fixed width keeps neighbours still.</p>
 <p><strong>Acceptance:</strong> clicking ↻ four times in succession without moving the mouse rotates the image
 four times.</p>
 <hr />
@@ -260,7 +260,7 @@ it becomes:</p>
 </code></pre>
 <p>so exported contacts keep their occasion after a delete. <code>occasion_location</code> has no snapshot
 and correctly becomes empty — location is a property of the occasion, not of the card.</p>
-<p><strong>Migration</strong> <code>f2a3b4c5d6e7_add_occasion_label_to_cards</code>, <code>down_revision = 'e1f2a3b4c5d6'</code>.
+<p><strong>Migration</strong> <code>f2a3b4c5d6e7_add_occasion_label_to_cards</code>, <code>down_revision = 'a3b4c5d6e7f8'</code>.
 Adds one nullable column. No backfill: existing cards all have live links.</p>
 <p><strong>Confirm dialog</strong> gains the count and states the consequence plainly:</p>
 <blockquote>
@@ -346,7 +346,7 @@ occasion_clause = or_(
 <h2 id="7-i18n">7. i18n</h2>
 <p>Every new string goes in all three blocks of <code>i18n.ts</code>. <code>tsc -b</code> enforces key parity across
 <code>ja</code> / <code>en</code> / <code>zh-TW</code> — a missing key is a compile error, so parity does not need a separate check.</p>
-<p>New key groups: <code>scanHelp*</code> (§4.1), <code>pairByPosHint</code> (§4.3), <code>analysisBlocked*</code> (§4.4),
+<p>New key groups: <code>scanHelp*</code> (§4.1), <code>separatedHint</code> (§4.3), <code>analysisBlocked*</code> (§4.4),
 <code>tipFrontSide</code> / <code>tipStartAnalysis</code> (§4.5), <code>outline*</code> (§5, including the twelve strings being
 migrated off hardcoded English), <code>occasionDeleteWarn(name, n)</code> (§6.1), <code>monthLabel(y, m)</code> (§6.2).</p>
 <hr />

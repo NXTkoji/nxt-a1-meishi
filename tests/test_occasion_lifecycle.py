@@ -335,3 +335,37 @@ def test_card_detail_exposes_label_after_delete(client_with_test_db):
     orphaned = client_with_test_db.get(f"/api/v2/cards/{ext_id}").json()
     assert orphaned["occasion_id"] is None
     assert orphaned["occasion_label"] == "RI Convention"
+
+
+def test_legacy_card_prefers_live_occasion_over_label(client_with_test_db):
+    """The other half of the resolution rule: a live link wins over an old label.
+
+    Only reachable for rows written before PATCH started clearing the label (the API
+    itself never leaves a card with both), but it is the rule legacy_card encodes.
+    """
+    _seed(
+        client_with_test_db,
+        occasion_name="Second Event",
+        n_cards=1,
+        label="Original Event",
+    )
+    holder = {"card_ext_id": "c-occ-0"}
+
+    async def _run():
+        from app.routers.v2.export import _load_full_card
+        from app.services.legacy_card import build_legacy_card
+
+        async for db in app.dependency_overrides[get_db]():
+            card = await _load_full_card(db, holder["card_ext_id"])
+            # Guard the premise: without both set, the assertion below proves nothing.
+            assert card.occasion_id is not None
+            assert card.occasion_label == "Original Event"
+            legacy = build_legacy_card(
+                card, card.person, card.person.contact_details, card.person.positions
+            )
+            holder["occasion_name"] = legacy.occasion_name
+            break
+
+    asyncio.run(_run())
+
+    assert holder["occasion_name"] == "Second Event"

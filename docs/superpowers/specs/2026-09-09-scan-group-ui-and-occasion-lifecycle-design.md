@@ -153,7 +153,7 @@ requires re-aiming.
 
 **Change.** Both rows use a **fixed `w-32 h-32` tile** with `object-contain`. A landscape card
 fills the width, a portrait card fills the height; the tile's footprint never changes, so nothing
-below or after it moves. Icon buttons become `h-9 min-w-9 text-lg` (~36px).
+below or after it moves. Icon buttons become a fixed `h-9 w-9 text-lg` (~36px) — every one holds a single glyph, and the split button swaps ✂️ for … while splitting, so a fixed width keeps neighbours still.
 
 **Acceptance:** clicking ↻ four times in succession without moving the mouse rotates the image
 four times.
@@ -237,7 +237,7 @@ occasion_name = db_card.occasion.name if db_card.occasion else (db_card.occasion
 so exported contacts keep their occasion after a delete. `occasion_location` has no snapshot
 and correctly becomes empty — location is a property of the occasion, not of the card.
 
-**Migration** `f2a3b4c5d6e7_add_occasion_label_to_cards`, `down_revision = 'e1f2a3b4c5d6'`.
+**Migration** `f2a3b4c5d6e7_add_occasion_label_to_cards`, `down_revision = 'a3b4c5d6e7f8'`.
 Adds one nullable column. No backfill: existing cards all have live links.
 
 **Confirm dialog** gains the count and states the consequence plainly:
@@ -326,7 +326,7 @@ The label is a snapshot, not a live value. Through the API a card never holds a 
 Every new string goes in all three blocks of `i18n.ts`. `tsc -b` enforces key parity across
 `ja` / `en` / `zh-TW` — a missing key is a compile error, so parity does not need a separate check.
 
-New key groups: `scanHelp*` (§4.1), `pairByPosHint` (§4.3), `analysisBlocked*` (§4.4),
+New key groups: `scanHelp*` (§4.1), `separatedHint` (§4.3), `analysisBlocked*` (§4.4),
 `tipFrontSide` / `tipStartAnalysis` (§4.5), `outline*` (§5, including the twelve strings being
 migrated off hardcoded English), `occasionDeleteWarn(name, n)` (§6.1), `monthLabel(y, m)` (§6.2).
 
