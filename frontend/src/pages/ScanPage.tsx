@@ -36,6 +36,7 @@ import { CropModal } from '../components/CropModal'
 import CardOutlineSelector from '../components/CardOutlineSelector'
 import type { Point } from '../api/sessions'
 import { useLang } from '../LangContext'
+import { todayLocalISODate } from '../lib/dates'
 import type {
   AnalysisEvent,
   CardDraft,
@@ -204,7 +205,9 @@ export function ScanPage() {
           images: [],
           myCompanyIds: [],
           occasionId: undefined,
-          receivedDate: new Date().toISOString().slice(0, 10),
+          // Local calendar date, not toISOString() (UTC): in Taipei a card entered
+          // before 08:00 would otherwise be dated yesterday.
+          receivedDate: todayLocalISODate(),
           notes: undefined,
           status: 'done',
           parsed: {
@@ -1351,7 +1354,9 @@ function CardGroupCard({
                 <label className="text-gray-500 block mb-1">{t.receivedDateLabel}</label>
                 <input
                   type="date"
-                  value={group.receivedDate ?? new Date().toISOString().slice(0, 10)}
+                  // Fallback shown when the group has no date yet: today on the
+                  // user's local calendar (see todayLocalISODate in lib/dates).
+                  value={group.receivedDate ?? todayLocalISODate()}
                   onChange={e => onMetaChange({ receivedDate: e.target.value })}
                   className="border border-gray-300 rounded px-2 py-0.5 text-xs"
                 />

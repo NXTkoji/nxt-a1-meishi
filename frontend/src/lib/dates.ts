@@ -64,3 +64,29 @@ export function formatFilingDate(
 ): string {
   return formatDate(card.received_date ?? card.created_at, lang)
 }
+
+/**
+ * Today on the user's own calendar, as "YYYY-MM-DD" — the default for a date input
+ * such as the Scan page's received date.
+ *
+ * Why not `new Date().toISOString().slice(0, 10)`: toISOString() is always UTC, so in
+ * Taipei (UTC+8) it returns yesterday's date from 00:00 to 07:59 local time. A card
+ * scanned then was saved one day early — and on the 1st of a month, filed under the
+ * previous month on the Collection page.
+ *
+ * Why local here, when rule 2 above displays the UTC date of `created_at`: that rule is
+ * about reading back a UTC timestamp the backend already bucketed. `received_date` is a
+ * DATE column with no time zone; it records the day the person handed over the card,
+ * and that day is the one on the user's wall calendar.
+ *
+ * Built from getFullYear/getMonth/getDate (all local-time getters) and zero-padded,
+ * which is exactly the value format `<input type="date">` requires.
+ */
+export function todayLocalISODate(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  // getMonth() is 0-based (January = 0), so add 1 before padding.
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
