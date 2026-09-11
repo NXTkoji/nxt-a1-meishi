@@ -5,23 +5,11 @@ import { listCards } from '../api'
 import type { CardListItem } from '../types'
 import { LoadError, LoadMore } from './LoadMore'
 import { useLang } from '../LangContext'
+import { monthKey } from '../lib/monthKey'
 
 /** The API's maximum limit for GET /api/v2/cards. A month holding more than this
  *  needs more than one request — see the pagination note on the component. */
 const PAGE = 500
-
-/**
- * The one canonical month key: "YYYY-MM", zero-padded, e.g. "2026-09".
- *
- * This is the wire format for `?month=` and is also used for React keys and the
- * eager-month set in CollectionPage. Every caller must build keys through this
- * function: an unpadded "2026-9" on one side and a padded "2026-09" on the other
- * would never match, and the failure would be silent (every month quietly
- * collapsed) rather than an error.
- */
-export function monthKey(year: number, month: number): string {
-  return `${year}-${String(month).padStart(2, '0')}`
-}
 
 interface Props {
   year: number
@@ -59,6 +47,7 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
   //    cache instead of refetching.
   const {
     data,
+    isPending,
     isFetching,
     isFetchingNextPage,
     isError,
@@ -93,21 +82,24 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
         <span className="text-gray-400">({count})</span>
       </button>
 
+      {/* Rendered from query status, not from isFetching/isLoading — see the status-order
+          note on the facets query in CollectionPage.tsx. A paused first page is pending
+          but not fetching, which an `isFetching` guard would have shown as an empty grid. */}
       {expanded && (
         // The first page failed: there is nothing to show, so show the failure rather
         // than an empty grid that reads as "this month has no cards". Retrying re-runs
-        // the whole query.
-        isError && cards.length === 0 ? (
+        // the whole query. `data === undefined` is what separates this from a failed
+        // LATER page (also `isError`), which is handled below without hiding the grid.
+        isError && data === undefined ? (
           <LoadError onRetry={() => refetch()} isRetrying={isFetching} />
+        ) : isPending ? (
+          // No page has arrived yet — whether the request is in flight or paused.
+          <p className="text-xs text-gray-400 py-2">{t.loading}</p>
         ) : (
           <>
-            {isFetching && cards.length === 0 ? (
-              <p className="text-xs text-gray-400 py-2">{t.loading}</p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-2">
-                {cards.map(renderCard)}
-              </div>
-            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-2">
+              {cards.map(renderCard)}
+            </div>
             {/* A later page failed: keep the cards already loaded, and swap the pager
                 for an explicit error whose retry fetches just the missing page. */}
             {isFetchNextPageError ? (
@@ -116,7 +108,9 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
               <LoadMore
                 loaded={cards.length}
                 total={count}
-                isLoading={isFetching}
+                // Only a next-page fetch makes the button busy. `isFetching` is also true
+                // during a background refetch of loaded pages, which is not "loading more".
+                isLoading={isFetchingNextPage}
                 onLoadMore={() => fetchNextPage()}
               />
             )}

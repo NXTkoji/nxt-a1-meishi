@@ -4,8 +4,9 @@ import { listCardFacets, listCards, listPersons, listCountries } from '../api'
 import { useLang } from '../LangContext'
 import type { CardFacet, CardListItem, Country, PersonListItem } from '../types'
 import { MergeModal } from '../components/MergeModal'
-import { MonthSection, monthKey } from '../components/MonthSection'
+import { MonthSection } from '../components/MonthSection'
 import { LoadError } from '../components/LoadMore'
+import { monthKey } from '../lib/monthKey'
 
 // Fallback country names must follow the UI language, so the DisplayNames instance
 // is built per-locale by the caller rather than pinned at module load.
