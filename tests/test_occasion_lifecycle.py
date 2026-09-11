@@ -186,3 +186,46 @@ def test_search_count_and_facets_include_occasion_matches(client_with_test_db):
     facets_resp = client_with_test_db.get("/api/v2/cards/facets", params={"q": "Convention"})
     assert facets_resp.status_code == 200
     assert sum(f["count"] for f in facets_resp.json()) == 3
+
+
+def test_legacy_card_falls_back_to_label(client_with_test_db):
+    """The DTO fed to the Google Contacts sync survives an occasion deletion."""
+    holder = {}
+
+    async def _run():
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.db.models import Card, CardMyCompany, Person
+        from app.services.legacy_card import build_legacy_card
+
+        async for db in app.dependency_overrides[get_db]():
+            card = await db.scalar(
+                select(Card)
+                .where(Card.id == holder["card_id"])
+                .options(
+                    selectinload(Card.occasion),
+                    selectinload(Card.my_company_links).selectinload(CardMyCompany.my_company),
+                    selectinload(Card.person).selectinload(Person.names),
+                    selectinload(Card.person).selectinload(Person.contact_details),
+                    selectinload(Card.person).selectinload(Person.positions),
+                    # build_legacy_card walks person.relationships_from even for a
+                    # person with none — an empty list still needs to be loaded, or
+                    # accessing the attribute triggers a lazy load outside the
+                    # greenlet and raises MissingGreenlet.
+                    selectinload(Card.person).selectinload(Person.relationships_from),
+                )
+            )
+            legacy = build_legacy_card(
+                card, card.person, card.person.contact_details, card.person.positions
+            )
+            holder["occasion_name"] = legacy.occasion_name
+            break
+
+    occ_id, card_ids = _seed(client_with_test_db, occasion_name="RI Convention", n_cards=1)
+    holder["card_id"] = card_ids[0]
+
+    client_with_test_db.delete(f"/api/v2/occasions/{occ_id}")
+    asyncio.run(_run())
+
+    assert holder["occasion_name"] == "RI Convention"
