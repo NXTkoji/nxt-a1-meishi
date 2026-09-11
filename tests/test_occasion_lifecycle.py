@@ -106,3 +106,34 @@ def test_delete_preserves_existing_label(client_with_test_db):
     assert len(rows) == len(card_ids)
     for row in rows:
         assert row["occasion_label"] == "Original Event"
+
+
+def test_list_returns_card_count(client_with_test_db):
+    occ_id, _ = _seed(client_with_test_db, n_cards=4)
+
+    resp = client_with_test_db.get("/api/v2/occasions")
+    assert resp.status_code == 200
+
+    row = next(o for o in resp.json() if o["id"] == occ_id)
+    assert row["card_count"] == 4
+
+
+def test_card_count_excludes_soft_deleted_cards(client_with_test_db):
+    from datetime import datetime
+
+    occ_id, card_ids = _seed(client_with_test_db, n_cards=3)
+
+    async def _soft_delete_one():
+        from app.db.models import Card
+
+        async for db in app.dependency_overrides[get_db]():
+            card = await db.get(Card, card_ids[0])
+            card.deleted_at = datetime.utcnow()
+            await db.commit()
+            break
+
+    asyncio.run(_soft_delete_one())
+
+    resp = client_with_test_db.get("/api/v2/occasions")
+    row = next(o for o in resp.json() if o["id"] == occ_id)
+    assert row["card_count"] == 2

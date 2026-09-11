@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_api_key
@@ -23,10 +23,24 @@ router = APIRouter(
 
 @router.get("", response_model=List[OccasionOut])
 async def list_occasions(db: AsyncSession = Depends(get_db)):
+    # Correlated count of live cards per occasion — one query, no N+1.
+    card_count = (
+        select(func.count(Card.id))
+        .where(Card.occasion_id == Occasion.id, Card.deleted_at.is_(None))
+        .scalar_subquery()
+    )
     rows = (await db.execute(
-        select(Occasion).order_by(Occasion.event_date.desc().nullslast(), Occasion.created_at.desc())
-    )).scalars().all()
-    return rows
+        select(Occasion, card_count).order_by(
+            Occasion.event_date.desc().nullslast(), Occasion.created_at.desc()
+        )
+    )).all()
+
+    out = []
+    for occ, count in rows:
+        item = OccasionOut.model_validate(occ)
+        item.card_count = count
+        out.append(item)
+    return out
 
 
 @router.post("", response_model=OccasionOut, status_code=status.HTTP_201_CREATED)

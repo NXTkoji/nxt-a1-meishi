@@ -341,6 +341,9 @@ class OccasionOut(BaseModel):
     location: Optional[str]
     notes: Optional[str]
     created_at: datetime
+    # Live (not soft-deleted) cards using this occasion. Filled in by list_occasions;
+    # defaults to 0 for the create/update responses, which do not compute it.
+    card_count: int = 0
 
     model_config = {"from_attributes": True}
 
