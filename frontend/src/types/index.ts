@@ -218,6 +218,14 @@ export interface PersonListItem {
   created_at: string
 }
 
+/** One country bucket of the Persons tab, from GET /api/v2/persons/facets.
+ *  `country_code` is null for persons with no derivable country; the endpoint sorts
+ *  codes ascending with that null bucket last. */
+export interface PersonFacet {
+  country_code: string | null
+  count: number
+}
+
 export interface MergeResult {
   person: Person
   duplicate_contact_count: number

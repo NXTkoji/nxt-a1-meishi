@@ -1,14 +1,15 @@
 import { useState, useMemo } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { countCardsTotal, listCardFacets, listCards, listPersons, listCountries } from '../api'
+import { countCardsTotal, listCardFacets, listCards, listPersonFacets, listCountries } from '../api'
 import { useLang } from '../LangContext'
-import type { CardFacet, CardListItem, Country, PersonListItem } from '../types'
+import type { CardFacet, CardListItem, Country, PersonFacet, PersonListItem } from '../types'
 import { MergeModal } from '../components/MergeModal'
 import { MonthSection } from '../components/MonthSection'
+import { CountrySection } from '../components/CountrySection'
 import { LoadError, LoadMore } from '../components/LoadMore'
 import { useDebounced } from '../hooks/useDebounced'
 import { monthKey } from '../lib/monthKey'
-import { formatDate, formatFilingDate } from '../lib/dates'
+import { formatFilingDate } from '../lib/dates'
 
 // Fallback country names must follow the UI language, so the DisplayNames instance
 // is built per-locale by the caller rather than pinned at module load.
@@ -40,7 +41,6 @@ export function CollectionPage() {
   const debouncedQ = useDebounced(q.trim(), 300)
   const [view, setView] = useState<'cards' | 'persons'>('cards')
   const [collapsedYears, setCollapsedYears] = useState<Set<number>>(new Set())
-  const [collapsedCountries, setCollapsedCountries] = useState<Set<string>>(new Set())
 
   // Browse mode: one small request describing every year/month bucket in the whole
   // collection. The page no longer fetches a fixed slab of cards and groups it in the
@@ -125,17 +125,19 @@ export function CollectionPage() {
   // must keep distinct from "zero results". Typed `CardListItem[] | undefined`.
   const searchResults = searchData?.pages.flat()
 
+  // Persons tab: one small request describing every country group and its size. The
+  // people themselves are fetched per group by CountrySection, only once a group is
+  // open — see the note there on why one shared list could not be paginated.
+  // `debouncedQ` narrows the groups on the server, so a search shows only the countries
+  // that hold a match. Status order as described on the card facets query above.
   const {
-    data: persons,
-    isLoadingError: personsLoadError,
-    isFetching: personsFetching,
-    refetch: refetchPersons,
-  } = useQuery<PersonListItem[]>({
-    queryKey: ['persons', debouncedQ],
-    // 500 is the endpoint's cap; passing it explicitly is load-bearing, since
-    // listPersons now defaults to the API's own default of 50. Task 8 gives this list
-    // a real pager.
-    queryFn: () => listPersons(debouncedQ || undefined, 500),
+    data: personFacets,
+    isLoadingError: personFacetsLoadError,
+    isFetching: personFacetsFetching,
+    refetch: refetchPersonFacets,
+  } = useQuery<PersonFacet[]>({
+    queryKey: ['persons', 'facets', debouncedQ],
+    queryFn: () => listPersonFacets(debouncedQ || undefined),
     enabled: view === 'persons',
   })
 
@@ -165,64 +167,46 @@ export function CollectionPage() {
     return [...years.entries()].sort((a, b) => b[0] - a[0])
   }, [facets])
 
-  // Group persons by country_code (home first, then work), sorted by family name within
-  const personsByCountry = useMemo(() => {
-    const sorted = [...(persons ?? [])].sort((a, b) => {
-      const fa = (a.family_name ?? a.primary_name ?? '').toLowerCase()
-      const fb = (b.family_name ?? b.primary_name ?? '').toLowerCase()
-      return fa.localeCompare(fb)
-    })
-    const countryMap = new Map<string, PersonListItem[]>()
-    for (const p of sorted) {
-      const key = p.country_code ?? ''
-      if (!countryMap.has(key)) countryMap.set(key, [])
-      countryMap.get(key)!.push(p)
-    }
-    return [...countryMap.entries()]
-      .sort(([a], [b]) => {
-        if (!a) return 1   // unknown last
-        if (!b) return -1
-        return a.localeCompare(b)
-      })
-      .map(([code, persons]) => ({ code, persons }))
-  }, [persons])
+  // Which country group opens on load. Not searching: only the biggest group (the
+  // first one on a tie), so the page costs one group's request, not all of them.
+  // Searching: every group with a match, since a narrowed search is what the user
+  // wants to see at once. The sections are keyed on the search term below, so these
+  // defaults re-apply to each new search instead of sticking from the previous one.
+  const largestFacet = useMemo(() => {
+    let best: PersonFacet | undefined
+    for (const f of personFacets ?? []) if (!best || f.count > best.count) best = f
+    return best
+  }, [personFacets])
 
   const [selectMode, setSelectMode] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  // A map from external_id to the person, not a set of ids. People now live inside
+  // per-group queries, so the page has no single list to look selected ids up in; a
+  // selected person must stay mergeable after their group collapses (its rows unmount)
+  // or a different search hides them. Storing the row itself keeps MergeModal fed.
+  const [selected, setSelected] = useState<Map<string, PersonListItem>>(new Map())
   const [showMergeModal, setShowMergeModal] = useState(false)
 
-  const toggleSelect = (extId: string) =>
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(extId)) next.delete(extId)
-      else next.add(extId)
+  const toggleSelect = (p: PersonListItem) =>
+    setSelected(prev => {
+      const next = new Map(prev)
+      if (next.has(p.external_id)) next.delete(p.external_id)
+      else next.set(p.external_id, p)
       return next
     })
 
   const exitSelectMode = () => {
     setSelectMode(false)
-    setSelectedIds(new Set())
+    setSelected(new Map())
     setShowMergeModal(false)
   }
 
-  const selectedPersons = useMemo(
-    () => (persons ?? []).filter(p => selectedIds.has(p.external_id)),
-    [persons, selectedIds],
-  )
+  const selectedPersons = useMemo(() => [...selected.values()], [selected])
 
   const toggleYear = (year: number) =>
     setCollapsedYears(prev => {
       const next = new Set(prev)
       if (next.has(year)) next.delete(year)
       else next.add(year)
-      return next
-    })
-
-  const toggleCountry = (key: string) =>
-    setCollapsedCountries(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
       return next
     })
 
@@ -378,93 +362,52 @@ export function CollectionPage() {
         )
       )}
 
-      {/* Persons grouped by country */}
+      {/* Persons grouped by country — one lazily loaded CountrySection per facet */}
       {view === 'persons' && (
-        // Status order — see the note on the facets query: a failed, pending or paused
-        // request must not render EmptyState.
-        personsLoadError ? (
-          <LoadError onRetry={() => refetchPersons()} isRetrying={personsFetching} />
-        ) : persons === undefined ? (
+        // Status order — see the note on the card facets query: a failed, pending or
+        // paused request must not render EmptyState.
+        personFacetsLoadError ? (
+          <LoadError onRetry={() => refetchPersonFacets()} isRetrying={personFacetsFetching} />
+        ) : personFacets === undefined ? (
           <div className="text-center text-gray-400 py-12">{t.loading}</div>
-        ) : persons.length === 0 ? (
-          <EmptyState />
+        ) : personFacets.length === 0 ? (
+          debouncedQ ? (
+            <p className="text-center text-sm text-gray-400 py-12">{t.noPersonsMatch(debouncedQ)}</p>
+          ) : (
+            <EmptyState />
+          )
         ) : (
           <div className="space-y-2">
-            {personsByCountry.map(({ code, persons: group }) => {
-              const collapsed = collapsedCountries.has(code)
-              const label = code ? countryLabel(code, countries, intlNames) : t.unknownCountry ?? 'Unknown'
-              return (
-                <div key={code || '__none__'}>
-                  <button
-                    className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 py-1 hover:text-blue-600 text-left"
-                    onClick={() => toggleCountry(code)}
-                    aria-expanded={!collapsed}
-                  >
-                    <span className="text-xs text-gray-400" aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
-                    <span>{label}</span>
-                    <span className="text-xs text-gray-400 font-normal">({group.length})</span>
-                  </button>
-                  {!collapsed && (
-                    <div className="ml-4 divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white">
-                      {group.map(p => {
-                        const isSelected = selectedIds.has(p.external_id)
-                        if (selectMode) {
-                          return (
-                            <div
-                              key={p.id}
-                              onClick={() => toggleSelect(p.external_id)}
-                              className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleSelect(p.external_id)}
-                                onClick={e => e.stopPropagation()}
-                                className="accent-blue-600 w-4 h-4 shrink-0"
-                              />
-                              <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
-                                {(p.primary_name ?? '?').charAt(0)}
-                              </div>
-                              <div>
-                                <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
-                                <p className="text-xs text-gray-400">{formatDate(p.created_at, lang)}</p>
-                              </div>
-                            </div>
-                          )
-                        }
-                        return (
-                          <a
-                            key={p.id}
-                            href={`/persons/${p.external_id}`}
-                            className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
-                          >
-                            <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
-                              {(p.primary_name ?? '?').charAt(0)}
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium text-gray-900">{p.primary_name ?? t.noName}</p>
-                              <p className="text-xs text-gray-400">{formatDate(p.created_at, lang)}</p>
-                            </div>
-                          </a>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+            {/* Facet order is the display order (codes ascending, no country last); the
+                server already sorts it, so there is nothing to re-sort here. */}
+            {personFacets.map(f => (
+              <CountrySection
+                // The search term is part of the key so a new search remounts every
+                // section: each one's `expanded` state is re-initialised from
+                // defaultExpanded, instead of carrying over from the previous search.
+                key={`${f.country_code ?? 'none'}|${debouncedQ}`}
+                code={f.country_code}
+                label={f.country_code ? countryLabel(f.country_code, countries, intlNames) : t.unknownCountry}
+                count={f.count}
+                defaultExpanded={debouncedQ ? true : f === largestFacet}
+                q={debouncedQ}
+                selectMode={selectMode}
+                selected={selected}
+                onToggleSelect={toggleSelect}
+              />
+            ))}
           </div>
         )
       )}
       {/* Floating action bar — visible in select mode with ≥2 selected */}
-      {selectMode && selectedIds.size >= 2 && (
+      {selectMode && selected.size >= 2 && (
         <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white border border-gray-200 rounded-2xl shadow-xl px-5 py-3 z-40">
-          <span className="text-sm text-gray-600">{t.selectedN(selectedIds.size)}</span>
+          <span className="text-sm text-gray-600">{t.selectedN(selected.size)}</span>
           <button
             onClick={() => setShowMergeModal(true)}
             className="btn-primary text-sm"
           >
-            {t.mergeSelectedBtn(selectedIds.size)}
+            {t.mergeSelectedBtn(selected.size)}
           </button>
         </div>
       )}

@@ -7,6 +7,7 @@ import type {
   MyCompany,
   Occasion,
   Person,
+  PersonFacet,
   PersonListItem,
   RelationshipType,
 } from '../types'
@@ -93,24 +94,33 @@ export const promoteCardSideToFront = (cardExtId: string, sideOrder: number) =>
 
 // Persons
 
-/** One page of persons, optionally filtered by `q`.
+/** One page of persons, optionally filtered by `q` and/or one country group.
  *
  *  `limit` defaults to the endpoint's own default of 50 — callers that render a whole
  *  list rather than a page MUST pass an explicit limit, because a missing one silently
  *  truncates with no error shown. (The backend caps limit at 500; its `if q:` branch
- *  once applied no LIMIT at all, which is why the callers below say 500 out loud.) */
-export const listPersons = (q?: string, limit = 50, offset = 0) => {
+ *  once applied no LIMIT at all, which is why the callers below say 500 out loud.)
+ *
+ *  `country` is a two-letter code, or `'none'` for the bucket with no country — the
+ *  backend validates `^([A-Z]{2}|none)$` and answers anything else with 422. It is sent
+ *  only when defined. With a country the rows come back in display order (family name,
+ *  else full name, case-insensitive, then id); without one they stay newest-first. */
+export const listPersons = (q?: string, limit = 50, offset = 0, country?: string) => {
   const qs = new URLSearchParams()
   if (q) qs.set('q', q)
+  if (country !== undefined) qs.set('country', country)
   qs.set('limit', String(limit))
   qs.set('offset', String(offset))
   return get<PersonListItem[]>(`/api/v2/persons?${qs}`)
 }
 
-/** How many persons match `q` — the total a "showing n of m" pager is sized from.
- *  Shares its match logic with listPersons on the backend, so the two agree. */
-export const countPersons = (q?: string) =>
-  get<{ total: number }>(`/api/v2/persons/count${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+/** Country buckets with counts — the shape of the Persons tab.
+ *
+ *  One row per derived country (codes ascending, the null bucket last), so this stays
+ *  cheap at any collection size. `q` narrows the buckets with the same match logic
+ *  listPersons uses, so a facet count always equals the rows its group can page to. */
+export const listPersonFacets = (q?: string) =>
+  get<PersonFacet[]>(`/api/v2/persons/facets${q ? `?q=${encodeURIComponent(q)}` : ''}`)
 
 export const getPerson = (id: string) => get<Person>(`/api/v2/persons/${id}`)
 
