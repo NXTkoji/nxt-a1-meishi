@@ -1295,6 +1295,12 @@ git commit -m "perf: add the first indexes on cards, names, contacts and sync hi
 
 ## Task 6: Browse mode — facets tree with lazy months
 
+> **Implemented.** The committed code (`31b000c`, `dfdfb39`, `bd71101`; guard spelling tidied in
+> `9610765`) supersedes the snippets below — especially their pagination (a page count in the
+> query key, not `useInfiniteQuery`) and loading-state code (`= []` defaults, `isLoading` /
+> `isFetching` guards). Copy patterns from `MonthSection.tsx` and `CollectionPage.tsx` as
+> committed, not from this section.
+
 This is the task that makes the five hidden cards reappear.
 
 **Files:**
@@ -1605,9 +1611,20 @@ git commit -m "feat: browse the collection via a facets tree with lazily loaded 
 > 2. `data === undefined` (pending — fetching or paused) → loading
 > 3. data empty → empty state
 > 4. otherwise the data (a failed background refetch keeps it on screen)
-> Where several queries feed one view (card search results depend on the persons cross-search
-> too), the view has no data until **all** of them do.
+> 5. under the rows: a failed **later** page (`isFetchNextPageError`) →
+>    `<LoadError onRetry={() => fetchNextPage()} isRetrying={isFetchingNextPage} />` in place of
+>    the pager; otherwise `<LoadMore … isLoading={isFetchingNextPage} />` — and render either one
+>    only while `hasNextPage`, because `LoadMore` keeps its button whenever the total is unknown. Without this a failed
+>    page 2 shows nothing at all. Use `isFetchingNextPage`, not `isFetching`, which is also true
+>    while page one refetches in the background.
+>
+> Take rows as `data?.pages.flat()` with **no `?? []`**, so step 2 can test `=== undefined`.
+> Where several queries feed one view, the view has no data until **all** of them do. (The
+> client-side search this task replaces needed the persons cross-search too. The server-side
+> search below has a single rows query; its `/count` total only sizes the pager, so it gates
+> nothing — `LoadMore` treats an `undefined` total as "more may exist".)
 > Caught in the browser during Task 6 verification: the code passed build, grep and review.
+> `MonthSection.tsx` as committed is the reference implementation of all five steps.
 
 **Files:**
 - Create: `frontend/src/hooks/useDebounced.ts`
@@ -1641,45 +1658,68 @@ In `CollectionPage.tsx`, replace the placeholder `const debouncedQ = q` from Tas
 ```tsx
   const debouncedQ = useDebounced(q, 300)
 
-  // Reset paging whenever the query changes, or page 2 of an old query leaks in.
-
   const SEARCH_PAGE = 50
+
+  // The total is declared FIRST, on purpose. getNextPageParam below reads `searchTotal`,
+  // and TanStack calls getNextPageParam synchronously inside useInfiniteQuery (to compute
+  // `hasNextPage`) on every render once a page is cached. Declared after the infinite
+  // query, `searchTotal` would still be in its temporal dead zone at that moment and the
+  // render would throw a ReferenceError as soon as the first page arrived.
+  const { data: searchTotal } = useQuery<{ total: number }>({
+    queryKey: ['cards', 'search-count', debouncedQ],
+    // countCardsTotal, NOT countCards: `countCards` from '../api' is the Claude Vision
+    // card-count call re-exported from ./sessions — see the note on countCardsTotal.
+    queryFn: () => countCardsTotal({ q: debouncedQ }),
+    enabled: view === 'cards' && debouncedQ.length > 0,
+  })
 
   // useInfiniteQuery, NOT a useQuery whose key contains the page count. Keying on the
   // page count makes every "Load more" a fresh cache entry: it re-requests every earlier
   // page (n(n+1)/2 requests to reach page n), keeps overlapping copies, and blanks the
   // grid while the new entry is empty. The page count belongs in the cache, not in state.
-  const { data: searchData, isFetching: searchFetching, fetchNextPage: fetchMoreResults } =
-    useInfiniteQuery({
-      queryKey: ['cards', 'search', debouncedQ],
-      queryFn: ({ pageParam }) =>
-        listCards({ q: debouncedQ, limit: SEARCH_PAGE, offset: pageParam }),
-      initialPageParam: 0,
-      // The /count total stays the authority on whether more remain.
-      getNextPageParam: (last, all) => {
-        const loaded = all.reduce((n, page) => n + page.length, 0)
-        // Known total: stop exactly at it. Unknown total (the count query is still in
-        // flight, or failed): a full last page means more may exist, so keep offering the
-        // next offset. Defaulting the total to 0 here would disable Load more entirely.
-        const total = searchTotal?.total
-        if (total !== undefined) return loaded < total ? loaded : undefined
-        return last.length === SEARCH_PAGE ? loaded : undefined
-      },
-      enabled: view === 'cards' && debouncedQ.length > 0,
-    })
-  const searchResults = searchData?.pages.flat() ?? []
-
-  const { data: searchTotal } = useQuery<{ total: number }>({
-    queryKey: ['cards', 'search-count', debouncedQ],
-    queryFn: () => countCards({ q: debouncedQ }),
+  // `debouncedQ` is in the key, so each search term owns its pages: page 2 of an old term
+  // cannot leak into a new one, and there is no paging state to reset.
+  const {
+    data: searchData,
+    isLoadingError: searchLoadError,
+    isFetching: searchFetching,
+    isFetchingNextPage: searchFetchingMore,
+    isFetchNextPageError: searchMoreError,
+    hasNextPage: searchHasMore,
+    fetchNextPage: fetchMoreResults,
+    refetch: refetchSearch,
+  } = useInfiniteQuery({
+    queryKey: ['cards', 'search', debouncedQ],
+    queryFn: ({ pageParam }) =>
+      listCards({ q: debouncedQ, limit: SEARCH_PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    // The /count total stays the authority on whether more remain.
+    getNextPageParam: (last, all) => {
+      const loaded = all.reduce((n, page) => n + page.length, 0)
+      // Known total: stop exactly at it. Unknown total (the count query is still in
+      // flight, or failed): a full last page means more may exist, so keep offering the
+      // next offset. Defaulting the total to 0 here would disable Load more entirely.
+      const total = searchTotal?.total
+      if (total !== undefined) return loaded < total ? loaded : undefined
+      return last.length === SEARCH_PAGE ? loaded : undefined
+    },
     enabled: view === 'cards' && debouncedQ.length > 0,
   })
+  // No `?? []`: `undefined` means "no page yet" (in flight or paused), which the render
+  // must keep distinct from "zero results". Typed `CardListItem[] | undefined`.
+  const searchResults = searchData?.pages.flat()
 ```
 
-**Delete** these, which the server now replaces:
-- the `searchPersons` query (`CollectionPage.tsx:47-52`)
-- the `matchingPersonIds` memo (`:54-57`)
-- the `filteredCards` memo (`:58-66`)
+New imports: `useInfiniteQuery` (beside `useQuery`), `countCardsTotal` from `../api`, `LoadMore`
+(beside the existing `LoadError` from `../components/LoadMore`), and `useDebounced`.
+
+**Delete** these, which the server now replaces (find them by name — line numbers drift):
+- the temporary search-mode `cards` query (`queryKey: ['cards']`, `listCards({ limit: 200 })`)
+- the `searchPersons` cross-search query (`queryKey: ['persons-search', debouncedQ]`)
+- `searchLoadError` and `retrySearch`, which combine those two queries' errors — the new
+  `searchLoadError` above is the infinite query's own `isLoadingError`
+- the `matchingPersonIds` memo
+- the `filteredCards` memo
 
 - [ ] **Step 3: Render search results as a flat list**
 
@@ -1687,22 +1727,44 @@ In the cards-tab JSX, branch on `debouncedQ`:
 
 ```tsx
       {view === 'cards' && (debouncedQ ? (
-        searchFetching && searchResults.length === 0 ? (
+        // Status order — see the rule at the top of this task.
+        searchLoadError ? (
+          // The first page failed and nothing is cached: an error, never "no results".
+          // Retrying re-runs the whole query.
+          <LoadError onRetry={() => refetchSearch()} isRetrying={searchFetching} />
+        ) : searchResults === undefined ? (
+          // No page has arrived yet — whether the request is in flight or paused.
           <div className="text-center text-gray-400 py-12">{t.loading}</div>
         ) : searchResults.length === 0 ? (
-          <div className="text-center text-gray-400 py-12">{t.noResults(debouncedQ)}</div>
+          <p className="text-center text-sm text-gray-400 py-12">{t.noResults(debouncedQ)}</p>
         ) : (
           <div className="space-y-2">
-            <p className="text-xs text-gray-500">{t.resultsN(searchTotal?.total ?? searchResults.length)}</p>
+            {/* Only a known total is a result count. Falling back to the loaded length would
+                read "50 results" while more exist, whenever /count is slow or failed. */}
+            {searchTotal?.total !== undefined && (
+              <p className="text-xs text-gray-500">{t.resultsN(searchTotal.total)}</p>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
               {searchResults.map(card => <CardThumbnail key={card.id} card={card} />)}
             </div>
-            <LoadMore
-              loaded={searchResults.length}
-              total={searchTotal?.total}
-              isLoading={searchFetching}
-              onLoadMore={() => fetchMoreResults()}
-            />
+            {/* A later page failed: keep the results already shown, and swap the pager for
+                an explicit error whose retry fetches just the missing page. */}
+            {/* Only while another page may exist. LoadMore keeps its button whenever the total
+                is unknown, but getNextPageParam already knows (known total, or a full last page),
+                so without this gate a short last page leaves a button that does nothing.
+                A failed next page leaves searchHasMore true, so its error stays reachable. */}
+            {searchHasMore && (searchMoreError ? (
+              <LoadError onRetry={() => fetchMoreResults()} isRetrying={searchFetchingMore} />
+            ) : (
+              <LoadMore
+                loaded={searchResults.length}
+                total={searchTotal?.total}
+                // Only a next-page fetch makes the button busy. `isFetching` is also true
+                // during a background refetch of page one, which is not "loading more".
+                isLoading={searchFetchingMore}
+                onLoadMore={() => fetchMoreResults()}
+              />
+            ))}
           </div>
         )
       ) : (
@@ -1753,9 +1815,19 @@ git commit -m "feat: server-side debounced paginated card search"
 > 2. `data === undefined` (pending — fetching or paused) → loading
 > 3. data empty → empty state
 > 4. otherwise the data (a failed background refetch keeps it on screen)
-> Where several queries feed one view (card search results depend on the persons cross-search
-> too), the view has no data until **all** of them do.
+> 5. under the rows: a failed **later** page (`isFetchNextPageError`) →
+>    `<LoadError onRetry={() => fetchNextPage()} isRetrying={isFetchingNextPage} />` in place of
+>    the pager; otherwise `<LoadMore … isLoading={isFetchingNextPage} />` — and render either one
+>    only while `hasNextPage`, because `LoadMore` keeps its button whenever the total is unknown. Without this a failed
+>    page 2 shows nothing at all. Use `isFetchingNextPage`, not `isFetching`, which is also true
+>    while page one refetches in the background.
+>
+> Take rows as `data?.pages.flat()` with **no `?? []`**, so step 2 can test `=== undefined`.
+> Where several queries feed one view, the view has no data until **all** of them do. (The
+> persons list has a single rows query; its `/count` total only sizes the pager, so it gates
+> nothing — `LoadMore` treats an `undefined` total as "more may exist".)
 > Caught in the browser during Task 6 verification: the code passed build, grep and review.
+> `MonthSection.tsx` as committed is the reference implementation of all five steps.
 
 **Files:**
 - Modify: `frontend/src/pages/CollectionPage.tsx`
@@ -1767,10 +1839,28 @@ Replace the `persons` query:
 ```tsx
   const PERSON_PAGE = 50
 
+  // Declared BEFORE the infinite query, for the same reason as `searchTotal` in Task 7:
+  // getNextPageParam reads it during render, so a later `const` would be in its TDZ.
+  const { data: personTotal } = useQuery<{ total: number }>({
+    queryKey: ['persons-count', debouncedQ],
+    queryFn: () => countPersons(debouncedQ || undefined),
+    enabled: view === 'persons',
+  })
 
   // useInfiniteQuery for the same reason as the card search above.
-  const { data: personsData, isLoading: personsLoading, isFetching: personsFetching,
-          fetchNextPage: fetchMorePersons } = useInfiniteQuery({
+  // The load-error / fetching / refetch names match the committed `persons` query, so the
+  // persons-tab status ternary (`personsLoadError` → `persons === undefined` →
+  // `persons.length === 0` → groups) keeps working unchanged.
+  const {
+    data: personsData,
+    isLoadingError: personsLoadError,
+    isFetching: personsFetching,
+    isFetchingNextPage: personsFetchingMore,
+    isFetchNextPageError: personsMoreError,
+    hasNextPage: personsHasMore,
+    fetchNextPage: fetchMorePersons,
+    refetch: refetchPersons,
+  } = useInfiniteQuery({
     queryKey: ['persons', debouncedQ],
     queryFn: ({ pageParam }) =>
       listPersons(debouncedQ || undefined, PERSON_PAGE, pageParam),
@@ -1784,26 +1874,38 @@ Replace the `persons` query:
     },
     enabled: view === 'persons',
   })
-  const persons = personsData?.pages.flat() ?? []
-
-  const { data: personTotal } = useQuery<{ total: number }>({
-    queryKey: ['persons-count', debouncedQ],
-    queryFn: () => countPersons(debouncedQ || undefined),
-    enabled: view === 'persons',
-  })
+  // No `?? []`: `undefined` is "no page yet", which the status ternary tests for.
+  // (The `persons ?? []` inside the personsByCountry and selectedPersons memos stays — those
+  // only derive from whatever is loaded, they don't decide what state to render.)
+  const persons = personsData?.pages.flat()
 ```
 
-- [ ] **Step 2: Render LoadMore under the persons list**
+New import: `countPersons` from `../api` (`useInfiniteQuery` and `LoadMore` arrive in Task 7).
 
-At the end of the persons-tab JSX, after the country groups:
+- [ ] **Step 2: Render the pager — or a failed-page error — under the persons list**
+
+Inside the **rows branch** of the persons-tab status ternary — the `<div className="space-y-2">`
+wrapping `personsByCountry.map(…)` — after the country groups. Not after the ternary: there the
+pager would also render under the loading and error states.
 
 ```tsx
-          <LoadMore
-            loaded={persons.length}
-            total={personTotal?.total}
-            isLoading={personsFetching}
-            onLoadMore={() => fetchMorePersons()}
-          />
+            {/* A later page failed: keep the persons already shown, and swap the pager for
+                an explicit error whose retry fetches just the missing page. */}
+            {/* Only while another page may exist. LoadMore keeps its button whenever the total
+                is unknown, but getNextPageParam already knows (known total, or a full last page),
+                so without this gate a short last page leaves a button that does nothing.
+                A failed next page leaves personsHasMore true, so its error stays reachable. */}
+            {personsHasMore && (personsMoreError ? (
+              <LoadError onRetry={() => fetchMorePersons()} isRetrying={personsFetchingMore} />
+            ) : (
+              <LoadMore
+                loaded={persons.length}
+                total={personTotal?.total}
+                // isFetchingNextPage, not isFetching — see the card search pager in Task 7.
+                isLoading={personsFetchingMore}
+                onLoadMore={() => fetchMorePersons()}
+              />
+            ))}
 ```
 
 - [ ] **Step 3: Build**
