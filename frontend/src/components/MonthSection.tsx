@@ -51,22 +51,30 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
     isFetchingNextPage,
     isLoadingError,
     isFetchNextPageError,
+    hasNextPage,
     fetchNextPage,
     refetch,
   } = useInfiniteQuery({
     queryKey: ['cards', 'month', key], // no page count in the key
     queryFn: ({ pageParam }) => listCards({ month: key, limit: PAGE, offset: pageParam }),
     initialPageParam: 0,
-    // The facet count stays the authority on whether more remain — same invariant,
-    // expressed as the next offset rather than a page count. Returning undefined
-    // tells TanStack there is no next page.
-    getNextPageParam: (_last, all) => {
+    // The facet count decides whether more remain — same invariant, expressed as the
+    // next offset rather than a page count. Returning undefined tells TanStack there is
+    // no next page.
+    getNextPageParam: (last, all) => {
+      // An empty page means the month ran out, whatever the facet said. Facets are
+      // cached (staleTime), so a card deleted or re-dated since they loaded leaves the
+      // header count too high; without this, `hasNextPage` would stay true forever
+      // behind a "Load more" that fetches nothing.
+      if (last.length === 0) return undefined
       const loaded = all.reduce((n, p) => n + p.length, 0)
       return loaded < count ? loaded : undefined
     },
     enabled: expanded,
   })
-  const cards = data?.pages.flat() ?? []
+  // No `?? []`: `undefined` means "no page yet" (in flight or paused), which the render
+  // must keep distinct from "this month has no cards".
+  const cards = data?.pages.flat()
 
   return (
     <div className="ml-4 mb-2">
@@ -87,11 +95,11 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
       {expanded && (
         // The first page failed: there is nothing to show, so show the failure rather
         // than an empty grid that reads as "this month has no cards". Retrying re-runs
-        // the whole query. `data === undefined` is what separates this from a failed
+        // the whole query. Having no page yet is what separates this from a failed
         // LATER page (also `isError`), which is handled below without hiding the grid.
         isLoadingError ? (
           <LoadError onRetry={() => refetch()} isRetrying={isFetching} />
-        ) : data === undefined ? (
+        ) : cards === undefined ? (
           // No page has arrived yet — whether the request is in flight or paused.
           <p className="text-xs text-gray-400 py-2">{t.loading}</p>
         ) : (
@@ -99,9 +107,11 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-2">
               {cards.map(renderCard)}
             </div>
-            {/* A later page failed: keep the cards already loaded, and swap the pager
-                for an explicit error whose retry fetches just the missing page. */}
-            {isFetchNextPageError ? (
+            {/* Gated on hasNextPage, which getNextPageParam derives from the facet count
+                and an empty last page. A later page that failed leaves hasNextPage true,
+                so the error branch stays reachable: it keeps the cards already loaded and
+                its retry fetches just the missing page. */}
+            {hasNextPage && (isFetchNextPageError ? (
               <LoadError onRetry={() => fetchNextPage()} isRetrying={isFetchingNextPage} />
             ) : (
               <LoadMore
@@ -112,7 +122,7 @@ export function MonthSection({ year, month, count, defaultExpanded, renderCard }
                 isLoading={isFetchingNextPage}
                 onLoadMore={() => fetchNextPage()}
               />
-            )}
+            ))}
           </>
         )
       )}
