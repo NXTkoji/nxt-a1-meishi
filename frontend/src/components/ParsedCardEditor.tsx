@@ -12,6 +12,7 @@
 import { useState } from 'react'
 import { ConfidenceBadge } from './ConfidenceBadge'
 import { BirthdayField } from './BirthdayField'
+import { startDragAutoScroll } from '../lib/dragAutoScroll'
 import { useLang } from '../LangContext'
 import type { ParsedCard, ParsedContactDetail, ParsedName, ParsedPosition } from '../types'
 
@@ -282,6 +283,8 @@ function ContactSubSection({
               const payload: DragPayload = { index, detail_type: detail.detail_type, fromSection: sectionKey, fromPosIdx: posIdx }
               e.dataTransfer.setData('application/x-contact', JSON.stringify(payload))
               e.dataTransfer.effectAllowed = 'move'
+              // Let the page scroll so an off-screen organization can be reached
+              startDragAutoScroll()
             }}
           />
         ))}

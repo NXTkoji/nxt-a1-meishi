@@ -18,6 +18,7 @@ import {
 import { useLang } from '../LangContext'
 import { useToast } from './Toast'
 import { BirthdayField } from './BirthdayField'
+import { startDragAutoScroll } from '../lib/dragAutoScroll'
 import type { Country, Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
 
 // ─── Editable field ───────────────────────────────────────────────────────────
@@ -363,6 +364,8 @@ function ContactSection({
               }
               e.dataTransfer.setData('application/x-contact-detail', JSON.stringify(payload))
               e.dataTransfer.effectAllowed = 'move'
+              // Let the page scroll so an off-screen organization can be reached
+              startDragAutoScroll()
             }}
           >
             <span className="text-gray-300 select-none text-xs shrink-0 mt-0.5" title="Drag to move">⠿</span>
