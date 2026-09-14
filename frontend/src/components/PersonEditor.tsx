@@ -105,11 +105,13 @@ const TO_WORK: Record<string, string> = {
   phone_mobile: 'phone_work',
   email_personal: 'email_work',
   address_home: 'address_work',
+  url_personal: 'url_website',
 }
 const TO_PERSONAL: Record<string, string> = {
   phone_work: 'phone_mobile',
   email_work: 'email_personal',
   address_work: 'address_home',
+  url_website: 'url_personal',
 }
 
 interface DragPayload {
@@ -141,7 +143,7 @@ export function Row({ label, children }: { label: string; children: React.ReactN
 // ─── Add-field dropdown ───────────────────────────────────────────────────────
 
 const PERSONAL_TYPES_LIST = [
-  'phone_mobile', 'email_personal', 'address_home',
+  'phone_mobile', 'email_personal', 'address_home', 'url_personal',
   'social_wechat', 'social_line', 'social_linkedin', 'social_other',
   'relationship', 'personal_title', 'introducer',
 ] as const

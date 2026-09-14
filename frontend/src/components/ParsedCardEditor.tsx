@@ -19,7 +19,7 @@ import type { ParsedCard, ParsedContactDetail, ParsedName, ParsedPosition } from
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PERSONAL_TYPES = [
-  'phone_mobile', 'email_personal', 'address_home',
+  'phone_mobile', 'email_personal', 'address_home', 'url_personal',
   'social_wechat', 'social_line', 'social_linkedin', 'social_other',
   'relationship', 'personal_title', 'introducer',
 ] as const
@@ -35,11 +35,13 @@ const TO_WORK: Record<string, string> = {
   phone_mobile: 'phone_work',
   email_personal: 'email_work',
   address_home: 'address_work',
+  url_personal: 'url_website',
 }
 const TO_PERSONAL: Record<string, string> = {
   phone_work: 'phone_mobile',
   email_work: 'email_personal',
   address_work: 'address_home',
+  url_website: 'url_personal',
 }
 
 interface DragPayload {
