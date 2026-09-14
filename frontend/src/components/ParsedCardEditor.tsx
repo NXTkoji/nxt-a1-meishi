@@ -58,6 +58,9 @@ function getPosIdx(label: string | null | undefined): number {
 function posLabel(idx: number): string | undefined {
   return idx === 0 ? undefined : `_pos:${idx}`
 }
+function isWorkContactOfPos(cd: ParsedContactDetail, pi: number): boolean {
+  return WORK_TYPES.includes(cd.detail_type as any) && getPosIdx(cd.label) === pi
+}
 
 // ─── Field row ────────────────────────────────────────────────────────────────
 
@@ -477,8 +480,21 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
       }),
     })
 
+  // Work contacts point at their org by list index ("_pos:N"), so removing an org must
+  // re-index the contacts in the same update. Otherwise contacts of later orgs keep a
+  // stale N: they show under the wrong org, or vanish once N is past the last org.
   const deleteOrg = (pi: number) =>
-    onChange({ ...parsed, positions: parsed.positions.filter((_, idx) => idx !== pi) })
+    onChange({
+      ...parsed,
+      positions: parsed.positions.filter((_, idx) => idx !== pi),
+      contact_details: parsed.contact_details
+        .filter(cd => !isWorkContactOfPos(cd, pi))  // the deleted org's contacts go with it
+        .map(cd => {
+          if (!WORK_TYPES.includes(cd.detail_type as any)) return cd
+          const idx = getPosIdx(cd.label)
+          return idx > pi ? { ...cd, label: posLabel(idx - 1) } : cd  // shift later orgs down
+        }),
+    })
 
   const addOrg = () =>
     onChange({
