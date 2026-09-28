@@ -22,7 +22,7 @@ from app.db.models import (
     PersonRelationship,
     Position,
 )
-from app.services.google_contacts import sync_to_google
+from app.services.google_contacts import delete_contact, sync_to_google
 from app.services.legacy_card import build_legacy_card
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ async def sync_card_to_google_contacts(db: AsyncSession, card: Card, legacy) -> 
     person = card.person
     existing_resource = person.google_resource
     try:
-        resource_name = await sync_to_google(legacy, existing_resource)
+        resource_name = await sync_to_google(legacy, existing_resource, person_marker=person.external_id)
     except Exception as exc:
         logger.exception("Google Contacts sync failed for card %s", card.external_id)
         return "error", str(exc)
@@ -63,6 +63,18 @@ async def sync_card_to_google_contacts(db: AsyncSession, card: Card, legacy) -> 
         card.google_sync_at = datetime.utcnow()
         return result, None
     return "error", "sync_to_google returned None"
+
+
+async def auto_delete_google_contacts(resources: list[str]) -> None:
+    """Background-task entry point: delete Google contacts left behind by a
+    person merge (the merged-away persons' contacts). Never raises — a
+    failure is logged and the contact simply stays in Google."""
+    for resource in resources:
+        try:
+            await delete_contact(resource)
+            logger.info("Deleted merged-away Google contact %s", resource)
+        except Exception:
+            logger.exception("auto_delete_google_contacts: failed to delete %s", resource)
 
 
 async def auto_sync_person(person_id: int) -> None:
