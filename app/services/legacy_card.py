@@ -6,6 +6,27 @@ from __future__ import annotations
 
 from app.db.models import Card as DBCard, ContactDetail, Person, Position
 
+# Which language a Google contact shows for company, title and department.
+# Most contacts are Taiwanese, so Traditional Chinese comes first, then
+# Japanese, then any other non-English language. English is carried
+# separately (a second organizations[] entry, and the notes), so it's never
+# picked here. One order for all three fields keeps a bilingual card from
+# pairing, say, a Japanese company name with a Chinese title.
+NATIVE_LANGUAGE_ORDER = ("zh-TW", "ja")
+
+
+def pick_native(values: list[tuple[str, str | None]]) -> str:
+    """Pick the preferred native-language value from (language, value) pairs.
+
+    Empty values are skipped. Returns "" when only English (or nothing) is present.
+    """
+    present = [(lang, value) for lang, value in values if value]
+    for preferred in NATIVE_LANGUAGE_ORDER:
+        for lang, value in present:
+            if lang == preferred:
+                return value
+    return next((value for lang, value in present if lang != "en"), "")
+
 
 def build_legacy_card(
     db_card: DBCard,
@@ -33,24 +54,22 @@ def build_legacy_card(
 
     legacy_positions = []
     for pos in positions:
-        org_name_ja = next(
-            (on.name for on in pos.organization.names if on.language == "ja" and on.is_current),
-            next((on.name for on in pos.organization.names if on.is_current), ""),
+        current_org_names = [(on.language, on.name) for on in pos.organization.names if on.is_current]
+        # An English-only company still needs a name, so fall back to any name.
+        org_name_native = pick_native(current_org_names) or next(
+            (name for _, name in current_org_names if name), ""
         )
-        org_name_en = next(
-            (on.name for on in pos.organization.names if on.language == "en" and on.is_current),
-            "",
-        )
-        title_ja = next((pd.title or "" for pd in pos.details if pd.language == "ja"), "")
-        title_en = next((pd.title or "" for pd in pos.details if pd.language == "en"), "")
-        dept = next(
-            (pd.department or "" for pd in pos.details if pd.language == "ja"),
-            next((pd.department or "" for pd in pos.details), ""),
+        org_name_en = next((name for lang, name in current_org_names if lang == "en" and name), "")
+        title_native = pick_native([(pd.language, pd.title) for pd in pos.details])
+        title_en = next((pd.title for pd in pos.details if pd.language == "en" and pd.title), "")
+        # Department has no English slot of its own, so fall back to any.
+        dept = pick_native([(pd.language, pd.department) for pd in pos.details]) or next(
+            (pd.department for pd in pos.details if pd.department), ""
         )
         legacy_positions.append(LegacyPosition(
-            company=org_name_ja,
+            company=org_name_native,
             company_english=org_name_en,
-            title=title_ja,
+            title=title_native,
             title_english=title_en,
             department=dept,
         ))

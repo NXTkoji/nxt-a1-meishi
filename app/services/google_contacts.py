@@ -46,6 +46,17 @@ class GoogleContactGoneError(Exception):
         self.resource = resource
 
 
+# Fields the app owns on a Google contact: on update they are always in
+# updatePersonFields, so when the app has none of one (e.g. the last website
+# was deleted) Google clears it instead of keeping the stale value. Fields
+# people also edit directly in Google (notes, birthday, events, relations,
+# custom fields) are left alone when the app has nothing for them, and
+# memberships can't be cleared to empty (Google rejects it).
+_ALWAYS_REPLACED_FIELDS = (
+    "names", "nicknames", "organizations", "phoneNumbers",
+    "emailAddresses", "addresses", "urls", "imClients",
+)
+
 # Contact-group name -> resourceName, cached across calls within a batch run.
 _group_cache: dict[str, str] = {}
 _group_cache_loaded_at: float = 0.0
@@ -375,13 +386,14 @@ async def _sync_to_google_once(
         if resource:
             body["etag"] = etag
 
-            # updatePersonFields must match exactly what's in the body — any
-            # field listed there but absent from the body gets cleared
-            # server-side (and Google rejects clearing memberships to empty).
-            # Computed from body.keys() rather than a hardcoded list so a new
-            # field added to _build_person_body can't be silently dropped on
-            # update by forgetting to also add it here.
-            update_fields = ",".join(k for k in body.keys() if k != "etag")
+            # Any field listed in updatePersonFields but absent from the body
+            # gets cleared server-side. Every field in the body is listed
+            # (computed from body.keys() so a new field added to
+            # _build_person_body can't be silently dropped on update), plus
+            # the app-owned fields so an emptied one is cleared in Google.
+            update_fields = ",".join(dict.fromkeys(
+                [k for k in body.keys() if k != "etag"] + list(_ALWAYS_REPLACED_FIELDS)
+            ))
 
             # Update existing contact
             resp = await client.patch(
