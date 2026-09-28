@@ -165,6 +165,7 @@ const translations = {
     addCompanyBtn: '＋ 追加',
     deleteBtn: '削除',
     confirmDelete: '削除してよろしいですか？',
+    confirmDeleteOrg: (n: number) => `組織 ${n} を削除しますか？\nこの組織の連絡先（電話・メール・住所など）も削除されます。`,
     occasionsTitle: '場面一覧',
     addOccasionPlaceholder: '場面名を入力…',
 
@@ -444,6 +445,7 @@ const translations = {
     addCompanyBtn: '+ Add',
     deleteBtn: 'Delete',
     confirmDelete: 'Are you sure you want to delete this?',
+    confirmDeleteOrg: (n: number) => `Delete Organization ${n}?\nIts work contacts (phone, email, address, etc.) will be deleted too.`,
     occasionsTitle: 'Occasions',
     addOccasionPlaceholder: 'Occasion name…',
 
@@ -722,6 +724,7 @@ const translations = {
     addCompanyBtn: '＋ 新增',
     deleteBtn: '刪除',
     confirmDelete: '確定要刪除嗎？',
+    confirmDeleteOrg: (n: number) => `要刪除組織 ${n} 嗎？\n此組織的聯絡資料（電話、Email、地址等）也會一併刪除。`,
     occasionsTitle: '場合列表',
     addOccasionPlaceholder: '輸入場合名稱…',
 

@@ -135,6 +135,13 @@ export const updatePerson = (personExtId: string, body: { birthday?: string }) =
 export const updatePersonName = (personExtId: string, nameId: number, body: { full_name?: string; family_name?: string; given_name?: string }) =>
   patch<import('../types').PersonName>(`/api/v2/persons/${personExtId}/names/${nameId}`, body)
 
+export const deletePersonName = (personExtId: string, nameId: number) =>
+  del(`/api/v2/persons/${personExtId}/names/${nameId}`)
+
+// Also deletes the organization's work contacts (server-side, with re-indexing).
+export const deletePosition = (personExtId: string, positionId: number) =>
+  del(`/api/v2/persons/${personExtId}/positions/${positionId}`)
+
 export const addContactDetail = (personExtId: string, body: { detail_type: string; value?: string; label?: string }) =>
   post<import('../types').ContactDetail>(`/api/v2/persons/${personExtId}/contact-details`, body)
 
