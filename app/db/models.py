@@ -411,7 +411,7 @@ class ContactDetail(Base):
       phone_work, phone_mobile, phone_fax
       email_work, email_personal
       address_work, address_home
-      url_website
+      url_website, url_personal
       social_wechat, social_line, social_linkedin, social_other
     """
     __tablename__ = "contact_details"

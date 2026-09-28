@@ -12,13 +12,14 @@
 import { useState } from 'react'
 import { ConfidenceBadge } from './ConfidenceBadge'
 import { BirthdayField } from './BirthdayField'
+import { startDragAutoScroll } from '../lib/dragAutoScroll'
 import { useLang } from '../LangContext'
 import type { ParsedCard, ParsedContactDetail, ParsedName, ParsedPosition } from '../types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PERSONAL_TYPES = [
-  'phone_mobile', 'email_personal', 'address_home',
+  'phone_mobile', 'email_personal', 'address_home', 'url_personal',
   'social_wechat', 'social_line', 'social_linkedin', 'social_other',
   'relationship', 'personal_title', 'introducer',
 ] as const
@@ -34,11 +35,13 @@ const TO_WORK: Record<string, string> = {
   phone_mobile: 'phone_work',
   email_personal: 'email_work',
   address_home: 'address_work',
+  url_personal: 'url_website',
 }
 const TO_PERSONAL: Record<string, string> = {
   phone_work: 'phone_mobile',
   email_work: 'email_personal',
   address_work: 'address_home',
+  url_website: 'url_personal',
 }
 
 interface DragPayload {
@@ -56,6 +59,9 @@ function getPosIdx(label: string | null | undefined): number {
 }
 function posLabel(idx: number): string | undefined {
   return idx === 0 ? undefined : `_pos:${idx}`
+}
+function isWorkContactOfPos(cd: ParsedContactDetail, pi: number): boolean {
+  return WORK_TYPES.includes(cd.detail_type as any) && getPosIdx(cd.label) === pi
 }
 
 // ─── Field row ────────────────────────────────────────────────────────────────
@@ -282,6 +288,8 @@ function ContactSubSection({
               const payload: DragPayload = { index, detail_type: detail.detail_type, fromSection: sectionKey, fromPosIdx: posIdx }
               e.dataTransfer.setData('application/x-contact', JSON.stringify(payload))
               e.dataTransfer.effectAllowed = 'move'
+              // Let the page scroll so an off-screen organization can be reached
+              startDragAutoScroll()
             }}
           />
         ))}
@@ -474,8 +482,21 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
       }),
     })
 
+  // Work contacts point at their org by list index ("_pos:N"), so removing an org must
+  // re-index the contacts in the same update. Otherwise contacts of later orgs keep a
+  // stale N: they show under the wrong org, or vanish once N is past the last org.
   const deleteOrg = (pi: number) =>
-    onChange({ ...parsed, positions: parsed.positions.filter((_, idx) => idx !== pi) })
+    onChange({
+      ...parsed,
+      positions: parsed.positions.filter((_, idx) => idx !== pi),
+      contact_details: parsed.contact_details
+        .filter(cd => !isWorkContactOfPos(cd, pi))  // the deleted org's contacts go with it
+        .map(cd => {
+          if (!WORK_TYPES.includes(cd.detail_type as any)) return cd
+          const idx = getPosIdx(cd.label)
+          return idx > pi ? { ...cd, label: posLabel(idx - 1) } : cd  // shift later orgs down
+        }),
+    })
 
   const addOrg = () =>
     onChange({

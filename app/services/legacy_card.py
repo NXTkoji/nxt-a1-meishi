@@ -57,6 +57,7 @@ def build_legacy_card(
 
     phones, emails, addresses = [], [], []
     website = ""
+    website_personal = ""
     social = Social()
     for cd in contact_details:
         t = cd.detail_type
@@ -71,6 +72,8 @@ def build_legacy_card(
             addresses.append(Address(type=kind, full=cd.value))
         elif t == "url_website":
             website = cd.value
+        elif t == "url_personal":
+            website_personal = cd.value
         elif t == "social_wechat":
             social.wechat = cd.value
         elif t == "social_line":
@@ -94,6 +97,7 @@ def build_legacy_card(
         emails=emails,
         addresses=addresses,
         website=website,
+        website_personal=website_personal,
         social=social,
         relations=relations,
         birthday=person.birthday or "",

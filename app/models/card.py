@@ -59,7 +59,8 @@ class Person(BaseModel):
     phones: list[Phone] = Field(default_factory=list)
     emails: list[Email] = Field(default_factory=list)
     addresses: list[Address] = Field(default_factory=list)
-    website: str = ""
+    website: str = ""           # work website (url_website)
+    website_personal: str = ""  # personal website (url_personal)
     social: Social = Field(default_factory=Social)
     relations: list[PersonRelation] = Field(default_factory=list)
     birthday: str = ""  # "YYYY-MM-DD" or "--MM-DD" (year unknown), "" if none

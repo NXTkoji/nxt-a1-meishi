@@ -20,6 +20,7 @@ import {
 import { useLang } from '../LangContext'
 import { useToast } from './Toast'
 import { BirthdayField } from './BirthdayField'
+import { startDragAutoScroll } from '../lib/dragAutoScroll'
 import type { Country, Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
 
 // ─── Editable field ───────────────────────────────────────────────────────────
@@ -106,11 +107,13 @@ const TO_WORK: Record<string, string> = {
   phone_mobile: 'phone_work',
   email_personal: 'email_work',
   address_home: 'address_work',
+  url_personal: 'url_website',
 }
 const TO_PERSONAL: Record<string, string> = {
   phone_work: 'phone_mobile',
   email_work: 'email_personal',
   address_work: 'address_home',
+  url_website: 'url_personal',
 }
 
 interface DragPayload {
@@ -142,7 +145,7 @@ export function Row({ label, children }: { label: string; children: React.ReactN
 // ─── Add-field dropdown ───────────────────────────────────────────────────────
 
 const PERSONAL_TYPES_LIST = [
-  'phone_mobile', 'email_personal', 'address_home',
+  'phone_mobile', 'email_personal', 'address_home', 'url_personal',
   'social_wechat', 'social_line', 'social_linkedin', 'social_other',
   'relationship', 'personal_title', 'introducer',
 ] as const
@@ -365,6 +368,8 @@ function ContactSection({
               }
               e.dataTransfer.setData('application/x-contact-detail', JSON.stringify(payload))
               e.dataTransfer.effectAllowed = 'move'
+              // Let the page scroll so an off-screen organization can be reached
+              startDragAutoScroll()
             }}
           >
             <span className="text-gray-300 select-none text-xs shrink-0 mt-0.5" title="Drag to move">⠿</span>

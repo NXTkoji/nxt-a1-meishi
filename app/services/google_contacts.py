@@ -186,10 +186,12 @@ def _build_person_body(card: Card) -> dict:
     if addresses:
         body["addresses"] = addresses
 
-    # URLs — website plus LinkedIn as a second entry.
+    # URLs — work website, personal website, plus LinkedIn as a further entry.
     urls = []
     if person.website:
         urls.append({"value": person.website, "type": "work"})
+    if person.website_personal:
+        urls.append({"value": person.website_personal, "type": "home"})
     if person.social.linkedin:
         urls.append({"value": person.social.linkedin, "type": "other", "formattedType": "LinkedIn"})
     if urls:
