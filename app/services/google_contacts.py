@@ -23,6 +23,29 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 1.0
 
+# Every contact this app writes carries its person's external_id in
+# clientData under this key. It makes creates idempotent: before creating,
+# the app looks for a contact already carrying the marker, so a create that
+# timed out after Google had saved it (then retried, or re-sent on the next
+# edit) updates that contact instead of leaving a duplicate. It also lets a
+# contact whose linked resource disappeared (merged in Google) be found again.
+MARKER_KEY = "nxt_a1_person"
+
+
+class GoogleContactGoneError(Exception):
+    """The linked Google contact no longer exists and no contact carrying
+    this person's marker was found — it was deleted, or merged in Google into
+    a contact the app never wrote to. Deliberately NOT recreated: that would
+    resurrect contacts the user removed on purpose. Needs a manual relink."""
+
+    def __init__(self, resource: str):
+        super().__init__(
+            f"Linked Google contact {resource} no longer exists (deleted or merged "
+            f"in Google) - relink this person to the surviving contact"
+        )
+        self.resource = resource
+
+
 # Contact-group name -> resourceName, cached across calls within a batch run.
 _group_cache: dict[str, str] = {}
 _group_cache_loaded_at: float = 0.0
@@ -225,15 +248,25 @@ def _build_person_body(card: Card) -> dict:
     return body
 
 
-async def sync_to_google(card: Card, existing_resource: str | None = None) -> str | None:
-    """Create or update a Google Contact. Returns resource name (e.g. 'people/c123')."""
+async def sync_to_google(
+    card: Card,
+    existing_resource: str | None = None,
+    person_marker: str | None = None,
+) -> str | None:
+    """Create or update a Google Contact. Returns resource name (e.g. 'people/c123').
+
+    person_marker (the person's external_id) is written to the contact's
+    clientData and used to find an existing contact before creating one —
+    see MARKER_KEY. The returned resource can differ from existing_resource
+    when the linked contact was gone and the marker found its successor.
+    """
     if not settings.google_refresh_token:
         logger.warning("Google Contacts not configured, skipping")
         return None
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            return await _sync_to_google_once(card, existing_resource)
+            return await _sync_to_google_once(card, existing_resource, person_marker)
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             retryable, last_exc = True, exc
         except httpx.HTTPStatusError as exc:
@@ -251,12 +284,55 @@ async def sync_to_google(card: Card, existing_resource: str | None = None) -> st
         await asyncio.sleep(delay)
 
 
-async def _sync_to_google_once(card: Card, existing_resource: str | None) -> str | None:
+async def _get_etag(client: httpx.AsyncClient, headers: dict, resource: str) -> str | None:
+    """Current etag of a contact, or None if the contact no longer exists."""
+    resp = await client.get(
+        f"{PEOPLE_API}/{resource}",
+        headers=headers,
+        params={"personFields": "metadata"},
+    )
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()["etag"]
+
+
+async def _find_contact_by_marker(client: httpx.AsyncClient, headers: dict, marker: str) -> str | None:
+    """Resource name of the contact whose clientData carries this marker.
+
+    Lists all connections: the People API has no search by clientData, and
+    searchContacts only covers names/emails/phones and lags behind writes.
+    One page holds 1000 contacts, so this is normally a single request.
+    """
+    page_token = None
+    while True:
+        params = {"personFields": "clientData", "pageSize": 1000}
+        if page_token:
+            params["pageToken"] = page_token
+        resp = await client.get(f"{PEOPLE_API}/people/me/connections", headers=headers, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        for person in data.get("connections", []):
+            for entry in person.get("clientData", []):
+                if entry.get("key") == MARKER_KEY and entry.get("value") == marker:
+                    return person["resourceName"]
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            return None
+
+
+async def _sync_to_google_once(
+    card: Card,
+    existing_resource: str | None,
+    person_marker: str | None = None,
+) -> str | None:
     """Single create/update attempt — re-fetches token, body, and etag fresh
     each call so a retry never reuses a stale etag from a prior attempt."""
     token = await _get_access_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body = _build_person_body(card)
+    if person_marker:
+        body["clientData"] = [{"key": MARKER_KEY, "value": person_marker}]
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         if card.my_company_labels:
@@ -274,17 +350,28 @@ async def _sync_to_google_once(card: Card, existing_resource: str | None) -> str
                     *[{"contactGroupMembership": {"contactGroupResourceName": r}} for r in group_resources],
                 ]
 
-        if existing_resource:
-            # Google's People API rejects updateContact unless the request
-            # includes the contact's current etag ("Request must set
-            # person.etag..."), so fetch it first.
-            get_resp = await client.get(
-                f"{PEOPLE_API}/{existing_resource}",
-                headers=headers,
-                params={"personFields": "metadata"},
-            )
-            get_resp.raise_for_status()
-            body["etag"] = get_resp.json()["etag"]
+        # Decide which contact to update, if any. Google's People API rejects
+        # updateContact unless the request includes the contact's current
+        # etag ("Request must set person.etag..."), so fetch it first — which
+        # also tells us whether the linked contact still exists.
+        resource, etag = existing_resource, None
+        if resource:
+            etag = await _get_etag(client, headers, resource)
+            if etag is None:
+                resource = None
+        if resource is None and person_marker:
+            found = await _find_contact_by_marker(client, headers, person_marker)
+            if found:
+                etag = await _get_etag(client, headers, found)
+                if etag is not None:
+                    resource = found
+                    if existing_resource:
+                        logger.info("Relinked Google contact %s -> %s via marker", existing_resource, found)
+        if resource is None and existing_resource:
+            raise GoogleContactGoneError(existing_resource)
+
+        if resource:
+            body["etag"] = etag
 
             # updatePersonFields must match exactly what's in the body — any
             # field listed there but absent from the body gets cleared
@@ -296,7 +383,7 @@ async def _sync_to_google_once(card: Card, existing_resource: str | None) -> str
 
             # Update existing contact
             resp = await client.patch(
-                f"{PEOPLE_API}/{existing_resource}:updateContact",
+                f"{PEOPLE_API}/{resource}:updateContact",
                 headers=headers,
                 json=body,
                 params={"updatePersonFields": update_fields},
@@ -323,6 +410,19 @@ async def _sync_to_google_once(card: Card, existing_resource: str | None) -> str
             await _upload_photo(client, headers, resource_name, card.images.person_photo)
 
         return resource_name
+
+
+async def delete_contact(resource: str) -> None:
+    """Delete a Google contact. A contact that is already gone counts as done."""
+    token = await _get_access_token()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.delete(
+            f"{PEOPLE_API}/{resource}:deleteContact",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if resp.status_code == 404:
+        return
+    resp.raise_for_status()
 
 
 async def _upload_photo(

@@ -14,6 +14,12 @@ def _mock_google(monkeypatch, resource_name="people/c123"):
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
 
+    async def fake_get(self, url, **kwargs):
+        # Marker lookup before a create: no existing contact carries it.
+        return httpx.Response(200, json={"connections": []}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+
     from app.config import settings
     monkeypatch.setattr(settings, "google_client_id", "cid")
     monkeypatch.setattr(settings, "google_client_secret", "csecret")

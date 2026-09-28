@@ -40,7 +40,7 @@ from app.schemas.api import (
     PositionDetailOut,
     PositionOut,
 )
-from app.services.contact_sync import auto_sync_person
+from app.services.contact_sync import auto_delete_google_contacts, auto_sync_person
 from pydantic import BaseModel
 
 
@@ -537,6 +537,14 @@ async def merge_persons(
 
     source_ids = [p.id for p in sources]
 
+    # Google contacts of the merged-away persons. If the primary has none,
+    # it adopts the first one (so the merged result updates an existing
+    # contact instead of creating a new one); the rest are deleted in Google
+    # after the merge commits, so an app merge never leaves duplicates there.
+    orphan_resources = [p.google_resource for p in sources if p.google_resource]
+    if orphan_resources and not primary.google_resource:
+        primary.google_resource = orphan_resources.pop(0)
+
     # Reassign all child rows to primary
     for table, col in [
         (Card, Card.person_id),
@@ -591,9 +599,10 @@ async def merge_persons(
 
     await db.flush()
 
-    # Push the merged result. Source persons' Google contacts (if any) are
-    # left in Google untouched — deleting contacts there is not automated.
+    # Push the merged result, then remove the merged-away contacts in Google.
     _schedule_google_sync(background_tasks, primary)
+    if orphan_resources:
+        background_tasks.add_task(auto_delete_google_contacts, orphan_resources)
     person_out = await _load_person_out(db, primary)
     return MergeResult(person=person_out, duplicate_contact_count=duplicate_contact_count)
 
