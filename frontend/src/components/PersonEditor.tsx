@@ -21,6 +21,7 @@ import { useLang } from '../LangContext'
 import { useToast } from './Toast'
 import { BirthdayField } from './BirthdayField'
 import { startDragAutoScroll } from '../lib/dragAutoScroll'
+import { isSubmitEnter } from '../lib/keyboard'
 import type { Country, Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
 
 // ─── Editable field ───────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ export function EditableField({
             className="text-sm border border-blue-400 rounded px-2 py-0.5 focus:outline-none w-48"
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+            onKeyDown={e => { if (isSubmitEnter(e)) commit(); if (e.key === 'Escape') setEditing(false) }}
             autoFocus
           />
         )}

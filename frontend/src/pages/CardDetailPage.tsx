@@ -22,6 +22,7 @@ import { LightboxImage } from '../components/ImageLightbox'
 import { PersonEditor } from '../components/PersonEditor'
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
+import { isSubmitEnter } from '../lib/keyboard'
 import type { Card, MyCompany, Occasion, Person } from '../types'
 
 function useCardExtId(): string {
@@ -252,7 +253,7 @@ export function CardDetailPage() {
                   value={newOccasionName}
                   onChange={e => setNewOccasionName(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter' && newOccasionName.trim()) addOccasionMutation.mutate(newOccasionName.trim())
+                    if (isSubmitEnter(e) && newOccasionName.trim()) addOccasionMutation.mutate(newOccasionName.trim())
                     if (e.key === 'Escape') { setAddingOccasion(false); setNewOccasionName('') }
                   }}
                   placeholder={t.occasionNewPlaceholder}

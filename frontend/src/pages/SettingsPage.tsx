@@ -8,6 +8,7 @@ import {
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
 import { groupOccasionsByMonth } from '../lib/occasionGrouping'
+import { isSubmitEnter } from '../lib/keyboard'
 import type { Country, MyCompany, Occasion } from '../types'
 
 
@@ -53,7 +54,7 @@ function CompanyRow({ company }: { company: MyCompany }) {
             className="flex-1 text-sm border border-blue-400 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(company.name); setEditing(false) } }}
+            onKeyDown={e => { if (isSubmitEnter(e)) commit(); if (e.key === 'Escape') { setDraft(company.name); setEditing(false) } }}
             autoFocus
           />
           <button
@@ -131,7 +132,7 @@ function OccasionRow({ occasion }: { occasion: Occasion }) {
             className="flex-1 text-sm border border-blue-400 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(occasion.name); setEditing(false) } }}
+            onKeyDown={e => { if (isSubmitEnter(e)) commit(); if (e.key === 'Escape') { setDraft(occasion.name); setEditing(false) } }}
             autoFocus
           />
           <button
@@ -221,7 +222,7 @@ function CountryRow({ country }: { country: Country }) {
             className="flex-1 text-sm border border-blue-400 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setDraft(country.name); setEditing(false) } }}
+            onKeyDown={e => { if (isSubmitEnter(e)) commit(); if (e.key === 'Escape') { setDraft(country.name); setEditing(false) } }}
             autoFocus
           />
           <button
@@ -353,7 +354,7 @@ export function SettingsPage() {
             type="text"
             value={newCompany}
             onChange={e => setNewCompany(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && newCompany.trim()) addCompanyMutation.mutate(newCompany.trim()) }}
+            onKeyDown={e => { if (isSubmitEnter(e) && newCompany.trim()) addCompanyMutation.mutate(newCompany.trim()) }}
             placeholder={t.addCompanyPlaceholder}
             className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
@@ -402,7 +403,7 @@ export function SettingsPage() {
             type="text"
             value={newOccasion}
             onChange={e => setNewOccasion(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && newOccasion.trim()) addOccasionMutation.mutate(newOccasion.trim()) }}
+            onKeyDown={e => { if (isSubmitEnter(e) && newOccasion.trim()) addOccasionMutation.mutate(newOccasion.trim()) }}
             placeholder={t.addOccasionPlaceholder}
             className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
@@ -428,7 +429,7 @@ export function SettingsPage() {
             type="text"
             value={newCountryCode}
             onChange={e => setNewCountryCode(e.target.value.toUpperCase().slice(0, 2))}
-            onKeyDown={e => { if (e.key === 'Enter') { const el = e.currentTarget.nextElementSibling as HTMLInputElement; el?.focus() } }}
+            onKeyDown={e => { if (isSubmitEnter(e)) { const el = e.currentTarget.nextElementSibling as HTMLInputElement; el?.focus() } }}
             placeholder={t.addCountryCodePlaceholder}
             className="w-16 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
@@ -436,7 +437,7 @@ export function SettingsPage() {
             type="text"
             value={newCountryName}
             onChange={e => setNewCountryName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && newCountryCode.trim() && newCountryName.trim()) addCountryMutation.mutate() }}
+            onKeyDown={e => { if (isSubmitEnter(e) && newCountryCode.trim() && newCountryName.trim()) addCountryMutation.mutate() }}
             placeholder={t.addCountryNamePlaceholder}
             className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
