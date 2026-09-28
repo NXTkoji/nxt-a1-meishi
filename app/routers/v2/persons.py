@@ -9,7 +9,7 @@ import uuid
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,7 @@ from app.schemas.api import (
     PositionDetailOut,
     PositionOut,
 )
+from app.services.contact_sync import auto_sync_person
 from pydantic import BaseModel
 
 
@@ -72,6 +73,16 @@ router = APIRouter(
     tags=["persons"],
     dependencies=[Depends(verify_api_key)],
 )
+
+
+def _schedule_google_sync(background_tasks: BackgroundTasks, person: Person) -> None:
+    """Queue a Google Contacts push for a person after an edit.
+
+    get_db commits the session after the handler returns and before
+    Starlette runs background tasks, so auto_sync_person always sees the
+    edit once it opens its own session — no explicit commit needed here.
+    """
+    background_tasks.add_task(auto_sync_person, person.id)
 
 
 async def _load_person_out(db: AsyncSession, person: Person) -> PersonOut:
@@ -445,6 +456,7 @@ async def get_person(person_ext_id: str, db: AsyncSession = Depends(get_db)):
 async def update_person(
     person_ext_id: str,
     body: PersonUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """Update person-level fields (currently: birthday)."""
@@ -456,6 +468,7 @@ async def update_person(
         # Empty string clears the birthday (stored as NULL).
         person.birthday = data["birthday"] or None
     await db.flush()
+    _schedule_google_sync(background_tasks, person)
     return await _load_person_out(db, person)
 
 
@@ -494,6 +507,7 @@ async def delete_person(person_ext_id: str, db: AsyncSession = Depends(get_db)):
 async def merge_persons(
     primary_ext_id: str,
     body: MergeRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """Merge N source persons into primary. All cards, names, contact details,
@@ -577,6 +591,9 @@ async def merge_persons(
 
     await db.flush()
 
+    # Push the merged result. Source persons' Google contacts (if any) are
+    # left in Google untouched — deleting contacts there is not automated.
+    _schedule_google_sync(background_tasks, primary)
     person_out = await _load_person_out(db, primary)
     return MergeResult(person=person_out, duplicate_contact_count=duplicate_contact_count)
 
@@ -588,6 +605,7 @@ async def update_person_name(
     person_ext_id: str,
     name_id: int,
     body: PersonNameUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
@@ -600,6 +618,7 @@ async def update_person_name(
         setattr(name, field, val)
     name.source = "manual"
     await db.flush()
+    _schedule_google_sync(background_tasks, person)
     await db.refresh(name)
     return name
 
@@ -608,6 +627,7 @@ async def update_person_name(
 async def add_contact_detail(
     person_ext_id: str,
     body: ContactDetailUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
@@ -622,6 +642,7 @@ async def add_contact_detail(
     )
     db.add(detail)
     await db.flush()
+    _schedule_google_sync(background_tasks, person)
     await db.refresh(detail)
     return detail
 
@@ -631,6 +652,7 @@ async def update_contact_detail(
     person_ext_id: str,
     detail_id: int,
     body: ContactDetailUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
@@ -642,6 +664,7 @@ async def update_contact_detail(
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(detail, field, val)
     await db.flush()
+    _schedule_google_sync(background_tasks, person)
     await db.refresh(detail)
     return detail
 
@@ -650,6 +673,7 @@ async def update_contact_detail(
 async def delete_contact_detail(
     person_ext_id: str,
     detail_id: int,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
@@ -659,6 +683,7 @@ async def delete_contact_detail(
     if not detail or detail.person_id != person.id:
         raise HTTPException(404, "Contact detail not found")
     await db.delete(detail)
+    _schedule_google_sync(background_tasks, person)
 
 
 @router.patch("/{person_ext_id}/positions/{position_id}/details/{detail_id}", response_model=PositionDetailOut)
@@ -667,6 +692,7 @@ async def update_position_detail(
     position_id: int,
     detail_id: int,
     body: PositionDetailUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
@@ -678,6 +704,7 @@ async def update_position_detail(
     for field, val in body.model_dump(exclude_none=True).items():
         setattr(detail, field, val)
     await db.flush()
+    _schedule_google_sync(background_tasks, person)
     await db.refresh(detail)
     return detail
 
@@ -688,6 +715,7 @@ async def update_org_name(
     position_id: int,
     org_name_id: int,
     body: OrgNameUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
@@ -704,5 +732,9 @@ async def update_org_name(
         org_name.name = body.name
         org_name.source = "manual"
     await db.flush()
+    # Organizations are shared, so this rename also changes other people at
+    # the same org — only this person's contact is pushed now; the others
+    # pick it up on their next edit or card save.
+    _schedule_google_sync(background_tasks, person)
     await db.refresh(org_name)
     return org_name
