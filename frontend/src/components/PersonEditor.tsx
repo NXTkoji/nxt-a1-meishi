@@ -11,6 +11,8 @@ import {
   addContactDetail,
   updateContactDetail,
   deleteContactDetail,
+  deletePersonName,
+  deletePosition,
   updatePositionDetail,
   updateOrgName,
   listCountries,
@@ -432,6 +434,16 @@ export function PersonEditor({
   const removeContact = (detail: ContactDetail) =>
     run(() => deleteContactDetail(person.external_id, detail.id).then(() => showToast(t.deleteConfirmed)))
 
+  const removeName = (name: PersonName) => {
+    if (!window.confirm(`${t.confirmDelete}\n"${name.full_name}"`)) return
+    run(() => deletePersonName(person.external_id, name.id).then(() => showToast(t.deleteConfirmed)))
+  }
+
+  const removePosition = (pos: Person['positions'][0], pi: number) => {
+    if (!window.confirm(t.confirmDeleteOrg(pi + 1))) return
+    run(() => deletePosition(person.external_id, pos.id).then(() => showToast(t.deleteConfirmed)))
+  }
+
   const addContact = (type: string, posIdx: number) =>
     run(() => addContactDetail(person.external_id, {
       detail_type: type,
@@ -467,6 +479,7 @@ export function PersonEditor({
     value: string,
   ) => run(() => updatePositionDetail(person.external_id, pos.id, detail.id, { [field]: value }))
 
+  const currentNames = person.names.filter(n => n.is_current)
   const personalContacts = person.contact_details.filter(d => PERSONAL_TYPE_SET.has(d.detail_type))
   const getWorkContactsForPos = (pi: number) =>
     person.contact_details.filter(d => WORK_TYPE_SET.has(d.detail_type) && getPosIdx(d.label) === pi)
@@ -481,11 +494,19 @@ export function PersonEditor({
         <div className="px-3 pt-1 pb-2 space-y-1.5">
 
           {/* Name variants */}
-          {person.names.filter(n => n.is_current).map((name, i) => (
-            <div key={name.id} className="border-b border-gray-100 pb-1.5 mb-1.5 space-y-1.5">
+          {currentNames.map((name, i) => (
+            <div key={name.id} className="group border-b border-gray-100 pb-1.5 mb-1.5 space-y-1.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-400">{t.nameSection(i + 1)}</span>
                 <span className="text-xs bg-gray-200 text-gray-600 rounded px-1">{name.language}</span>
+                {/* The only name can't be deleted — the server refuses it too. */}
+                {currentNames.length > 1 && (
+                  <button
+                    className="ml-auto opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600"
+                    title={t.removeLabel}
+                    onClick={() => removeName(name)}
+                  >✕</button>
+                )}
               </div>
               <Row label={t.fieldFullName}>
                 <EditableField value={name.full_name} onSave={v => saveNameField(name, 'full_name', v)} />
@@ -528,8 +549,13 @@ export function PersonEditor({
       {/* Positions / Organizations */}
       {person.positions.map((pos, pi) => (
         <section key={pos.id} className="rounded-lg border border-gray-200">
-          <div className="bg-gray-50 px-3 py-1.5 rounded-t-lg">
+          <div className="group flex items-center bg-gray-50 px-3 py-1.5 rounded-t-lg">
             <span className="font-medium text-xs text-gray-600">{t.orgSection(pi + 1)}</span>
+            <button
+              className="ml-auto opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600"
+              title={t.removeLabel}
+              onClick={() => removePosition(pos, pi)}
+            >✕</button>
           </div>
           <div className="px-3 pt-1 pb-2 space-y-1.5">
             {pos.org_names.map(on => (

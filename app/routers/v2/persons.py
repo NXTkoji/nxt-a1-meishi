@@ -632,6 +632,88 @@ async def update_person_name(
     return name
 
 
+@router.delete("/{person_ext_id}/names/{name_id}", status_code=204)
+async def delete_person_name(
+    person_ext_id: str,
+    name_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete one name variant. The last current name can't be deleted —
+    every person needs a display name."""
+    person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
+    if not person:
+        raise HTTPException(404, "Person not found")
+    name = await db.get(PersonName, name_id)
+    if not name or name.person_id != person.id:
+        raise HTTPException(404, "Name not found")
+    current_count = await db.scalar(
+        select(func.count(PersonName.id))
+        .where(PersonName.person_id == person.id, PersonName.is_current.is_(True))
+    )
+    if name.is_current and current_count <= 1:
+        raise HTTPException(409, "Cannot delete the person's only name")
+    await db.delete(name)
+    _schedule_google_sync(background_tasks, person)
+
+
+# Work contacts point at their position by list index in the label
+# ("_pos:N"; no label or any other label means index 0), mirroring
+# getPosIdx/posLabel in the frontend. The list order is Position.id, the same
+# order _load_person_out returns positions in.
+WORK_CONTACT_TYPES = {"phone_work", "phone_fax", "email_work", "address_work", "url_website", "gui_number"}
+
+
+def _pos_index(label: str | None) -> int:
+    if label and label.startswith("_pos:") and label[5:].isdigit():
+        return int(label[5:])
+    return 0
+
+
+def _pos_label(index: int) -> str | None:
+    return None if index == 0 else f"_pos:{index}"
+
+
+@router.delete("/{person_ext_id}/positions/{position_id}", status_code=204)
+async def delete_position(
+    person_ext_id: str,
+    position_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove an organization from a person, together with its work contacts.
+
+    Later positions shift down one index, so their work contacts are
+    relabelled to keep pointing at the same organization. The Organization
+    row itself is shared with other people and is left alone.
+    """
+    person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
+    if not person:
+        raise HTTPException(404, "Person not found")
+    position_ids = (await db.execute(
+        select(Position.id).where(Position.person_id == person.id).order_by(Position.id)
+    )).scalars().all()
+    if position_id not in position_ids:
+        raise HTTPException(404, "Position not found")
+    removed = position_ids.index(position_id)
+
+    work_contacts = (await db.execute(
+        select(ContactDetail).where(
+            ContactDetail.person_id == person.id,
+            ContactDetail.detail_type.in_(WORK_CONTACT_TYPES),
+        )
+    )).scalars().all()
+    for detail in work_contacts:
+        index = _pos_index(detail.label)
+        if index == removed:
+            await db.delete(detail)
+        elif index > removed:
+            detail.label = _pos_label(index - 1)
+
+    await db.delete(await db.get(Position, position_id))  # details cascade
+    _schedule_google_sync(background_tasks, person)
+
+
 @router.post("/{person_ext_id}/contact-details", response_model=ContactDetailOut, status_code=201)
 async def add_contact_detail(
     person_ext_id: str,
