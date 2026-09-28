@@ -38,6 +38,7 @@ import type { Point } from '../api/sessions'
 import { useLang } from '../LangContext'
 import { todayLocalISODate } from '../lib/dates'
 import { flattenOccasionMonths } from '../lib/occasionGrouping'
+import { isSubmitEnter } from '../lib/keyboard'
 import type {
   AnalysisEvent,
   CardDraft,
@@ -1234,7 +1235,6 @@ function OccasionPicker({
   const qc = useQueryClient()
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
-  const isComposing = useRef(false)
 
   const addMutation = useMutation({
     mutationFn: (name: string) => createOccasion({ name }),
@@ -1276,10 +1276,8 @@ function OccasionPicker({
             type="text"
             value={newName}
             onChange={e => setNewName(e.target.value)}
-            onCompositionStart={() => { isComposing.current = true }}
-            onCompositionEnd={() => { isComposing.current = false }}
             onKeyDown={e => {
-              if (e.key === 'Enter' && newName.trim() && !isComposing.current) addMutation.mutate(newName.trim())
+              if (isSubmitEnter(e) && newName.trim()) addMutation.mutate(newName.trim())
               if (e.key === 'Escape') { setAdding(false); setNewName('') }
             }}
             placeholder={t.occasionNewPlaceholder}

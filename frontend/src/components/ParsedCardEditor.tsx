@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { ConfidenceBadge } from './ConfidenceBadge'
 import { BirthdayField } from './BirthdayField'
 import { startDragAutoScroll } from '../lib/dragAutoScroll'
+import { isSubmitEnter } from '../lib/keyboard'
 import { useLang } from '../LangContext'
 import type { ParsedCard, ParsedContactDetail, ParsedName, ParsedPosition } from '../types'
 
@@ -123,7 +124,7 @@ function FieldRow({
               className="flex-1 text-sm border border-blue-400 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
               value={draft}
               onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+              onKeyDown={e => { if (isSubmitEnter(e)) commit(); if (e.key === 'Escape') setEditing(false) }}
               autoFocus
             />
           )}
