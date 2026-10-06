@@ -35,9 +35,16 @@ def test_mock_transport_still_works():
         assert client.get("https://people.googleapis.com/").json() == {"ok": True}
 
 
-def test_card_patch_background_sync_writes_to_test_db(client_with_test_db):
+def test_card_patch_background_sync_writes_to_test_db(client_with_test_db, monkeypatch):
     """End to end: the sync a card PATCH schedules records its history in the
-    test DB (token is blank, so it records an error row and never calls Google)."""
+    test DB.
+
+    Google is forced to count as connected so the sync really runs: a fake
+    token for main, and `_google_is_connected` for Community Edition, which
+    skips auto-sync entirely when Google is not connected and reads the token
+    outside `settings` (google_auth). The sync then fails safely — blank token
+    or the network block — and records its row in the test DB, never Google.
+    """
     import asyncio
 
     from sqlalchemy import select
@@ -54,6 +61,9 @@ def test_card_patch_background_sync_writes_to_test_db(client_with_test_db):
             await db.commit()
             return card.external_id, card.id
 
+    monkeypatch.setattr(settings, "google_refresh_token", "fake-token")
+    # Absent on main; raising=False adds it there harmlessly (nothing reads it)
+    monkeypatch.setattr(contact_sync, "_google_is_connected", lambda: True, raising=False)
     ext_id, card_id = asyncio.run(_seed())
     resp = client_with_test_db.patch(f"/api/v2/cards/{ext_id}", json={"notes": "x"})
     assert resp.status_code == 200
