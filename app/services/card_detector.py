@@ -859,48 +859,167 @@ def _refine_with_contours(
     return rough, None
 
 
-def detect_corners_from_seed(
-    temp_relative_path: str,
-    seed_x: float,
-    seed_y: float,
-    existing_polygons: list[list[dict]] | None = None,
-) -> tuple[list[dict], float]:
+# ── Seed-based corner detection ───────────────────────────────────────────────
+#
+# Two methods, tried in order:
+#   1. Background-colour segmentation — models the table colour from the
+#      photo's border and treats everything sufficiently different as "card".
+#      Robust to text/logos inside the card, textured tables (wood, cutting
+#      mats) and shadow gradients.
+#   2. Canny edges + contours (the original method) — fallback for cases the
+#      colour method can't separate: card colour ≈ table colour, or cards
+#      touching each other with no outline yet to separate them.
+
+BG_BORDER_FRAC = 0.03       # width of the border band used to model the table
+BG_MIN_THRESH = 10.0        # minimum Lab distance (≈ ΔE) to count as "not table"
+BG_SPREAD_FACTOR = 1.6      # threshold = factor × 90th-pct border residual
+BG_CARD_ASPECT = (1.2, 2.4) # long/short side ratio accepted as a business card
+BG_MIN_FILL = 0.85          # blob area / quad area — rejects irregular blobs
+
+
+def _fallback_rect(seed_x: float, seed_y: float) -> list[dict]:
+    """Axis-aligned rectangle centred on the seed, standard ~1.75:1 card aspect."""
+    card_w = 0.35
+    card_h = card_w / 1.75
+    x1 = max(0.0, seed_x - card_w / 2)
+    y1 = max(0.0, seed_y - card_h / 2)
+    x2 = min(1.0, seed_x + card_w / 2)
+    y2 = min(1.0, seed_y + card_h / 2)
+    return [{"x": x1, "y": y1}, {"x": x2, "y": y1}, {"x": x2, "y": y2}, {"x": x1, "y": y2}]
+
+
+def _polygons_to_px(polygons: list[list[dict]], img_w: int, img_h: int) -> list[np.ndarray]:
+    """Normalized polygons → int32 pixel arrays for cv2 drawing."""
+    return [
+        np.array([[int(p["x"] * img_w), int(p["y"] * img_h)] for p in poly], dtype=np.int32)
+        for poly in polygons
+    ]
+
+
+def _fit_table_surface(lab: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Find the 4 corners of the business card nearest the seed point.
+    Model the table colour across the whole image from the border band only.
 
-    Uses OpenCV Canny edge detection + contour quadrilateral approximation.
-    If no quad-shaped contour contains the seed, returns a default rectangle
-    centered on the seed with confidence 0.0.
+    Fits a quadratic surface per Lab channel to the border pixels. Lighting
+    falloff and phone shadows are smooth, so this predicts the table colour
+    under the cards without ever looking at them.
 
-    Args:
-        temp_relative_path: Relative path under TEMP_DIR (passed to read_temp_image).
-        seed_x: Normalized [0, 1] x coordinate of the tap point.
-        seed_y: Normalized [0, 1] y coordinate of the tap point.
-
-    Returns:
-        (corners, confidence)
-        corners — list of 4 dicts {"x": float, "y": float} in TL/TR/BR/BL order,
-                  coordinates normalized to [0, 1].
-        confidence — 0.0 (fallback rectangle) to 1.0 (high-confidence quad).
+    Returns (surface HxWx3, residual distance of each border pixel to it).
+    The residuals measure how textured/noisy the table is.
     """
-    raw = read_temp_image(temp_relative_path)
-    working = _resize_bytes(raw)
-    try:
-        img_pil = Image.open(io.BytesIO(working)).convert("RGB")
-    except Exception:
-        logger.warning("detect_corners_from_seed: could not decode image at %s", temp_relative_path)
-        return [{"x": 0.15, "y": 0.25}, {"x": 0.85, "y": 0.25},
-                {"x": 0.85, "y": 0.75}, {"x": 0.15, "y": 0.75}], 0.0
-    img_w, img_h = img_pil.size
-    if img_w == 0 or img_h == 0:
-        return [{"x": 0.15, "y": 0.25}, {"x": 0.85, "y": 0.25},
-                {"x": 0.85, "y": 0.75}, {"x": 0.15, "y": 0.75}], 0.0
+    h, w = lab.shape[:2]
+    b = max(2, int(min(h, w) * BG_BORDER_FRAC))
+    border = np.zeros((h, w), bool)
+    border[:b] = border[-b:] = True
+    border[:, :b] = border[:, -b:] = True
 
-    # Clamp seed to valid pixel range
-    seed_px = int(max(0, min(img_w - 1, seed_x * img_w)))
-    seed_py = int(max(0, min(img_h - 1, seed_y * img_h)))
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    xn, yn = xx / w - 0.5, yy / h - 0.5
+    basis = np.stack([np.ones_like(xn), xn, yn, xn * xn, yn * yn, xn * yn], axis=-1)
 
-    img_bgr = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+    # Subsample border pixels — thousands are plenty for 6 coefficients
+    coef, *_ = np.linalg.lstsq(basis[border][::7], lab[border][::7], rcond=None)
+    surface = basis @ coef
+    residual = np.linalg.norm(lab[border] - surface[border], axis=1)
+    return surface, residual
+
+
+def _quad_from_blob(contour: np.ndarray) -> np.ndarray:
+    """Best 4-point approximation of a blob outline; minAreaRect as last resort."""
+    hull = cv2.convexHull(contour)
+    arc = cv2.arcLength(hull, True)
+    for eps in (0.01, 0.02, 0.03, 0.04, 0.06, 0.08):
+        approx = cv2.approxPolyDP(hull, eps * arc, True)
+        if len(approx) == 4:
+            return approx.reshape(4, 2).astype(np.float32)
+    return cv2.boxPoints(cv2.minAreaRect(contour)).astype(np.float32)
+
+
+def _detect_quad_by_background(
+    img_bgr: np.ndarray,
+    seed_px: int,
+    seed_py: int,
+    existing_polygons: list[list[dict]] | None,
+) -> np.ndarray | None:
+    """
+    Primary method: segment "not table" pixels by colour, take the blob under
+    the seed, fit 4 corners.
+
+    Returns a 4x2 float32 pixel quad, or None when the result isn't a
+    plausible single card (caller then falls back to the edge method).
+    """
+    img_h, img_w = img_bgr.shape[:2]
+    lab = cv2.cvtColor(cv2.GaussianBlur(img_bgr, (5, 5), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab[..., 0] *= 100.0 / 255.0  # OpenCV 8-bit L is 0..255; rescale so units ≈ ΔE
+
+    # 1. Table model + a threshold that scales with how textured the table is
+    surface, residual = _fit_table_surface(lab)
+    thresh = max(BG_MIN_THRESH, float(np.percentile(residual, 90)) * BG_SPREAD_FACTOR)
+
+    # 2. Foreground = far from the modelled table colour
+    dist = np.linalg.norm(lab - surface, axis=2)
+    fg = (dist > thresh).astype(np.uint8) * 255
+
+    # 3. Blank out cards the user already outlined, plus a thin line along
+    #    their outline, so a touching neighbour becomes a separate blob
+    if existing_polygons:
+        line_w = max(3, int(min(img_h, img_w) * 0.004))
+        for pts in _polygons_to_px(existing_polygons, img_w, img_h):
+            cv2.fillPoly(fg, [pts], 0)
+            cv2.polylines(fg, [pts], True, 0, thickness=line_w)
+
+    # 4. Open: removes grid lines / wood grain specks and thin bridges.
+    #    Close: seals small notches along the card edge.
+    k = max(3, int(min(img_h, img_w) * 0.008)) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+    fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel)
+    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # 5. Blob containing the seed, or the nearest one within 3% of the frame
+    #    (a tap right on the card edge can land just outside the blob)
+    best, best_dist = None, -min(img_h, img_w) * 0.03
+    for c in contours:
+        if cv2.contourArea(c) < img_w * img_h * 0.005:
+            continue
+        d = cv2.pointPolygonTest(c, (float(seed_px), float(seed_py)), True)
+        if d > best_dist:
+            best, best_dist = c, d
+    if best is None:
+        logger.info("detect_corners bg: no blob near seed (thresh=%.1f)", thresh)
+        return None
+
+    # 6. Sanity: card-sized, card-shaped, and the quad must fit the blob well.
+    #    Merged cards, partial blobs and table texture fail at least one check.
+    quad = _quad_from_blob(best)
+    quad_area = cv2.contourArea(quad)
+    (_, _), (rw, rh), _ = cv2.minAreaRect(quad)
+    aspect = max(rw, rh) / max(1.0, min(rw, rh))
+    fill = cv2.contourArea(best) / max(1.0, quad_area)
+    ok = (
+        img_w * img_h * 0.01 <= quad_area <= img_w * img_h * 0.85
+        and BG_CARD_ASPECT[0] <= aspect <= BG_CARD_ASPECT[1]
+        and fill >= BG_MIN_FILL
+    )
+    logger.info(
+        "detect_corners bg: thresh=%.1f area=%.3f aspect=%.2f fill=%.2f → %s",
+        thresh, quad_area / (img_w * img_h), aspect, fill, "accepted" if ok else "rejected",
+    )
+    return quad if ok else None
+
+
+def _detect_quad_by_edges(
+    img_bgr: np.ndarray,
+    seed_px: int,
+    seed_py: int,
+    existing_polygons: list[list[dict]] | None,
+) -> np.ndarray | None:
+    """
+    Fallback method: Canny edges + contour quadrilateral approximation.
+
+    Returns the smallest card-shaped quad containing the seed, or None.
+    """
+    img_h, img_w = img_bgr.shape[:2]
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
@@ -926,11 +1045,7 @@ def detect_corners_from_seed(
     # between an existing card and the new card is preserved as a Canny edge.
     if existing_polygons:
         exclude_mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        for poly in existing_polygons:
-            pts = np.array(
-                [[int(p["x"] * img_w), int(p["y"] * img_h)] for p in poly],
-                dtype=np.int32,
-            )
+        for pts in _polygons_to_px(existing_polygons, img_w, img_h):
             cv2.fillPoly(exclude_mask, [pts], 255)
         k_erode = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         exclude_mask = cv2.erode(exclude_mask, k_erode, iterations=3)
@@ -984,39 +1099,76 @@ def detect_corners_from_seed(
                     best_quad = pts
                 break
 
-    if best_quad is not None:
-        sorted_pts = _sort_quad_points(best_quad)
-        corners = [
-            {"x": float(p[0] / img_w), "y": float(p[1] / img_h)}
-            for p in sorted_pts
-        ]
-        # Scale confidence: 20% of image area → 1.0
-        confidence = float(min(1.0, best_area / (img_w * img_h) * 5))
-        logger.info(
-            "detect_corners_from_seed: seed=(%.3f,%.3f) → quad area=%.0f confidence=%.2f",
-            seed_x, seed_y, best_area, confidence,
-        )
-        return corners, confidence
+    return best_quad
 
-    # Fallback: axis-aligned rectangle centered on the seed,
-    # assuming standard business card aspect ratio ~1.75:1.
-    card_w = 0.35
-    card_h = card_w / 1.75
-    x1 = max(0.0, seed_x - card_w / 2)
-    y1 = max(0.0, seed_y - card_h / 2)
-    x2 = min(1.0, seed_x + card_w / 2)
-    y2 = min(1.0, seed_y + card_h / 2)
-    fallback_corners = [
-        {"x": x1, "y": y1},
-        {"x": x2, "y": y1},
-        {"x": x2, "y": y2},
-        {"x": x1, "y": y2},
-    ]
+
+def detect_corners_from_seed(
+    temp_relative_path: str,
+    seed_x: float,
+    seed_y: float,
+    existing_polygons: list[list[dict]] | None = None,
+) -> tuple[list[dict], float]:
+    """
+    Find the 4 corners of the business card nearest the seed point.
+
+    Tries background-colour segmentation first, then Canny edge contours.
+    If neither finds a card-shaped quad, returns a default rectangle
+    centered on the seed with confidence 0.0.
+
+    Args:
+        temp_relative_path: Relative path under TEMP_DIR (passed to read_temp_image).
+        seed_x: Normalized [0, 1] x coordinate of the tap point.
+        seed_y: Normalized [0, 1] y coordinate of the tap point.
+        existing_polygons: Cards the user already outlined (normalized); masked
+            out so they don't merge with the card being detected.
+
+    Returns:
+        (corners, confidence)
+        corners — list of 4 dicts {"x": float, "y": float} in TL/TR/BR/BL order,
+                  coordinates normalized to [0, 1].
+        confidence — 0.0 (fallback rectangle) to 1.0 (high-confidence quad).
+    """
+    raw = read_temp_image(temp_relative_path)
+    working = _resize_bytes(raw)
+    try:
+        img_pil = Image.open(io.BytesIO(working)).convert("RGB")
+    except Exception:
+        logger.warning("detect_corners_from_seed: could not decode image at %s", temp_relative_path)
+        return [{"x": 0.15, "y": 0.25}, {"x": 0.85, "y": 0.25},
+                {"x": 0.85, "y": 0.75}, {"x": 0.15, "y": 0.75}], 0.0
+    img_w, img_h = img_pil.size
+    if img_w == 0 or img_h == 0:
+        return [{"x": 0.15, "y": 0.25}, {"x": 0.85, "y": 0.25},
+                {"x": 0.85, "y": 0.75}, {"x": 0.15, "y": 0.75}], 0.0
+
+    # Clamp seed to valid pixel range
+    seed_px = int(max(0, min(img_w - 1, seed_x * img_w)))
+    seed_py = int(max(0, min(img_h - 1, seed_y * img_h)))
+    img_bgr = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+
+    method = "background"
+    quad = _detect_quad_by_background(img_bgr, seed_px, seed_py, existing_polygons)
+    if quad is None:
+        method = "edges"
+        quad = _detect_quad_by_edges(img_bgr, seed_px, seed_py, existing_polygons)
+
+    if quad is None:
+        logger.info(
+            "detect_corners_from_seed: no quad found for seed=(%.3f,%.3f) → fallback rectangle",
+            seed_x, seed_y,
+        )
+        return _fallback_rect(seed_x, seed_y), 0.0
+
+    sorted_pts = _sort_quad_points(quad)
+    corners = [{"x": float(p[0] / img_w), "y": float(p[1] / img_h)} for p in sorted_pts]
+    # Scale confidence: 20% of image area → 1.0
+    area = float(cv2.contourArea(quad))
+    confidence = float(min(1.0, area / (img_w * img_h) * 5))
     logger.info(
-        "detect_corners_from_seed: no quad found for seed=(%.3f,%.3f) → fallback rectangle",
-        seed_x, seed_y,
+        "detect_corners_from_seed: seed=(%.3f,%.3f) method=%s quad area=%.0f confidence=%.2f",
+        seed_x, seed_y, method, area, confidence,
     )
-    return fallback_corners, 0.0
+    return corners, confidence
 
 
 async def detect_and_split(

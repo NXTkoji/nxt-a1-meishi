@@ -170,3 +170,117 @@ def test_detect_corners_from_seed_handles_rotated_card():
         assert 0.5 < max(xs) <= 1.0, f"Card too far left: {max(xs)}"
         assert 0.0 <= min(ys) < 0.5, f"Card too far down: {min(ys)}"
         assert 0.5 < max(ys) <= 1.0, f"Card too far up: {max(ys)}"
+
+
+# ── Background-colour segmentation (primary path) ─────────────────────────────
+
+def _scene_bytes(bg: str = "beige", gap: int | None = None) -> tuple[bytes, list[np.ndarray]]:
+    """
+    Build a 1200x900 "photo" containing white business cards with text lines.
+
+    bg:  "beige" (flat table) or "mat" (green cutting mat with a light grid —
+         the textured case Canny-based detection fails on).
+    gap: None → two cards far apart; an int → two cards side by side with
+         that many pixels between them.
+
+    Returns (jpeg bytes, list of 4x2 ground-truth corner arrays in pixels).
+    """
+    import cv2
+
+    h, w = 900, 1200
+    if bg == "beige":
+        img = np.full((h, w, 3), (185, 200, 212), np.uint8)   # BGR
+    else:
+        img = np.full((h, w, 3), (70, 95, 45), np.uint8)
+        img[::40, :] = (150, 170, 140)
+        img[1::40, :] = (150, 170, 140)
+        img[:, ::40] = (150, 170, 140)
+        img[:, 1::40] = (150, 170, 140)
+
+    cw, ch = 350, 200
+    if gap is None:
+        origins = [(150, 150), (650, 500)]
+    else:
+        origins = [(250, 350), (250 + cw + gap, 350)]
+    polys = []
+    for ox, oy in origins:
+        img[oy:oy + ch, ox:ox + cw] = (243, 245, 246)
+        # Dark text lines + a logo block — interior features that must not win
+        for i in range(4):
+            y = oy + 90 + i * 22
+            img[y:y + 8, ox + 25:ox + 200] = (40, 40, 40)
+        img[oy + 100:oy + 170, ox + 250:ox + 320] = (40, 40, 40)
+        polys.append(np.array([[ox, oy], [ox + cw, oy], [ox + cw, oy + ch], [ox, oy + ch]], np.float32))
+
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    return buf.tobytes(), polys
+
+
+def _iou(corners: list[dict], poly: np.ndarray, w: int = 1200, h: int = 900) -> float:
+    """IoU between returned normalized corners and a ground-truth pixel polygon."""
+    import cv2
+
+    a = np.zeros((h, w), np.uint8)
+    b = np.zeros((h, w), np.uint8)
+    cv2.fillPoly(a, [np.array([[c["x"] * w, c["y"] * h] for c in corners], np.int32)], 1)
+    cv2.fillPoly(b, [poly.astype(np.int32)], 1)
+    return float(np.logical_and(a, b).sum() / np.logical_or(a, b).sum())
+
+
+def _detect(img_bytes: bytes, x: float, y: float, existing=None):
+    from app.services.card_detector import detect_corners_from_seed
+
+    with patch("app.services.card_detector.read_temp_image", return_value=img_bytes), \
+         patch("app.services.card_detector._resize_bytes", return_value=img_bytes):
+        return detect_corners_from_seed("fake/path.jpg", x, y, existing)
+
+
+def test_tap_on_text_returns_whole_card_not_text_block():
+    """Tapping on the text lines must outline the card, not the text cluster."""
+    img_bytes, polys = _scene_bytes("beige")
+    # Card 0 spans x 150..500, y 150..350; tap lands on its text lines
+    corners, confidence = _detect(img_bytes, 250 / 1200, 265 / 900)
+    assert confidence > 0.0
+    assert _iou(corners, polys[0]) > 0.9
+
+
+def test_card_on_textured_cutting_mat():
+    """Grid lines on a cutting mat must not stop detection of the card."""
+    img_bytes, polys = _scene_bytes("mat")
+    corners, confidence = _detect(img_bytes, 800 / 1200, 560 / 900)
+    assert confidence > 0.0
+    assert _iou(corners, polys[1]) > 0.9
+
+
+def test_existing_outline_separates_adjacent_cards():
+    """With card 0 already outlined, tapping card 1 must return only card 1."""
+    img_bytes, polys = _scene_bytes("beige", gap=4)
+    existing = [[{"x": float(px / 1200), "y": float(py / 900)} for px, py in polys[0]]]
+    corners, confidence = _detect(img_bytes, (polys[1][0][0] + 60) / 1200, 400 / 900, existing)
+    assert confidence > 0.0
+    assert _iou(corners, polys[1]) > 0.9
+
+
+def test_background_method_used_first_when_it_succeeds():
+    from app.services import card_detector
+
+    img_bytes, _ = _scene_bytes("beige")
+    quad = np.array([[10, 10], [110, 10], [110, 70], [10, 70]], np.float32)
+    with patch.object(card_detector, "_detect_quad_by_background", return_value=quad) as bg, \
+         patch.object(card_detector, "_detect_quad_by_edges") as edges:
+        corners, confidence = _detect(img_bytes, 0.5, 0.5)
+    bg.assert_called_once()
+    edges.assert_not_called()
+    assert abs(corners[0]["x"] - 10 / 1200) < 1e-6
+    assert confidence > 0.0
+
+
+def test_falls_back_to_edge_method_when_background_method_gives_up():
+    from app.services import card_detector
+
+    img_bytes, _ = _scene_bytes("beige")
+    with patch.object(card_detector, "_detect_quad_by_background", return_value=None), \
+         patch.object(card_detector, "_detect_quad_by_edges", wraps=card_detector._detect_quad_by_edges) as edges:
+        corners, _ = _detect(img_bytes, 250 / 1200, 265 / 900)
+    edges.assert_called_once()
+    assert len(corners) == 4
