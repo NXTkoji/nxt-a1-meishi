@@ -266,25 +266,29 @@ def _sort_quad_points(pts: np.ndarray) -> np.ndarray:
     """
     Sort 4 points into [top-left, top-right, bottom-right, bottom-left] order.
 
-    Works correctly for rotated cards by sorting points by angle from centroid,
-    starting from top-left and moving clockwise.
+    1. Order the points clockwise by angle from the centroid (rotation-
+       invariant — coordinate sums/diffs break on rotated cards).
+    2. Start at the top-left corner, defined as the start of the edge that
+       points most nearly rightward when walking clockwise — i.e. assume the
+       card is rotated the least amount from upright. (Clockwise, the top
+       edge runs →, right ↓, bottom ←, left ↑.) Starting at a fixed angle
+       instead (e.g. -135°) fails for landscape cards, whose TL corner sits
+       at ~-150° — that returned BL first and rotated every crop 90°.
     """
-    # Compute centroid
     cx = np.mean(pts[:, 0])
     cy = np.mean(pts[:, 1])
 
-    # Compute angle from centroid to each point
-    # atan2 returns angle in [-π, π]; we adjust to start from top-left (-135°)
+    # Image y points down, so ascending atan2 angle runs clockwise on screen
     angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
+    cw = pts[np.argsort(angles)]
 
-    # Rotate angles so 0° starts at top-left (-135° in standard coords)
-    # and we go clockwise (TL → TR → BR → BL)
-    angles = angles - np.pi * 0.75  # shift so -135° becomes 0°
-    angles = np.where(angles < 0, angles + 2 * np.pi, angles)
-
-    # Sort points by angle
-    sorted_indices = np.argsort(angles)
-    return pts[sorted_indices].astype(np.float32)
+    # Angle of each clockwise edge vs. the +x axis; the top edge is closest to 0
+    edge_angles = [
+        abs(np.arctan2(cw[(i + 1) % 4, 1] - cw[i, 1], cw[(i + 1) % 4, 0] - cw[i, 0]))
+        for i in range(4)
+    ]
+    top = int(np.argmin(edge_angles))
+    return np.roll(cw, -top, axis=0).astype(np.float32)
 
 
 # ── Card background brightness ────────────────────────────────────────────────
