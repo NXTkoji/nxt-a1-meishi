@@ -336,3 +336,42 @@ def test_sync_to_google_retries_on_503(monkeypatch):
 
     assert resource == "people/c123"
     assert call_count["value"] == 2
+
+
+def test_sync_to_google_update_clears_emptied_app_owned_fields(monkeypatch):
+    """Regression: deleting a person's only website left it in Google, because
+    updatePersonFields listed only the fields present in the body. App-owned
+    fields are now always listed (absent = cleared); fields people also edit
+    in Google (notes, birthdays, ...) are not."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "google_client_id", "cid")
+    monkeypatch.setattr(settings, "google_client_secret", "csecret")
+    monkeypatch.setattr(settings, "google_refresh_token", "rtoken")
+
+    captured = {}
+
+    async def fake_post(self, url, **kwargs):
+        return httpx.Response(200, json={"access_token": "atoken"}, request=httpx.Request("POST", url))
+
+    async def fake_get(self, url, **kwargs):
+        return httpx.Response(200, json={"etag": "e1"}, request=httpx.Request("GET", url))
+
+    async def fake_patch(self, url, **kwargs):
+        captured["fields"] = kwargs["params"]["updatePersonFields"].split(",")
+        captured["body"] = kwargs["json"]
+        return httpx.Response(200, json={"resourceName": "people/c123"}, request=httpx.Request("PATCH", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "patch", fake_patch)
+
+    card = LegacyCard(person=LegacyPerson())  # no website, phones, emails...
+    asyncio.run(sync_to_google(card, existing_resource="people/c123"))
+
+    assert "urls" not in captured["body"]
+    for field in ("urls", "phoneNumbers", "emailAddresses", "addresses", "organizations"):
+        assert field in captured["fields"]
+    for field in ("biographies", "birthdays", "events", "relations", "userDefined", "memberships"):
+        assert field not in captured["fields"]
+    assert len(captured["fields"]) == len(set(captured["fields"]))
