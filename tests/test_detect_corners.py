@@ -284,3 +284,39 @@ def test_falls_back_to_edge_method_when_background_method_gives_up():
         corners, _ = _detect(img_bytes, 250 / 1200, 265 / 900)
     edges.assert_called_once()
     assert len(corners) == 4
+
+
+# ── Corner ordering ───────────────────────────────────────────────────────────
+
+def _rotated_rect(w: float, h: float, angle_deg: float) -> np.ndarray:
+    """TL, TR, BR, BL of a w×h rectangle centred at (500, 500), rotated clockwise."""
+    import math
+
+    a = math.radians(angle_deg)
+    rot = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    pts = np.array([[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]])
+    return (pts @ rot.T + 500).astype(np.float32)
+
+
+@pytest.mark.parametrize("w,h", [(350, 200), (200, 350), (300, 300)])
+@pytest.mark.parametrize("angle", [-30, -10, 0, 10, 30])
+def test_sort_quad_points_starts_at_top_left(w, h, angle):
+    """
+    Landscape cards put the TL corner at ~-150° from the centroid, past the
+    -135° start of the old angle sort — it returned BL first, so every crop
+    from a detected quad came out rotated 90°.
+    """
+    from app.services.card_detector import _sort_quad_points
+
+    expected = _rotated_rect(w, h, angle)
+    for shuffle in ([0, 1, 2, 3], [2, 0, 3, 1], [3, 2, 1, 0]):
+        got = _sort_quad_points(expected[shuffle])
+        np.testing.assert_allclose(got, expected, atol=1e-3)
+
+
+def test_detected_landscape_card_corners_start_top_left():
+    """End to end: a detected landscape card is returned TL, TR, BR, BL."""
+    img_bytes, polys = _scene_bytes("beige")
+    corners, _ = _detect(img_bytes, 250 / 1200, 265 / 900)
+    got = np.array([[c["x"] * 1200, c["y"] * 900] for c in corners])
+    np.testing.assert_allclose(got, polys[0], atol=12)
