@@ -95,6 +95,8 @@ const translations = {
     tabPersons: '人物',
     searchPlaceholder: '名前・会社・場面で検索…',
     searchPlaceholderPersons: '名前・会社で検索…',
+    // Cards tab — merging is per person, so it only exists on the Persons tab
+    cardsMergeNote: '同じ人物の複数の名刺をまとめるには、「人物」タブ →「選択してマージ」を使ってください。',
     loading: '読み込み中…',
     emptyMessage: 'まだ名刺がありません',
     emptyCta: '最初の名刺をスキャン',
@@ -186,7 +188,7 @@ const translations = {
     personDeleted: '人物を削除しました',
 
     // Merge
-    selectPersonsBtn: '選択',
+    selectPersonsBtn: '選択してマージ',
     cancelSelectBtn: 'キャンセル',
     selectedN: (n: number) => `${n} 件選択中`,
     mergeSelectedBtn: (n: number) => `${n} 件をマージ`,
@@ -256,7 +258,7 @@ const translations = {
     dupDiscard: '新しい名刺を破棄',
     dupConfirmMerge: 'マージして保存',
     // Review stage — cards in the same batch are never matched to each other
-    reviewSamePersonNote: '同じ人物の名刺が複数ある場合は、このまま保存してから「コレクション」ページで両方を選択し「マージ」してください。',
+    reviewSamePersonNote: '同じ人物の名刺が複数ある場合は、このまま保存してから「コレクション」→「人物」タブ→「選択してマージ」で両方を選び、マージしてください。',
 
     // ScanPage — move/delete card group
     moveToCard: (n: number) => `→ #${n}`,
@@ -378,6 +380,8 @@ const translations = {
     tabPersons: 'Persons',
     searchPlaceholder: 'Search name, company, occasion…',
     searchPlaceholderPersons: 'Search name, company…',
+    // Cards tab — merging is per person, so it only exists on the Persons tab
+    cardsMergeNote: 'To merge several cards of the same person, use the Persons tab → "Select to merge".',
     loading: 'Loading…',
     emptyMessage: 'No business cards yet',
     emptyCta: 'Scan your first card',
@@ -469,7 +473,7 @@ const translations = {
     personDeleted: 'Person deleted',
 
     // Merge
-    selectPersonsBtn: 'Select',
+    selectPersonsBtn: 'Select to merge',
     cancelSelectBtn: 'Cancel',
     selectedN: (n: number) => `${n} selected`,
     mergeSelectedBtn: (n: number) => `Merge ${n} persons`,
@@ -539,7 +543,7 @@ const translations = {
     dupDiscard: 'Discard new card',
     dupConfirmMerge: 'Confirm merge',
     // Review stage — cards in the same batch are never matched to each other
-    reviewSamePersonNote: 'If several cards here belong to the same person, save them as they are, then select those people on the Collection page and click "Merge".',
+    reviewSamePersonNote: 'If several cards here belong to the same person, save them as they are, then go to Collection → Persons tab → "Select to merge", tick those people and click "Merge".',
 
     // ScanPage — move/delete card group
     moveToCard: (n: number) => `→ #${n}`,
@@ -660,6 +664,8 @@ const translations = {
     tabPersons: '人物',
     searchPlaceholder: '搜尋姓名、公司、場合…',
     searchPlaceholderPersons: '搜尋姓名、公司…',
+    // Cards tab — merging is per person, so it only exists on the Persons tab
+    cardsMergeNote: '若要合併同一人的多張名片，請到「人物」分頁 →「選取以合併」。',
     loading: '載入中…',
     emptyMessage: '尚無名片',
     emptyCta: '掃描第一張名片',
@@ -751,7 +757,7 @@ const translations = {
     personDeleted: '已刪除人物',
 
     // Merge
-    selectPersonsBtn: '選取',
+    selectPersonsBtn: '選取以合併',
     cancelSelectBtn: '取消',
     selectedN: (n: number) => `已選取 ${n} 筆`,
     mergeSelectedBtn: (n: number) => `合併 ${n} 筆`,
@@ -821,7 +827,7 @@ const translations = {
     dupDiscard: '捨棄新名片',
     dupConfirmMerge: '確認合併',
     // Review stage — cards in the same batch are never matched to each other
-    reviewSamePersonNote: '若有多張名片屬於同一人，請先直接儲存，再到「名片庫」頁面勾選這些人並點擊「合併」。',
+    reviewSamePersonNote: '若有多張名片屬於同一人，請先直接儲存，再到「名片庫」→「人物」分頁 →「選取以合併」，勾選這些人後點擊「合併」。',
 
     // ScanPage — move/delete card group
     moveToCard: (n: number) => `→ #${n}`,
