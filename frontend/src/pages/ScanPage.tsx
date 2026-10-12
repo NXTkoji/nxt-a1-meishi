@@ -1036,6 +1036,15 @@ export function ScanPage() {
             </ul>
           )}
 
+          {/* Duplicate detection only compares against saved persons, so two cards
+              of the same person in one batch are never linked here. Point the user
+              to the Collection page merge instead. Only relevant with 2+ cards. */}
+          {stage === 'review' && groups.length >= 2 && (
+            <p className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              {t.reviewSamePersonNote}
+            </p>
+          )}
+
           {groups.map((group, gi) => (
             <CardGroupCard
               key={group.tempCardId}
@@ -1612,10 +1621,24 @@ function CardGroupCard({
                   <label className="text-gray-500 block mb-1">{t.existingPersonLabel}</label>
                   <div className="flex gap-1">
                     <span className="text-amber-600">{group.matchName}</span>
-                    <button
-                      className="text-red-400 hover:text-red-600"
-                      onClick={() => onMetaChange({ matchPersonId: undefined, matchName: undefined })}
-                    >{t.createNew}</button>
+                    {/* Hide "Create New" once the user has merged via the duplicate panel.
+                        onDupMerge keeps matchPersonId and sets dupDismissed, while
+                        onDupNotDuplicate clears matchPersonId — so dupDismissed with a
+                        match still set means "merged". Clicking Create New at that point
+                        would save the merged fields as a brand-new person instead. */}
+                    {!group.dupDismissed && (
+                      <button
+                        className="text-red-400 hover:text-red-600"
+                        // Clear matchPersonExtId too: the duplicate panel is gated on it, and
+                        // leaving it set kept the panel visible, where "Confirm merge" would
+                        // then silently save the card as a new person.
+                        onClick={() => onMetaChange({
+                          matchPersonId: undefined,
+                          matchPersonExtId: undefined,
+                          matchName: undefined,
+                        })}
+                      >{t.createNew}</button>
+                    )}
                   </div>
                 </div>
               )}

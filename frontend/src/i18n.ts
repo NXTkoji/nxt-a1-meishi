@@ -255,6 +255,8 @@ const translations = {
     dupNotDuplicate: '別人として保存 →',
     dupDiscard: '新しい名刺を破棄',
     dupConfirmMerge: 'マージして保存',
+    // Review stage — cards in the same batch are never matched to each other
+    reviewSamePersonNote: '同じ人物の名刺が複数ある場合は、このまま保存してから「コレクション」ページで両方を選択し「マージ」してください。',
 
     // ScanPage — move/delete card group
     moveToCard: (n: number) => `→ #${n}`,
@@ -536,6 +538,8 @@ const translations = {
     dupNotDuplicate: 'Not a duplicate →',
     dupDiscard: 'Discard new card',
     dupConfirmMerge: 'Confirm merge',
+    // Review stage — cards in the same batch are never matched to each other
+    reviewSamePersonNote: 'If several cards here belong to the same person, save them as they are, then select those people on the Collection page and click "Merge".',
 
     // ScanPage — move/delete card group
     moveToCard: (n: number) => `→ #${n}`,
@@ -816,6 +820,8 @@ const translations = {
     dupNotDuplicate: '並非重複 →',
     dupDiscard: '捨棄新名片',
     dupConfirmMerge: '確認合併',
+    // Review stage — cards in the same batch are never matched to each other
+    reviewSamePersonNote: '若有多張名片屬於同一人，請先直接儲存，再到「名片庫」頁面勾選這些人並點擊「合併」。',
 
     // ScanPage — move/delete card group
     moveToCard: (n: number) => `→ #${n}`,
