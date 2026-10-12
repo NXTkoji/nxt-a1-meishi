@@ -545,6 +545,12 @@ async def merge_persons(
     if orphan_resources and not primary.google_resource:
         primary.google_resource = orphan_resources.pop(0)
 
+    # Work contacts name their organization by list index ("_pos:N"), and the
+    # merged list interleaves everyone's positions by id. Resolve each work
+    # contact to its Position id now, while indexes still mean the old lists,
+    # and relabel against the merged list once the rows have moved.
+    work_contact_targets = await _work_contact_positions(db, [primary.id] + source_ids)
+
     # Reassign all child rows to primary
     for table, col in [
         (Card, Card.person_id),
@@ -562,6 +568,8 @@ async def merge_persons(
     # does not attempt to cascade-delete already-reassigned child rows.
     for p in sources:
         db.expire(p, ["names", "contact_details", "positions", "cards"])
+
+    await _relabel_work_contacts(db, primary.id, work_contact_targets)
 
     # Concatenate notes
     source_notes = [p.notes for p in sources if p.notes]
@@ -672,6 +680,48 @@ def _pos_index(label: str | None) -> int:
 
 def _pos_label(index: int) -> str | None:
     return None if index == 0 else f"_pos:{index}"
+
+
+async def _work_contact_positions(
+    db: AsyncSession, person_ids: list[int]
+) -> list[tuple[ContactDetail, int]]:
+    """Pair each work contact of these persons with the Position id its label
+    points at, using each person's own position list.
+
+    A contact whose index has no position (e.g. its person has none) is left
+    out: there is no organization to keep it attached to, so it stays as is.
+    """
+    targets: list[tuple[ContactDetail, int]] = []
+    for person_id in person_ids:
+        position_ids = (await db.execute(
+            select(Position.id).where(Position.person_id == person_id).order_by(Position.id)
+        )).scalars().all()
+        work_contacts = (await db.execute(
+            select(ContactDetail).where(
+                ContactDetail.person_id == person_id,
+                ContactDetail.detail_type.in_(WORK_CONTACT_TYPES),
+            )
+        )).scalars().all()
+        for detail in work_contacts:
+            index = _pos_index(detail.label)
+            if index < len(position_ids):
+                targets.append((detail, position_ids[index]))
+    return targets
+
+
+async def _relabel_work_contacts(
+    db: AsyncSession, person_id: int, targets: list[tuple[ContactDetail, int]]
+) -> None:
+    """Point each work contact at its Position's index in the person's merged
+    position list. A label is only rewritten when the index changes, so a
+    printed label (e.g. "電話") on a contact that stays at index 0 is kept."""
+    merged_ids = (await db.execute(
+        select(Position.id).where(Position.person_id == person_id).order_by(Position.id)
+    )).scalars().all()
+    for detail, position_id in targets:
+        new_index = merged_ids.index(position_id)
+        if new_index != _pos_index(detail.label):
+            detail.label = _pos_label(new_index)
 
 
 @router.delete("/{person_ext_id}/positions/{position_id}", status_code=204)
