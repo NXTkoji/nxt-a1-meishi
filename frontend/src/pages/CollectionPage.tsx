@@ -267,6 +267,14 @@ export function CollectionPage() {
         </a>
       </div>
 
+      {/* Merging works on persons, not cards, so the Cards tab has no merge control.
+          Point users who land here looking for it to the Persons tab. */}
+      {view === 'cards' && (
+        <p className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          {t.cardsMergeNote}
+        </p>
+      )}
+
       {/* Cards — search results while a query is active, otherwise the browse tree */}
       {view === 'cards' && (
         debouncedQ ? (
