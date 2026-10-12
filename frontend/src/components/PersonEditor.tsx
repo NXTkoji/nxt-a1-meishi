@@ -457,6 +457,11 @@ export function PersonEditor({
       label: posLabel(posIdx),
     }))
 
+  // posLabel(0) is undefined, which JSON drops — and the PATCH endpoint skips
+  // absent fields, so moving a contact to Organization 1 used to leave its old
+  // "_pos:N" label in place. An empty label also means index 0 and is sent.
+  const moveLabel = (posIdx: number) => posLabel(posIdx) ?? ''
+
   const moveContact = (payload: DragPayload, targetSection: 'personal' | 'work', targetPosIdx: number) =>
     run(() => {
       if (payload.fromSection !== targetSection) {
@@ -465,11 +470,11 @@ export function PersonEditor({
         if (!newType) return Promise.resolve()
         return updateContactDetail(person.external_id, payload.detailId, {
           detail_type: newType,
-          label: posLabel(targetPosIdx),
+          label: moveLabel(targetPosIdx),
         })
       } else if (targetSection === 'work' && payload.fromPosIdx !== targetPosIdx) {
         return updateContactDetail(person.external_id, payload.detailId, {
-          label: posLabel(targetPosIdx),
+          label: moveLabel(targetPosIdx),
         })
       }
       return Promise.resolve()
