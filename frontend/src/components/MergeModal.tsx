@@ -5,11 +5,11 @@
  * Step 2: confirmation before destructive merge.
  */
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { mergePersons } from '../api'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { getPerson, mergePersons } from '../api'
 import { useToast } from './Toast'
 import { useLang } from '../LangContext'
-import type { PersonListItem } from '../types'
+import type { Person, PersonListItem } from '../types'
 
 interface Props {
   selected: PersonListItem[]
@@ -74,9 +74,12 @@ export function MergeModal({ selected, onClose }: Props) {
                   <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium shrink-0">
                     {(p.primary_name ?? '?').charAt(0)}
                   </div>
-                  <span className="text-sm font-medium text-gray-900">
-                    {p.primary_name ?? '(No name)'}
-                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-gray-900">
+                      {p.primary_name ?? '(No name)'}
+                    </div>
+                    <PersonSummary extId={p.external_id} />
+                  </div>
                 </label>
               ))}
             </div>
@@ -116,4 +119,53 @@ export function MergeModal({ selected, onClose }: Props) {
       </div>
     </div>
   )
+}
+
+/**
+ * All current names and organisations of one person, so records that share a
+ * primary name can be told apart when picking the primary.
+ *
+ * PersonListItem only carries primary_name, so each row loads the full person.
+ * The ['person', extId] key and getPerson fetcher match PersonDetailPage and
+ * DuplicateFieldEditor, so the cache is shared with them.
+ */
+function PersonSummary({ extId }: { extId: string }) {
+  const { t } = useLang()
+  const { data: person, isLoading, isError } = useQuery<Person>({
+    queryKey: ['person', extId],
+    queryFn: () => getPerson(extId),
+  })
+
+  if (isLoading) return <div className="text-xs text-gray-400">{t.loading}</div>
+  if (isError || !person) return <div className="text-xs text-red-500">{t.loadError}</div>
+
+  const names = currentNames(person)
+  const orgs = currentOrgs(person)
+  return (
+    <div className="text-xs text-gray-500 space-y-0.5 break-words">
+      {names.length > 0 && <div>{names.join(' / ')}</div>}
+      {/* One line per organisation; its language variants joined on that line */}
+      {orgs.map((org, i) => <div key={i}>{org}</div>)}
+    </div>
+  )
+}
+
+/** Current full names, deduplicated, in API order (all names if none is current). */
+function currentNames(person: Person): string[] {
+  const current = person.names.filter(n => n.is_current)
+  const pool = current.length > 0 ? current : person.names
+  return [...new Set(pool.map(n => n.full_name.trim()).filter(Boolean))]
+}
+
+/**
+ * One entry per position: its current org names (all if none is current) joined
+ * with " / ". Duplicate entries — the same organisation held twice — are dropped.
+ */
+function currentOrgs(person: Person): string[] {
+  const lines = person.positions.map(pos => {
+    const current = pos.org_names.filter(o => o.is_current)
+    const pool = current.length > 0 ? current : pos.org_names
+    return [...new Set(pool.map(o => o.name.trim()).filter(Boolean))].join(' / ')
+  })
+  return [...new Set(lines.filter(Boolean))]
 }
