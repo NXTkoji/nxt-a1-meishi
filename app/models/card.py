@@ -64,6 +64,7 @@ class Person(BaseModel):
     social: Social = Field(default_factory=Social)
     relations: list[PersonRelation] = Field(default_factory=list)
     birthday: str = ""  # "YYYY-MM-DD" or "--MM-DD" (year unknown), "" if none
+    notes: str = ""     # the person's memo (Person.notes), "" if none
 
 
 class MatchResult(BaseModel):

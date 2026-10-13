@@ -129,7 +129,7 @@ export const deletePerson = (personExtId: string) => del(`/api/v2/persons/${pers
 export const mergePersons = (primaryExtId: string, sourceIds: string[]) =>
   post<import('../types').MergeResult>(`/api/v2/persons/${primaryExtId}/merge`, { source_ids: sourceIds })
 
-export const updatePerson = (personExtId: string, body: { birthday?: string }) =>
+export const updatePerson = (personExtId: string, body: { birthday?: string; notes?: string }) =>
   patch<Person>(`/api/v2/persons/${personExtId}`, body)
 
 export const updatePersonName = (personExtId: string, nameId: number, body: { full_name?: string; family_name?: string; given_name?: string }) =>
@@ -153,6 +153,10 @@ export const deleteContactDetail = (personExtId: string, detailId: number) =>
 
 export const updatePositionDetail = (personExtId: string, positionId: number, detailId: number, body: { title?: string; department?: string }) =>
   patch<import('../types').PositionDetail>(`/api/v2/persons/${personExtId}/positions/${positionId}/details/${detailId}`, body)
+
+/** Set the shared memo of the organization behind one of the person's positions; "" clears it. */
+export const updateOrgNotes = (personExtId: string, positionId: number, notes: string) =>
+  patch<import('../types').Position>(`/api/v2/persons/${personExtId}/positions/${positionId}/org-notes`, { notes })
 
 export const updateOrgName = (personExtId: string, positionId: number, orgNameId: number, body: { name: string }) =>
   patch<import('../types').OrgName>(`/api/v2/persons/${personExtId}/positions/${positionId}/org-name/${orgNameId}`, body)

@@ -149,6 +149,9 @@ class Organization(Base):
     external_id: Mapped[str] = mapped_column(
         String(36), default=_uuid, unique=True, nullable=False
     )
+    # Free-text memo about the organization itself. Organizations are shared,
+    # so this is the same memo on every person linked to it.
+    notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 

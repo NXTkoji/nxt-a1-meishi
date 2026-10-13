@@ -17,6 +17,7 @@ from app.auth import verify_api_key
 from app.db.models import (
     Card,
     ContactDetail,
+    Organization,
     OrganizationName,
     Person,
     PersonName,
@@ -67,6 +68,11 @@ class PositionDetailUpdate(BaseModel):
     title: Optional[str] = None
     department: Optional[str] = None
 
+
+class OrgNotesUpdate(BaseModel):
+    # The organization's shared memo; "" clears it.
+    notes: str
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -111,6 +117,7 @@ async def _load_person_out(db: AsyncSession, person: Person) -> PersonOut:
 
     positions_out = []
     for pos in pos_rows:
+        org = await db.get(Organization, pos.org_id)
         org_names = (await db.execute(
             select(OrganizationName)
             .where(OrganizationName.org_id == pos.org_id, OrganizationName.is_current == True)  # noqa: E712
@@ -124,6 +131,7 @@ async def _load_person_out(db: AsyncSession, person: Person) -> PersonOut:
             status=pos.status,
             org_names=[OrgNameOut(id=on.id, language=on.language, name=on.name, is_current=on.is_current) for on in org_names],
             details=[PositionDetailOut(id=d.id, language=d.language, title=d.title, department=d.department) for d in pos_details],
+            org_notes=org.notes if org else None,
         ))
 
     return PersonOut(
@@ -460,7 +468,7 @@ async def update_person(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    """Update person-level fields (currently: birthday)."""
+    """Update person-level fields: birthday and the memo (notes)."""
     person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
     if not person:
         raise HTTPException(404, "Person not found")
@@ -468,6 +476,9 @@ async def update_person(
     if "birthday" in data:
         # Empty string clears the birthday (stored as NULL).
         person.birthday = data["birthday"] or None
+    if "notes" in data:
+        # Empty string clears the memo (stored as NULL).
+        person.notes = data["notes"] or None
     await db.flush()
     _schedule_google_sync(background_tasks, person)
     return await _load_person_out(db, person)
@@ -834,6 +845,33 @@ async def update_position_detail(
     _schedule_google_sync(background_tasks, person)
     await db.refresh(detail)
     return detail
+
+
+@router.patch("/{person_ext_id}/positions/{position_id}/org-notes", response_model=PositionOut)
+async def update_org_notes(
+    person_ext_id: str,
+    position_id: int,
+    body: OrgNotesUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the shared memo of the organization behind one of this person's
+    positions. Addressed through the person (like org-name edits) because the
+    person page only knows positions; the memo itself lives on Organization,
+    so every person at that organization sees the change.
+
+    No Google sync: organization memos are kept in this app only.
+    """
+    person = await db.scalar(select(Person).where(Person.external_id == person_ext_id))
+    if not person:
+        raise HTTPException(404, "Person not found")
+    pos = await db.get(Position, position_id)
+    if not pos or pos.person_id != person.id:
+        raise HTTPException(404, "Position not found")
+    org = await db.get(Organization, pos.org_id)
+    org.notes = body.notes.strip() or None
+    await db.flush()
+    person_out = await _load_person_out(db, person)
+    return next(p for p in person_out.positions if p.id == pos.id)
 
 
 @router.patch("/{person_ext_id}/positions/{position_id}/org-name/{org_name_id}", response_model=OrgNameOut)
