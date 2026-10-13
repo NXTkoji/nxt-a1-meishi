@@ -54,6 +54,7 @@ from app.schemas.api import (
 from app.services import card_detector, contact_matcher, correction_store, image_store
 from app.services.claude_parser import stream_parse_card_sides
 from app.services.contact_sync import auto_sync_card
+from app.services.work_contact_labels import WORK_CONTACT_TYPES, pos_index, relabel
 
 logger = logging.getLogger(__name__)
 
@@ -625,12 +626,23 @@ async def _upsert_person_names(db: AsyncSession, person_id: int, parsed_card) ->
 
 
 async def _upsert_contact_details(
-    db: AsyncSession, person_id: int, card_id: int, parsed_card
+    db: AsyncSession, person_id: int, card_id: int, parsed_card, work_index_map: dict[int, int]
 ) -> None:
+    """Add the card's new contact details to the person.
+
+    work_index_map maps a work contact's index in the draft (its "_pos:N"
+    label, into parsed_card.positions) to the matching index in the person's
+    position list. An index with no entry — its position had no organization
+    name and was skipped, or it points past the list — falls back to index 0
+    so the contact still shows under an organization instead of nowhere.
+    """
     for cd in parsed_card.contact_details:
         val = cd.value.value if hasattr(cd.value, "value") else cd.value
         if not val:
             continue
+        label = cd.label
+        if cd.detail_type in WORK_CONTACT_TYPES:
+            label = relabel(label, work_index_map.get(pos_index(label), 0))
         existing = await db.scalar(
             select(ContactDetail).where(
                 ContactDetail.person_id == person_id,
@@ -644,7 +656,7 @@ async def _upsert_contact_details(
                 card_id=card_id,
                 detail_type=cd.detail_type,
                 value=val,
-                label=cd.label,
+                label=label,
                 country_code=cd.country_code if cd.detail_type.startswith("address_") else None,
             ))
 
@@ -679,8 +691,12 @@ async def _confirm_one_card(
     await _upsert_person_names(db, person.id, draft.parsed)
 
     # 3. Organizations + Positions
+    # Position id per draft position (None when skipped for lacking an org
+    # name), so step 6 can repoint work contacts at the person's own list.
+    draft_position_ids: list[int | None] = []
     for parsed_pos in draft.parsed.positions:
         if not parsed_pos.org_names:
+            draft_position_ids.append(None)
             continue
         org = await _find_or_create_org(db, parsed_pos.org_names)
 
@@ -701,6 +717,7 @@ async def _confirm_one_card(
             )
             db.add(pos)
             await db.flush()
+        draft_position_ids.append(pos.id)
 
         for detail in parsed_pos.details:
             title_val = (detail.title.value if detail.title and hasattr(detail.title, "value") else None)
@@ -742,7 +759,17 @@ async def _confirm_one_card(
         db.add(CardMyCompany(card_id=card.id, my_company_id=mc_id))
 
     # 6. Contact details (after card.id is available)
-    await _upsert_contact_details(db, person.id, card.id, draft.parsed)
+    # Draft index → index in the person's positions (by id). Differs whenever
+    # the person already had positions or a draft position was skipped.
+    person_position_ids = (await db.execute(
+        select(Position.id).where(Position.person_id == person.id).order_by(Position.id)
+    )).scalars().all()
+    work_index_map = {
+        draft_index: person_position_ids.index(position_id)
+        for draft_index, position_id in enumerate(draft_position_ids)
+        if position_id is not None
+    }
+    await _upsert_contact_details(db, person.id, card.id, draft.parsed, work_index_map)
 
     # 7. Card sides: move temp images to permanent storage
     imgs = await db.execute(

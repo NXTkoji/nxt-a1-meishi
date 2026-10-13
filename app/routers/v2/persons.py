@@ -41,6 +41,7 @@ from app.schemas.api import (
     PositionOut,
 )
 from app.services.contact_sync import auto_delete_google_contacts, auto_sync_person
+from app.services.work_contact_labels import WORK_CONTACT_TYPES, pos_index, pos_label, relabel
 from pydantic import BaseModel
 
 
@@ -665,21 +666,8 @@ async def delete_person_name(
     _schedule_google_sync(background_tasks, person)
 
 
-# Work contacts point at their position by list index in the label
-# ("_pos:N"; no label or any other label means index 0), mirroring
-# getPosIdx/posLabel in the frontend. The list order is Position.id, the same
-# order _load_person_out returns positions in.
-WORK_CONTACT_TYPES = {"phone_work", "phone_fax", "email_work", "address_work", "url_website", "gui_number"}
-
-
-def _pos_index(label: str | None) -> int:
-    if label and label.startswith("_pos:") and label[5:].isdigit():
-        return int(label[5:])
-    return 0
-
-
-def _pos_label(index: int) -> str | None:
-    return None if index == 0 else f"_pos:{index}"
+# Work contacts point at their position by "_pos:N" label index — see
+# app/services/work_contact_labels.py for the convention.
 
 
 async def _work_contact_positions(
@@ -703,7 +691,7 @@ async def _work_contact_positions(
             )
         )).scalars().all()
         for detail in work_contacts:
-            index = _pos_index(detail.label)
+            index = pos_index(detail.label)
             if index < len(position_ids):
                 targets.append((detail, position_ids[index]))
     return targets
@@ -719,9 +707,7 @@ async def _relabel_work_contacts(
         select(Position.id).where(Position.person_id == person_id).order_by(Position.id)
     )).scalars().all()
     for detail, position_id in targets:
-        new_index = merged_ids.index(position_id)
-        if new_index != _pos_index(detail.label):
-            detail.label = _pos_label(new_index)
+        detail.label = relabel(detail.label, merged_ids.index(position_id))
 
 
 @router.delete("/{person_ext_id}/positions/{position_id}", status_code=204)
@@ -754,11 +740,11 @@ async def delete_position(
         )
     )).scalars().all()
     for detail in work_contacts:
-        index = _pos_index(detail.label)
+        index = pos_index(detail.label)
         if index == removed:
             await db.delete(detail)
         elif index > removed:
-            detail.label = _pos_label(index - 1)
+            detail.label = pos_label(index - 1)
 
     await db.delete(await db.get(Position, position_id))  # details cascade
     _schedule_google_sync(background_tasks, person)
