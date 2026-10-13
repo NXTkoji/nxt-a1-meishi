@@ -10,6 +10,7 @@ const translations = {
     navCollection: 'コレクション',
     navScan: 'スキャン',
     navSettings: '設定',
+    navManual: 'マニュアル',
     langToggle: 'English',
 
     // ScanPage — stages
@@ -300,6 +301,7 @@ const translations = {
     navCollection: 'Collection',
     navScan: 'Scan',
     navSettings: 'Settings',
+    navManual: 'Manual',
     langToggle: '繁體中文',
 
     // ScanPage — stages
@@ -589,6 +591,7 @@ const translations = {
     navCollection: '名片庫',
     navScan: '掃描',
     navSettings: '設定',
+    navManual: '手冊',
     langToggle: '日本語',
 
     // ScanPage — stages
