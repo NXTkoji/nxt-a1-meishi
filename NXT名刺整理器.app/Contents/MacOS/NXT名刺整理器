@@ -1,0 +1,72 @@
+#!/bin/bash
+# NXT名刺整理器 — launcher
+# Backend serves both API and frontend. Just ensure it's running and open the browser.
+#
+# No absolute project path is hard-coded here. The project is located from this
+# bundle's own position, then published as the symlink ~/.nxt-a1/project, which
+# the backend LaunchAgent and launcher.py run through. If the folder has been
+# moved since the last launch, the symlink is repointed and the backend restarted
+# so it stops serving from the old location.
+
+BACKEND_PORT=8000
+BACKEND_AGENT="gui/$(id -u)/co.nxta.nxt-a1-backend"
+LAUNCHER_AGENT="gui/$(id -u)/co.nxta.nxt-a1-launcher"
+PROJECT_LINK="$HOME/.nxt-a1/project"
+LOG="$HOME/.nxt-a1/logs/backend.log"
+mkdir -p "$HOME/.nxt-a1/logs"
+
+# ── Locate the repo from this bundle's position ──────────────────────────────
+# The bundle is tracked at the repo root (nxt-a1-meishi/NXT名刺整理器.app) and is
+# launched from there, so the folder containing the .app is the project.
+PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+if [ ! -f "$PROJECT/app/main.py" ]; then
+  osascript -e 'display alert "NXT名刺整理器" message "Open this app from inside the nxt-a1-meishi folder — the project was not found next to it."'
+  exit 1
+fi
+
+is_listening() {
+  lsof -ti tcp:"$1" > /dev/null 2>&1
+}
+
+is_healthy() {
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$BACKEND_PORT/api/health")" = 200 ]
+}
+
+agent_loaded() {
+  launchctl print "$1" > /dev/null 2>&1
+}
+
+# Restart the backend: via its LaunchAgent if installed, otherwise directly.
+restart_backend() {
+  if agent_loaded "$BACKEND_AGENT"; then
+    launchctl kickstart -k "$BACKEND_AGENT"
+  else
+    lsof -ti tcp:"$BACKEND_PORT" | xargs kill 2>/dev/null
+    sleep 1
+    cd "$PROJECT_LINK" || exit 1
+    nohup venv/bin/python3 -m uvicorn app.main:app --port $BACKEND_PORT \
+      >> "$LOG" 2>&1 &
+  fi
+}
+
+# ── Repoint ~/.nxt-a1/project if the folder moved ────────────────────────────
+if [ "$(readlink "$PROJECT_LINK")" != "$PROJECT" ]; then
+  ln -sfn "$PROJECT" "$PROJECT_LINK"
+  echo "Project link -> $PROJECT"
+  agent_loaded "$LAUNCHER_AGENT" && launchctl kickstart -k "$LAUNCHER_AGENT"
+  restart_backend
+elif ! is_listening $BACKEND_PORT; then
+  restart_backend
+elif ! is_healthy; then
+  # Listening but erroring (e.g. a stale process) — restart it.
+  restart_backend
+fi
+
+# Wait up to 15 seconds for it to be ready
+for i in $(seq 1 15); do
+  is_healthy && break
+  sleep 1
+done
+
+# ── Open browser ─────────────────────────────────────────────────────────────
+open "http://localhost:$BACKEND_PORT/collection"
