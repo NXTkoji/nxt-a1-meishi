@@ -237,13 +237,16 @@ def _build_person_body(card: Card) -> dict:
     if relations:
         body["relations"] = relations
 
-    # Notes — English title (if any) plus card notes.
+    # Notes — English title (if any), card notes, then the person's memo.
+    # Organization memos are deliberately not synced (app-only).
     note_parts = []
     english_titles = [pos.title_english for pos in person.positions if pos.title_english]
     if english_titles:
         note_parts.append(f"English title: {'; '.join(english_titles)}")
     if card.notes:
         note_parts.append(card.notes)
+    if card.person.notes:
+        note_parts.append(card.person.notes)
     if note_parts:
         body["biographies"] = [{"value": "\n".join(note_parts), "contentType": "TEXT_PLAIN"}]
 

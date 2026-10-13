@@ -197,6 +197,8 @@ export interface Position {
   status: string
   org_names: OrgName[]
   details: PositionDetail[]
+  /** The organization's shared memo — the same on every person at that org. */
+  org_notes?: string | null
 }
 
 export interface Person {

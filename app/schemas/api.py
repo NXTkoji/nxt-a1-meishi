@@ -222,6 +222,8 @@ class PositionOut(BaseModel):
     status: str
     org_names: List[OrgNameOut] = Field(default_factory=list)
     details: List[PositionDetailOut] = Field(default_factory=list)
+    # The organization's shared memo (Organization.notes), not per-position.
+    org_notes: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -273,6 +275,8 @@ class PersonUpdate(BaseModel):
     # Person-level fields editable after creation. birthday: "YYYY-MM-DD",
     # "--MM-DD" (year unknown), or "" to clear.
     birthday: Optional[str] = None
+    # Free-text memo; "" clears it.
+    notes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

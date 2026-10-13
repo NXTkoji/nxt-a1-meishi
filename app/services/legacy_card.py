@@ -101,6 +101,7 @@ def build_legacy_card(
         social=social,
         relations=relations,
         birthday=person.birthday or "",
+        notes=person.notes or "",
     )
 
     # Raw, unsorted, not deduped — google_contacts.py's _build_person_body

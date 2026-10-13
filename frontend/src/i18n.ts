@@ -10,6 +10,7 @@ const translations = {
     navCollection: 'コレクション',
     navScan: 'スキャン',
     navSettings: '設定',
+    navManual: 'マニュアル',
     langToggle: 'English',
 
     // ScanPage — stages
@@ -138,6 +139,11 @@ const translations = {
     swapSidesLabel: '表面に設定',
     notesLabel: 'メモ',
     notesPlaceholder: 'メモを追加…',
+    // Person page memos
+    memoLabel: 'メモ',
+    memoPlaceholder: 'メモを追加…',
+    orgMemoLabel: '組織メモ',
+    orgMemoHint: 'この組織に所属する全員で共有されます',
     addPhotoLabel: '写真追加',
     saveBtn: '保存',
     cancelBtn: '取消',
@@ -295,6 +301,7 @@ const translations = {
     navCollection: 'Collection',
     navScan: 'Scan',
     navSettings: 'Settings',
+    navManual: 'Manual',
     langToggle: '繁體中文',
 
     // ScanPage — stages
@@ -423,6 +430,11 @@ const translations = {
     swapSidesLabel: 'Promote to Front',
     notesLabel: 'Notes',
     notesPlaceholder: 'Add a note...',
+    // Person page memos
+    memoLabel: 'Memo',
+    memoPlaceholder: 'Add a memo…',
+    orgMemoLabel: 'Organization memo',
+    orgMemoHint: 'shared with everyone at this organization',
     addPhotoLabel: 'Add Photo',
     saveBtn: 'Save',
     cancelBtn: 'Cancel',
@@ -579,6 +591,7 @@ const translations = {
     navCollection: '名片庫',
     navScan: '掃描',
     navSettings: '設定',
+    navManual: '手冊',
     langToggle: '日本語',
 
     // ScanPage — stages
@@ -707,6 +720,11 @@ const translations = {
     swapSidesLabel: '設為正面',
     notesLabel: '備註',
     notesPlaceholder: '新增備註…',
+    // Person page memos
+    memoLabel: '備忘錄',
+    memoPlaceholder: '新增備忘錄…',
+    orgMemoLabel: '組織備忘錄',
+    orgMemoHint: '此組織的所有人共用',
     addPhotoLabel: '新增照片',
     saveBtn: '儲存',
     cancelBtn: '取消',

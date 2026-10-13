@@ -2,7 +2,7 @@
  * PersonEditor — inline-editable view of a Person record.
  * Used by both CardDetailPage and PersonDetailPage.
  */
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -15,6 +15,7 @@ import {
   deletePosition,
   updatePositionDetail,
   updateOrgName,
+  updateOrgNotes,
   listCountries,
 } from '../api'
 import { useLang } from '../LangContext'
@@ -99,6 +100,52 @@ export function EditableField({
       <span>{value || <span className="text-gray-300 italic">{placeholder ?? t.emptyField}</span>}</span>
       <span className="opacity-0 group-hover:opacity-60 text-xs text-blue-400">✏️</span>
     </button>
+  )
+}
+
+// ─── Memo ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Always-open multi-line memo that saves on blur when the text changed.
+ * EditableField's multiline mode is a two-row inline box and its read view
+ * collapses line breaks, which suits short values but not free-form memos.
+ */
+function MemoField({
+  label,
+  hint,
+  value,
+  onSave,
+}: {
+  label: string
+  hint?: string
+  value: string
+  onSave: (v: string) => void
+}) {
+  const { t } = useLang()
+  const [draft, setDraft] = useState(value)
+  // Follow the saved value when it changes underneath (refetch after a save).
+  useEffect(() => setDraft(value), [value])
+
+  const commit = () => {
+    const v = draft.trim()
+    if (v !== value) onSave(v)
+  }
+
+  return (
+    <div className="pt-1.5 border-t border-gray-100">
+      <div className="text-xs text-gray-400 mb-1">
+        {label}
+        {hint && <span className="ml-1 text-gray-300">— {hint}</span>}
+      </div>
+      <textarea
+        className="w-full text-sm border border-gray-200 rounded px-2 py-1 resize-y focus:outline-none focus:ring-1 focus:ring-blue-400"
+        rows={3}
+        value={draft}
+        placeholder={t.memoPlaceholder}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+      />
+    </div>
   )
 }
 
@@ -437,6 +484,12 @@ export function PersonEditor({
   const saveBirthday = (v: string) =>
     run(() => updatePerson(person.external_id, { birthday: v }))
 
+  const saveMemo = (v: string) =>
+    run(() => updatePerson(person.external_id, { notes: v }).then(() => showToast(t.savedChanges)))
+
+  const saveOrgMemo = (pos: Person['positions'][0], v: string) =>
+    run(() => updateOrgNotes(person.external_id, pos.id, v).then(() => showToast(t.savedChanges)))
+
   const saveCountryCode = (detail: ContactDetail, code: string) =>
     run(() => updateContactDetail(person.external_id, detail.id, { country_code: code || undefined }))
 
@@ -557,6 +610,9 @@ export function PersonEditor({
 
           {/* Birthday */}
           <BirthdayField value={person.birthday ?? ''} onEdit={saveBirthday} />
+
+          {/* Person memo — also sent to the Google contact's Notes */}
+          <MemoField label={t.memoLabel} value={person.notes ?? ''} onSave={saveMemo} />
         </div>
       </section>
 
@@ -602,6 +658,14 @@ export function PersonEditor({
               onMove={p => moveContact(p, 'work', pi)}
               onAdd={type => addContact(type, pi)}
               labelMap={t.contactLabels}
+            />
+
+            {/* Organization memo — shared by everyone at this organization, app-only */}
+            <MemoField
+              label={t.orgMemoLabel}
+              hint={t.orgMemoHint}
+              value={pos.org_notes ?? ''}
+              onSave={v => saveOrgMemo(pos, v)}
             />
           </div>
         </section>

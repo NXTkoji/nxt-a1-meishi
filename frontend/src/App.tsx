@@ -8,6 +8,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { CardDetailPage } from './pages/CardDetailPage'
 import { PersonDetailPage } from './pages/PersonDetailPage'
 import { ExportPage } from './pages/ExportPage'
+import { ManualPage } from './pages/ManualPage'
 
 const LAUNCHER = 'http://127.0.0.1:8001'
 const HEALTH = '/api/v1/health'
@@ -45,6 +46,7 @@ function useRoute() {
   if (path.startsWith('/cards/')) return 'card-detail'
   if (path.startsWith('/persons/')) return 'person-detail'
   if (path.startsWith('/export')) return 'export'
+  if (path.startsWith('/manual')) return 'manual'
   return 'collection'
 }
 
@@ -60,6 +62,7 @@ function Shell() {
       'card-detail': `${t.appName}`,
       'person-detail': `${t.appName}`,
       export: `${t.navExport} — ${t.appName}`,
+      manual: `${t.navManual} — ${t.appName}`,
     }
     document.title = titles[route] ?? t.appName
   }, [route, t])
@@ -67,8 +70,10 @@ function Shell() {
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="border-b border-gray-200 bg-white sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-4 flex items-center gap-6 h-12">
-          <span className="font-semibold text-gray-900 text-sm">{t.appName}</span>
+        {/* On narrow screens the links scroll sideways inside the bar instead of
+            widening the whole page; whitespace-nowrap keeps each label on one line. */}
+        <div className="max-w-4xl mx-auto px-4 flex items-center gap-4 sm:gap-6 h-12 overflow-x-auto whitespace-nowrap">
+          <span className="font-semibold text-gray-900 text-sm shrink-0">{t.appName}</span>
           <a href="/collection" className={`text-sm pb-px ${route === 'collection' || route === 'card-detail' || route === 'person-detail' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
             {t.navCollection}
           </a>
@@ -80,6 +85,9 @@ function Shell() {
           </a>
           <a href="/export" className={`text-sm pb-px ${route === 'export' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
             {t.navExport}
+          </a>
+          <a href="/manual" className={`text-sm pb-px ${route === 'manual' ? 'text-blue-600 font-medium border-b-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'}`}>
+            {t.navManual}
           </a>
           <div className="ml-auto">
             <button
@@ -96,6 +104,7 @@ function Shell() {
         {route === 'scan' ? <ScanPage />
           : route === 'settings' ? <SettingsPage />
           : route === 'export' ? <ExportPage />
+          : route === 'manual' ? <ManualPage />
           : route === 'card-detail' ? <CardDetailPage />
           : route === 'person-detail' ? <PersonDetailPage />
           : <CollectionPage />}
