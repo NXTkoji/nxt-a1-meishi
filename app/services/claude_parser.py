@@ -5,7 +5,7 @@ Features vs. original:
   - N-side support (front, back, fold-out pages, up to 6 sides)
   - Per-field confidence scores (0.0–1.0)
   - Few-shot correction injection from FieldCorrection history
-  - Adaptive thinking (claude-opus-4-6)
+  - Adaptive thinking (Opus models, e.g. claude-opus-5-5)
   - Streaming with progress callback for SSE
   - Returns ParsedCard (structured Pydantic model) instead of raw JSON
 """

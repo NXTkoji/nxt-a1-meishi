@@ -31,12 +31,6 @@ export const updateImageGroup = (
 export const abandonSession = (sid: string) =>
   del(`${BASE}/${sid}`)
 
-export const splitImage = (
-  sid: string,
-  imgId: number,
-): Promise<{ split: boolean; images: (SessionImage & { temp_card_id: string | null; side_order: number | null })[] }> =>
-  post(`${BASE}/${sid}/images/${imgId}/split`)
-
 export type SplitResult = { split: boolean; images: (SessionImage & { temp_card_id: string | null; side_order: number | null })[] }
 
 export const countCards = (

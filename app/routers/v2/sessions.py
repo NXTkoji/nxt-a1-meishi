@@ -255,64 +255,6 @@ async def rotate_image(
 
 
 # ---------------------------------------------------------------------------
-# 3c. Split multi-card image
-# ---------------------------------------------------------------------------
-
-@router.post("/{sid}/images/{img_id}/split")
-async def split_image(sid: str, img_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Detect multiple business cards in a single uploaded image and replace it
-    with individually-cropped images, one per detected card.
-
-    Returns:
-        { "split": bool, "images": [SessionImage...] }
-        split=False means only one card was found; original image is kept.
-    """
-    session = await _get_session(db, sid)
-    img = await db.scalar(
-        select(ScanSessionImage).where(
-            ScanSessionImage.id == img_id,
-            ScanSessionImage.session_id == session.id,
-        )
-    )
-    if not img:
-        raise HTTPException(404, "Image not found in this session")
-
-    try:
-        results = await card_detector.detect_and_split(sid, img.image_path, img.image_filename)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-    if len(results) == 1:
-        # Single card — nothing to split
-        return {
-            "split": False,
-            "images": [{"id": img.id, "image_filename": img.image_filename,
-                        "temp_card_id": img.temp_card_id, "side_order": img.side_order}],
-        }
-
-    # Multiple cards — create new image records and delete original
-    new_images = []
-    for rel_path, filename, _ in results:
-        new_img = ScanSessionImage(
-            session_id=session.id,
-            image_path=rel_path,
-            image_filename=filename,
-        )
-        db.add(new_img)
-        await db.flush()
-        new_images.append({
-            "id": new_img.id,
-            "image_filename": filename,
-            "temp_card_id": None,
-            "side_order": None,
-        })
-
-    await db.delete(img)
-    return {"split": True, "images": new_images}
-
-
-# ---------------------------------------------------------------------------
 # 3b. Count cards (used by manual-split flow)
 # ---------------------------------------------------------------------------
 
