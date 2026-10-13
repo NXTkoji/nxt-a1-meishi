@@ -150,7 +150,10 @@ const PERSONAL_TYPES_LIST = [
   'social_wechat', 'social_line', 'social_linkedin', 'social_other',
   'relationship', 'personal_title', 'introducer',
 ] as const
-const WORK_TYPES_LIST = ['phone_work', 'phone_fax', 'email_work', 'address_work', 'url_website'] as const
+// Must match ParsedCardEditor's work types and the backend's WORK_CONTACT_TYPES
+// (app/services/work_contact_labels.py): a type missing here is neither a
+// personal nor a work contact, so saved rows of it are hidden on this page.
+const WORK_TYPES_LIST = ['phone_work', 'phone_fax', 'email_work', 'address_work', 'url_website', 'gui_number'] as const
 
 export const PERSONAL_TYPE_SET = new Set(PERSONAL_TYPES_LIST as unknown as string[])
 export const WORK_TYPE_SET = new Set(WORK_TYPES_LIST as unknown as string[])
