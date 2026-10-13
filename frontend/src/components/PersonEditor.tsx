@@ -150,7 +150,10 @@ const PERSONAL_TYPES_LIST = [
   'social_wechat', 'social_line', 'social_linkedin', 'social_other',
   'relationship', 'personal_title', 'introducer',
 ] as const
-const WORK_TYPES_LIST = ['phone_work', 'phone_fax', 'email_work', 'address_work', 'url_website'] as const
+// Must match ParsedCardEditor's work types and the backend's WORK_CONTACT_TYPES
+// (app/services/work_contact_labels.py): a type missing here is neither a
+// personal nor a work contact, so saved rows of it are hidden on this page.
+const WORK_TYPES_LIST = ['phone_work', 'phone_fax', 'email_work', 'address_work', 'url_website', 'gui_number'] as const
 
 export const PERSONAL_TYPE_SET = new Set(PERSONAL_TYPES_LIST as unknown as string[])
 export const WORK_TYPE_SET = new Set(WORK_TYPES_LIST as unknown as string[])
@@ -457,11 +460,6 @@ export function PersonEditor({
       label: posLabel(posIdx),
     }))
 
-  // posLabel(0) is undefined, which JSON drops — and the PATCH endpoint skips
-  // absent fields, so moving a contact to Organization 1 used to leave its old
-  // "_pos:N" label in place. An empty label also means index 0 and is sent.
-  const moveLabel = (posIdx: number) => posLabel(posIdx) ?? ''
-
   const moveContact = (payload: DragPayload, targetSection: 'personal' | 'work', targetPosIdx: number) =>
     run(() => {
       if (payload.fromSection !== targetSection) {
@@ -470,11 +468,11 @@ export function PersonEditor({
         if (!newType) return Promise.resolve()
         return updateContactDetail(person.external_id, payload.detailId, {
           detail_type: newType,
-          label: moveLabel(targetPosIdx),
+          label: posLabel(targetPosIdx),
         })
       } else if (targetSection === 'work' && payload.fromPosIdx !== targetPosIdx) {
         return updateContactDetail(person.external_id, payload.detailId, {
-          label: moveLabel(targetPosIdx),
+          label: posLabel(targetPosIdx),
         })
       }
       return Promise.resolve()
