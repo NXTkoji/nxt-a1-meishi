@@ -18,8 +18,10 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-PROJECT_DIR = Path("/Users/Koji/Library/CloudStorage/GoogleDrive-koji@nxta.co/My Drive/NXT Product Development/NXT-A1 名片整理器/nxt-a1-meishi")
-PYTHON = "/Library/Frameworks/Python.framework/Versions/3.9/bin/python3"
+# Run through the ~/.nxt-a1/project symlink rather than an absolute path, so the
+# project folder can move. The .app launcher repoints the symlink on startup.
+PROJECT_DIR = Path.home() / ".nxt-a1" / "project"
+PYTHON = str(PROJECT_DIR / "venv/bin/python3")
 PID_FILE = Path("/tmp/nxt-a1-backend.pid")
 LOG_FILE = Path("/tmp/nxt-a1-backend.log")
 PORT = 8001
