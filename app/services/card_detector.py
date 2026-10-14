@@ -376,7 +376,7 @@ async def count_cards_in_image(temp_relative_path: str) -> int:
     b64 = base64.b64encode(working).decode()
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key or None)
     resp = await client.messages.create(
-        model=settings.claude_model,
+        model=settings.claude_count_model,
         max_tokens=64,
         messages=[{
             "role": "user",

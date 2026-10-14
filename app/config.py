@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
     claude_model: str = "claude-opus-5-5"
+    # Card counting only needs a single integer back, so it uses a cheaper model
+    claude_count_model: str = "claude-haiku-5-5"
 
     # Odoo (nxta.co account — primary)
     odoo_url: str = ""
