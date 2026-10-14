@@ -29,6 +29,7 @@ from app.schemas.parsed_card import (
     ParsedPositionDetail,
 )
 from app.services.image_store import temp_image_resized_b64
+from app.utils.claude import first_text
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +322,7 @@ async def parse_card_sides(
                 "content": f"Fix this invalid JSON. Return ONLY valid JSON:\n{raw}",
             }],
         )
-        raw = _extract_json(fix.content[0].text)
+        raw = _extract_json(first_text(fix))
         data = json.loads(raw)
 
     card = _build_parsed_card(data)

@@ -21,6 +21,7 @@ from PIL import Image
 
 from app.config import settings
 from app.services.image_store import read_temp_image, save_temp_image, _resize_bytes
+from app.utils.claude import first_text
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +379,8 @@ async def count_cards_in_image(temp_relative_path: str) -> int:
     resp = await client.messages.create(
         model=settings.claude_count_model,
         max_tokens=64,
+        # A one-integer answer needs no reasoning; thinking only adds cost and latency
+        thinking={"type": "disabled"},
         messages=[{
             "role": "user",
             "content": [
@@ -389,7 +392,7 @@ async def count_cards_in_image(temp_relative_path: str) -> int:
             ],
         }],
     )
-    text = resp.content[0].text.strip()
+    text = first_text(resp).strip()
     try:
         count = int("".join(c for c in text if c.isdigit()) or "1")
     except ValueError:
