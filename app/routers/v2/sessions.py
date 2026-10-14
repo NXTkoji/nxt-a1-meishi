@@ -12,6 +12,7 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -51,12 +52,18 @@ from app.schemas.api import (
     SessionCreate,
     SessionOut,
 )
+from app.schemas.parsed_card import ParsedCard
 from app.services import card_detector, contact_matcher, correction_store, image_store
 from app.services.claude_parser import stream_parse_card_sides
 from app.services.contact_sync import auto_sync_card
 from app.services.work_contact_labels import WORK_CONTACT_TYPES, pos_index, relabel
 
 logger = logging.getLogger(__name__)
+
+# How many card groups /analyze sends to Claude at once. Each call is network-bound
+# and takes several seconds, so overlapping them cuts batch time roughly by this
+# factor. Kept modest to stay well inside Anthropic API rate limits.
+ANALYZE_CONCURRENCY = 4
 
 router = APIRouter(
     prefix="/api/v2/sessions",
@@ -456,17 +463,50 @@ async def analyze_session(sid: str, db: AsyncSession = Depends(get_db)):
     corrections = await correction_store.get_few_shot_examples(db)
     few_shot_block = correction_store.format_for_prompt(corrections)
 
-    async def event_stream() -> AsyncIterator[str]:
-        for temp_card_id, images in grouped.items():
-            # Sort by side_order
-            images_sorted = sorted(images, key=lambda i: i.side_order or 0)
-            side_paths = [img.image_path for img in images_sorted]
+    # Card groups are parsed concurrently (up to ANALYZE_CONCURRENCY Claude calls in
+    # flight). Workers only talk to Claude; they push (temp_card_id, chunk, error)
+    # tuples onto a queue. The single consumer below turns them into SSE events and
+    # runs contact matching — that touches `db`, and an AsyncSession must not be used
+    # by more than one task at a time, so matching stays on this one task.
+    queue: asyncio.Queue = asyncio.Queue()
+    worker_finished = object()  # sentinel: one worker has pushed its last item
+    semaphore = asyncio.Semaphore(ANALYZE_CONCURRENCY)
 
+    async def parse_worker(temp_card_id: str, side_paths: list[str]) -> None:
+        async with semaphore:
             try:
                 async for chunk in stream_parse_card_sides(side_paths, few_shot_block):
-                    if chunk.startswith("result:"):
-                        from app.schemas.parsed_card import ParsedCard as PC
-                        parsed = PC.model_validate_json(chunk[7:])
+                    await queue.put((temp_card_id, chunk, None))
+            except Exception as exc:
+                logger.exception("Analysis failed for temp_card_id=%s", temp_card_id)
+                await queue.put((temp_card_id, None, exc))
+            finally:
+                await queue.put((temp_card_id, worker_finished, None))
+
+    async def event_stream() -> AsyncIterator[str]:
+        workers = []
+        for temp_card_id, images in grouped.items():
+            images_sorted = sorted(images, key=lambda i: i.side_order or 0)
+            side_paths = [img.image_path for img in images_sorted]
+            workers.append(asyncio.create_task(parse_worker(temp_card_id, side_paths)))
+
+        try:
+            remaining = len(workers)
+            while remaining:
+                temp_card_id, chunk, exc = await queue.get()
+                if chunk is worker_finished:
+                    remaining -= 1
+                    continue
+
+                if exc is not None:
+                    event = AnalysisProgress(
+                        type="error",
+                        temp_card_id=temp_card_id,
+                        error=str(exc),
+                    )
+                elif chunk.startswith("result:"):
+                    try:
+                        parsed = ParsedCard.model_validate_json(chunk[7:])
                         match = await contact_matcher.find_match(db, parsed)
                         event = AnalysisProgress(
                             type="result",
@@ -474,24 +514,27 @@ async def analyze_session(sid: str, db: AsyncSession = Depends(get_db)):
                             parsed=parsed,
                             match=match,
                         )
-                        yield f"data: {event.model_dump_json()}\n\n"
-                    else:
+                    except Exception as match_exc:
+                        logger.exception("Matching failed for temp_card_id=%s", temp_card_id)
                         event = AnalysisProgress(
-                            type="progress",
+                            type="error",
                             temp_card_id=temp_card_id,
-                            message=chunk,
+                            error=str(match_exc),
                         )
-                        yield f"data: {event.model_dump_json()}\n\n"
-            except Exception as exc:
-                logger.exception("Analysis failed for temp_card_id=%s", temp_card_id)
-                event = AnalysisProgress(
-                    type="error",
-                    temp_card_id=temp_card_id,
-                    error=str(exc),
-                )
+                else:
+                    event = AnalysisProgress(
+                        type="progress",
+                        temp_card_id=temp_card_id,
+                        message=chunk,
+                    )
                 yield f"data: {event.model_dump_json()}\n\n"
 
-        yield f"data: {AnalysisProgress(type='done').model_dump_json()}\n\n"
+            yield f"data: {AnalysisProgress(type='done').model_dump_json()}\n\n"
+        finally:
+            # Client disconnected (or something above raised): stop paying for
+            # Claude calls nobody will read.
+            for task in workers:
+                task.cancel()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
