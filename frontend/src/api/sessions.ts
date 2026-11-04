@@ -58,11 +58,13 @@ export const detectCorners = (
   imgId: number,
   seed: Point,
   existingPolygons: Point[][] = [],
+  bgPoint: Point | null = null, // a click on the table/background, if the user picked one
 ): Promise<DetectCornersResult> =>
   post(`${BASE}/${sid}/images/${imgId}/detect-corners`, {
     x: seed.x,
     y: seed.y,
     existing_polygons: existingPolygons,
+    bg_point: bgPoint,
   })
 
 export const rotateImage = (

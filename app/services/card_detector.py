@@ -57,13 +57,20 @@ def _sort_quad_points(pts: np.ndarray) -> np.ndarray:
 
 # ── Seed-based corner detection ───────────────────────────────────────────────
 #
-# Two methods, tried in order:
-#   1. Background-colour segmentation — models the table colour from the
-#      photo's border and treats everything sufficiently different as "card".
+# Methods, tried in order (each result must also pass the overlap check):
+#   A. Picked-background classifier — only when the user clicked the table.
+#      Each pixel is "card" if its colour is nearer the tapped card's paper
+#      than the picked table colour. Works when the photo's border is NOT the
+#      table (cards on an envelope/mat lying on a floor), where B fails.
+#   B. Border-modelled background — models the table colour from the photo's
+#      border and treats everything sufficiently different as "card".
 #      Robust to text/logos inside the card, textured tables (wood, cutting
 #      mats) and shadow gradients.
-#   2. Canny edges + contours (the original method) — fallback for cases the
-#      colour method can't separate: card colour ≈ table colour, or cards
+#   C. Seed-colour region — "card" = pixels close to the tapped card's paper
+#      colour. No background model needed; catches B's failure case when the
+#      user hasn't picked a background.
+#   D. Canny edges + contours (the original method) — last resort for cases
+#      the colour methods can't separate: card colour ≈ table colour, or cards
 #      touching each other with no outline yet to separate them.
 
 BG_BORDER_FRAC = 0.03       # width of the border band used to model the table
@@ -71,17 +78,43 @@ BG_MIN_THRESH = 10.0        # minimum Lab distance (≈ ΔE) to count as "not ta
 BG_SPREAD_FACTOR = 1.6      # threshold = factor × 90th-pct border residual
 BG_CARD_ASPECT = (1.2, 2.4) # long/short side ratio accepted as a business card
 BG_MIN_FILL = 0.85          # blob area / quad area — rejects irregular blobs
+BG_MAX_FILL = 1.08          # blob much bigger than its quad = not one card
+
+PATCH_FRAC = 0.012          # half-size of the colour sample patch, × min(w, h)
+L_WEIGHT = 0.5              # down-weight lightness: shading changes L, not hue
+SEED_COLOUR_THRESH = 22.0   # method C: max weighted ΔE from the card's paper
+PICKED_MAX_DIST = 33.0      # method A: looser, since the table test does most of the work
+MAX_OVERLAP = 0.05          # max fraction of a new quad covering existing cards
+TRIM_FRAC = 0.045           # strips narrower than this × min(w, h) are cut off a card blob
 
 
-def _fallback_rect(seed_x: float, seed_y: float) -> list[dict]:
-    """Axis-aligned rectangle centred on the seed, standard ~1.75:1 card aspect."""
+def _fallback_rect(
+    seed_x: float,
+    seed_y: float,
+    existing_px: list[np.ndarray],
+    img_w: int,
+    img_h: int,
+) -> list[dict]:
+    """
+    Axis-aligned rectangle centred on the seed, standard ~1.75:1 card aspect.
+
+    Shrunk step by step until it no longer overlaps an already-outlined card,
+    so the user never gets a guess that sits on top of a neighbour.
+    """
     card_w = 0.35
-    card_h = card_w / 1.75
-    x1 = max(0.0, seed_x - card_w / 2)
-    y1 = max(0.0, seed_y - card_h / 2)
-    x2 = min(1.0, seed_x + card_w / 2)
-    y2 = min(1.0, seed_y + card_h / 2)
-    return [{"x": x1, "y": y1}, {"x": x2, "y": y1}, {"x": x2, "y": y2}, {"x": x1, "y": y2}]
+    rect: list[dict] = []
+    for _ in range(12):
+        card_h = card_w / 1.75
+        x1 = max(0.0, seed_x - card_w / 2)
+        y1 = max(0.0, seed_y - card_h / 2)
+        x2 = min(1.0, seed_x + card_w / 2)
+        y2 = min(1.0, seed_y + card_h / 2)
+        rect = [{"x": x1, "y": y1}, {"x": x2, "y": y1}, {"x": x2, "y": y2}, {"x": x1, "y": y2}]
+        quad = np.array([[p["x"] * img_w, p["y"] * img_h] for p in rect], dtype=np.float32)
+        if _overlap_fraction(quad, existing_px) <= MAX_OVERLAP:
+            break
+        card_w *= 0.85
+    return rect
 
 
 def _polygons_to_px(polygons: list[list[dict]], img_w: int, img_h: int) -> list[np.ndarray]:
@@ -92,31 +125,34 @@ def _polygons_to_px(polygons: list[list[dict]], img_w: int, img_h: int) -> list[
     ]
 
 
-def _fit_table_surface(lab: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _fit_table_surface(lab: np.ndarray, sample: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
     """
-    Model the table colour across the whole image from the border band only.
+    Model the table colour across the whole image from known-table pixels.
 
-    Fits a quadratic surface per Lab channel to the border pixels. Lighting
-    falloff and phone shadows are smooth, so this predicts the table colour
-    under the cards without ever looking at them.
+    Fits a quadratic surface per Lab channel to the `sample` pixels (default:
+    the photo's border band). Lighting falloff and phone shadows are smooth,
+    so this predicts the table colour under the cards without ever looking
+    at them.
 
-    Returns (surface HxWx3, residual distance of each border pixel to it).
+    Returns (surface HxWx3, residual distance of each sample pixel to it).
     The residuals measure how textured/noisy the table is.
     """
     h, w = lab.shape[:2]
-    b = max(2, int(min(h, w) * BG_BORDER_FRAC))
-    border = np.zeros((h, w), bool)
-    border[:b] = border[-b:] = True
-    border[:, :b] = border[:, -b:] = True
+    if sample is None:
+        b = max(2, int(min(h, w) * BG_BORDER_FRAC))
+        sample = np.zeros((h, w), bool)
+        sample[:b] = sample[-b:] = True
+        sample[:, :b] = sample[:, -b:] = True
 
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     xn, yn = xx / w - 0.5, yy / h - 0.5
     basis = np.stack([np.ones_like(xn), xn, yn, xn * xn, yn * yn, xn * yn], axis=-1)
 
-    # Subsample border pixels — thousands are plenty for 6 coefficients
-    coef, *_ = np.linalg.lstsq(basis[border][::7], lab[border][::7], rcond=None)
+    # Subsample — thousands of pixels are plenty for 6 coefficients
+    step = max(1, int(np.count_nonzero(sample) // 20000))
+    coef, *_ = np.linalg.lstsq(basis[sample][::step], lab[sample][::step], rcond=None)
     surface = basis @ coef
-    residual = np.linalg.norm(lab[border] - surface[border], axis=1)
+    residual = np.linalg.norm(lab[sample] - surface[sample], axis=1)
     return surface, residual
 
 
@@ -131,32 +167,106 @@ def _quad_from_blob(contour: np.ndarray) -> np.ndarray:
     return cv2.boxPoints(cv2.minAreaRect(contour)).astype(np.float32)
 
 
-def _detect_quad_by_background(
-    img_bgr: np.ndarray,
+def _to_lab(img_bgr: np.ndarray) -> np.ndarray:
+    """Blurred float Lab image with L rescaled to 0..100, so distances ≈ ΔE."""
+    lab = cv2.cvtColor(cv2.GaussianBlur(img_bgr, (5, 5), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab[..., 0] *= 100.0 / 255.0
+    return lab
+
+
+def _sample_colour(lab: np.ndarray, px: int, py: int) -> np.ndarray:
+    """
+    Median Lab colour of a small patch around (px, py).
+
+    Median, not mean: a tap on a card usually lands near text, and the paper
+    still dominates the patch.
+    """
+    h, w = lab.shape[:2]
+    r = max(3, int(min(h, w) * PATCH_FRAC))
+    patch = lab[max(0, py - r):py + r + 1, max(0, px - r):px + r + 1]
+    return np.median(patch.reshape(-1, 3), axis=0)
+
+
+def _weighted_dist(lab: np.ndarray, colour: np.ndarray) -> np.ndarray:
+    """Per-pixel Lab distance to `colour`, with lightness down-weighted."""
+    diff = lab - colour
+    diff[..., 0] *= L_WEIGHT
+    return np.linalg.norm(diff, axis=2)
+
+
+def _overlap_fraction(quad: np.ndarray, existing_px: list[np.ndarray]) -> float:
+    """
+    Worst overlap between `quad` and any existing outline, as a fraction of
+    the smaller of the two shapes.
+
+    Using the smaller area means a quad that swallows a whole existing card
+    scores 1.0 even when that card is only a sliver of the quad.
+    """
+    if not existing_px:
+        return 0.0
+    # Outlines can be dragged into concave shapes — use hulls so
+    # intersectConvexConvex stays valid
+    q = cv2.convexHull(quad.astype(np.float32))
+    q_area = cv2.contourArea(q)
+    if q_area <= 0:
+        return 0.0
+    worst = 0.0
+    for pts in existing_px:
+        hull = cv2.convexHull(pts.astype(np.float32))
+        inter, _ = cv2.intersectConvexConvex(q, hull)
+        smaller = min(q_area, cv2.contourArea(hull))
+        if smaller > 0:
+            worst = max(worst, inter / smaller)
+    return worst
+
+
+def _trim_attachments(
+    contour: np.ndarray,
+    img_w: int,
+    img_h: int,
+    seed_px: int,
+    seed_py: int,
+) -> np.ndarray | None:
+    """
+    Cut thin strips off a card blob — a sliver of floor along the edge of the
+    mat, or a neighbour joined by a narrow bridge.
+
+    A large opening (TRIM_FRAC of the frame) erases anything narrower than
+    the kernel while restoring the card itself, which is far wider. Returns
+    the largest remaining piece nearest the seed, or None if nothing is left.
+    """
+    blob = np.zeros((img_h, img_w), np.uint8)
+    cv2.drawContours(blob, [contour], -1, 255, cv2.FILLED)
+    k = max(5, int(min(img_h, img_w) * TRIM_FRAC)) | 1
+    blob = cv2.morphologyEx(blob, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)))
+    pieces, _ = cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not pieces:
+        return None
+    return max(pieces, key=lambda c: cv2.pointPolygonTest(c, (float(seed_px), float(seed_py)), True))
+
+
+def _quad_from_mask(
+    fg: np.ndarray,
     seed_px: int,
     seed_py: int,
     existing_polygons: list[list[dict]] | None,
+    method: str,
+    close: bool = True,
 ) -> np.ndarray | None:
     """
-    Primary method: segment "not table" pixels by colour, take the blob under
-    the seed, fit 4 corners.
+    Shared tail of the colour methods: clean up a "card pixel" mask, take the
+    blob under the seed, fit 4 corners and sanity-check them.
+
+    `close` seals small notches but can also bridge a card to a light strip
+    of floor across a thin shadow line; a classifier with a clean mask can
+    skip it (the quad fit uses the blob's convex hull anyway).
 
     Returns a 4x2 float32 pixel quad, or None when the result isn't a
-    plausible single card (caller then falls back to the edge method).
+    plausible single card.
     """
-    img_h, img_w = img_bgr.shape[:2]
-    lab = cv2.cvtColor(cv2.GaussianBlur(img_bgr, (5, 5), 0), cv2.COLOR_BGR2LAB).astype(np.float32)
-    lab[..., 0] *= 100.0 / 255.0  # OpenCV 8-bit L is 0..255; rescale so units ≈ ΔE
+    img_h, img_w = fg.shape[:2]
 
-    # 1. Table model + a threshold that scales with how textured the table is
-    surface, residual = _fit_table_surface(lab)
-    thresh = max(BG_MIN_THRESH, float(np.percentile(residual, 90)) * BG_SPREAD_FACTOR)
-
-    # 2. Foreground = far from the modelled table colour
-    dist = np.linalg.norm(lab - surface, axis=2)
-    fg = (dist > thresh).astype(np.uint8) * 255
-
-    # 3. Blank out cards the user already outlined, plus a thin line along
+    # 1. Blank out cards the user already outlined, plus a thin line along
     #    their outline, so a touching neighbour becomes a separate blob
     if existing_polygons:
         line_w = max(3, int(min(img_h, img_w) * 0.004))
@@ -164,15 +274,16 @@ def _detect_quad_by_background(
             cv2.fillPoly(fg, [pts], 0)
             cv2.polylines(fg, [pts], True, 0, thickness=line_w)
 
-    # 4. Open: removes grid lines / wood grain specks and thin bridges.
+    # 2. Open: removes grid lines / wood grain specks and thin bridges.
     #    Close: seals small notches along the card edge.
     k = max(3, int(min(img_h, img_w) * 0.008)) | 1
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
     fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel)
-    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel)
+    if close:
+        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel)
     contours, _ = cv2.findContours(fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 5. Blob containing the seed, or the nearest one within 3% of the frame
+    # 3. Blob containing the seed, or the nearest one within 3% of the frame
     #    (a tap right on the card edge can land just outside the blob)
     best, best_dist = None, -min(img_h, img_w) * 0.03
     for c in contours:
@@ -182,11 +293,17 @@ def _detect_quad_by_background(
         if d > best_dist:
             best, best_dist = c, d
     if best is None:
-        logger.info("detect_corners bg: no blob near seed (thresh=%.1f)", thresh)
+        logger.info("detect_corners %s: no blob near seed", method)
+        return None
+    best = _trim_attachments(best, img_w, img_h, seed_px, seed_py)
+    if best is None:
+        logger.info("detect_corners %s: blob vanished after trimming", method)
         return None
 
-    # 6. Sanity: card-sized, card-shaped, and the quad must fit the blob well.
+    # 4. Sanity: card-sized, card-shaped, and the quad must fit the blob well.
     #    Merged cards, partial blobs and table texture fail at least one check.
+    #    fill > 1 means the blob spills well past its own quad — e.g. a whole
+    #    envelope of cards read as one shape.
     quad = _quad_from_blob(best)
     quad_area = cv2.contourArea(quad)
     (_, _), (rw, rh), _ = cv2.minAreaRect(quad)
@@ -195,13 +312,116 @@ def _detect_quad_by_background(
     ok = (
         img_w * img_h * 0.01 <= quad_area <= img_w * img_h * 0.85
         and BG_CARD_ASPECT[0] <= aspect <= BG_CARD_ASPECT[1]
-        and fill >= BG_MIN_FILL
+        and BG_MIN_FILL <= fill <= BG_MAX_FILL
     )
     logger.info(
-        "detect_corners bg: thresh=%.1f area=%.3f aspect=%.2f fill=%.2f → %s",
-        thresh, quad_area / (img_w * img_h), aspect, fill, "accepted" if ok else "rejected",
+        "detect_corners %s: area=%.3f aspect=%.2f fill=%.2f → %s",
+        method, quad_area / (img_w * img_h), aspect, fill, "accepted" if ok else "rejected",
     )
     return quad if ok else None
+
+
+def _detect_quad_by_picked_bg(
+    lab: np.ndarray,
+    seed_px: int,
+    seed_py: int,
+    bg_px: int,
+    bg_py: int,
+    existing_polygons: list[list[dict]] | None,
+) -> np.ndarray | None:
+    """
+    Method A: two-colour classifier from the tapped card and the picked table.
+
+    1. Grow the table region from the picked point (pixels nearer the picked
+       colour than the card colour, connected to the click).
+    2. Fit a smooth colour surface to that region, so a lighting gradient
+       across the table doesn't push its far side over to "card".
+    3. A pixel is "card" when it is nearer the card's paper than the fitted
+       table AND inside the table region's convex hull. The hull keeps out a
+       floor or desk beyond the mat/envelope that happens to match the card.
+    """
+    card = _sample_colour(lab, seed_px, seed_py)
+    picked = _sample_colour(lab, bg_px, bg_py)
+    # A card that is the table's colour can't be separated this way
+    if float(np.linalg.norm((card - picked) * [L_WEIGHT, 1, 1])) < BG_MIN_THRESH:
+        logger.info("detect_corners picked-bg: card colour ≈ table colour, skipping")
+        return None
+
+    d_card = _weighted_dist(lab, card)
+    region = _table_region(_weighted_dist(lab, picked) < d_card, bg_px, bg_py)
+    if region is None:
+        logger.info("detect_corners picked-bg: picked region too small")
+        return None
+
+    surface, _ = _fit_table_surface(lab, region)
+    d_table = _weighted_dist_map(lab, surface)
+    fg = (d_card < d_table) & (d_card < PICKED_MAX_DIST)
+
+    # Second pass with the fitted table: a cleaner region gives a tighter hull
+    region = _table_region(~fg, bg_px, bg_py) if region is not None else None
+    if region is not None:
+        hull = cv2.convexHull(np.argwhere(region)[:, ::-1].astype(np.int32))
+        inside = np.zeros(fg.shape, np.uint8)
+        cv2.fillConvexPoly(inside, hull, 1)
+        fg &= inside.astype(bool)
+    return _quad_from_mask(fg.astype(np.uint8) * 255, seed_px, seed_py, existing_polygons, "picked-bg", close=False)
+
+
+def _weighted_dist_map(lab: np.ndarray, surface: np.ndarray) -> np.ndarray:
+    """Like _weighted_dist, against a per-pixel colour surface."""
+    diff = lab - surface
+    diff[..., 0] *= L_WEIGHT
+    return np.linalg.norm(diff, axis=2)
+
+
+def _table_region(table: np.ndarray, bg_px: int, bg_py: int) -> np.ndarray | None:
+    """
+    Connected part of the boolean `table` mask that contains the picked point,
+    after an opening that cuts thin bridges (card edges, text strokes).
+
+    Returns None when it is too small to trust — e.g. the click landed in a
+    narrow gap between cards.
+    """
+    h, w = table.shape
+    k = max(3, int(min(h, w) * 0.008)) | 1
+    mask = cv2.morphologyEx(table.astype(np.uint8), cv2.MORPH_OPEN,
+                            cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)))
+    _, labels = cv2.connectedComponents(mask)
+    label = labels[bg_py, bg_px]
+    if label == 0:
+        return None
+    region = labels == label
+    return region if np.count_nonzero(region) >= h * w * 0.05 else None
+
+
+def _detect_quad_by_background(
+    lab: np.ndarray,
+    seed_px: int,
+    seed_py: int,
+    existing_polygons: list[list[dict]] | None,
+) -> np.ndarray | None:
+    """Method B: segment "not table" pixels against a border-fitted table model."""
+    # Table model + a threshold that scales with how textured the table is
+    surface, residual = _fit_table_surface(lab)
+    thresh = max(BG_MIN_THRESH, float(np.percentile(residual, 90)) * BG_SPREAD_FACTOR)
+    logger.info("detect_corners border-bg: thresh=%.1f", thresh)
+
+    # Foreground = far from the modelled table colour
+    dist = np.linalg.norm(lab - surface, axis=2)
+    fg = (dist > thresh).astype(np.uint8) * 255
+    return _quad_from_mask(fg, seed_px, seed_py, existing_polygons, "border-bg")
+
+
+def _detect_quad_by_seed_colour(
+    lab: np.ndarray,
+    seed_px: int,
+    seed_py: int,
+    existing_polygons: list[list[dict]] | None,
+) -> np.ndarray | None:
+    """Method C: "card" = pixels close to the tapped card's paper colour."""
+    card = _sample_colour(lab, seed_px, seed_py)
+    fg = (_weighted_dist(lab, card) < SEED_COLOUR_THRESH).astype(np.uint8) * 255
+    return _quad_from_mask(fg, seed_px, seed_py, existing_polygons, "seed-colour")
 
 
 def _detect_quad_by_edges(
@@ -303,13 +523,15 @@ def detect_corners_from_seed(
     seed_x: float,
     seed_y: float,
     existing_polygons: list[list[dict]] | None = None,
+    bg_point: dict | None = None,
 ) -> tuple[list[dict], float]:
     """
     Find the 4 corners of the business card nearest the seed point.
 
-    Tries background-colour segmentation first, then Canny edge contours.
-    If neither finds a card-shaped quad, returns a default rectangle
-    centered on the seed with confidence 0.0.
+    Tries the colour methods, then Canny edge contours (see the method list
+    above). Quads overlapping an already-outlined card are rejected. If
+    nothing fits, returns a default rectangle centered on the seed with
+    confidence 0.0.
 
     Args:
         temp_relative_path: Relative path under TEMP_DIR (passed to read_temp_image).
@@ -317,6 +539,8 @@ def detect_corners_from_seed(
         seed_y: Normalized [0, 1] y coordinate of the tap point.
         existing_polygons: Cards the user already outlined (normalized); masked
             out so they don't merge with the card being detected.
+        bg_point: Normalized {"x", "y"} the user clicked on the table/background,
+            or None. Enables the picked-background method.
 
     Returns:
         (corners, confidence)
@@ -342,18 +566,44 @@ def detect_corners_from_seed(
     seed_py = int(max(0, min(img_h - 1, seed_y * img_h)))
     img_bgr = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
-    method = "background"
-    quad = _detect_quad_by_background(img_bgr, seed_px, seed_py, existing_polygons)
-    if quad is None:
-        method = "edges"
-        quad = _detect_quad_by_edges(img_bgr, seed_px, seed_py, existing_polygons)
+    lab = _to_lab(img_bgr)
+    existing_px = _polygons_to_px(existing_polygons or [], img_w, img_h)
+
+    # Ordered candidates — see the method list above _fit_table_surface
+    methods: list[tuple[str, callable]] = []
+    if bg_point is not None:
+        bg_px = int(max(0, min(img_w - 1, bg_point["x"] * img_w)))
+        bg_py = int(max(0, min(img_h - 1, bg_point["y"] * img_h)))
+        methods.append(("picked-bg", lambda: _detect_quad_by_picked_bg(
+            lab, seed_px, seed_py, bg_px, bg_py, existing_polygons)))
+    else:
+        methods.append(("border-bg", lambda: _detect_quad_by_background(
+            lab, seed_px, seed_py, existing_polygons)))
+    methods.append(("seed-colour", lambda: _detect_quad_by_seed_colour(
+        lab, seed_px, seed_py, existing_polygons)))
+    methods.append(("edges", lambda: _detect_quad_by_edges(
+        img_bgr, seed_px, seed_py, existing_polygons)))
+
+    # First quad that doesn't overlap an already-outlined card wins
+    quad, method = None, ""
+    for name, run in methods:
+        candidate = run()
+        if candidate is None:
+            continue
+        overlap = _overlap_fraction(candidate, existing_px)
+        if overlap > MAX_OVERLAP:
+            logger.info("detect_corners %s: overlaps an existing card by %.0f%% → rejected",
+                        name, overlap * 100)
+            continue
+        quad, method = candidate, name
+        break
 
     if quad is None:
         logger.info(
             "detect_corners_from_seed: no quad found for seed=(%.3f,%.3f) → fallback rectangle",
             seed_x, seed_y,
         )
-        return _fallback_rect(seed_x, seed_y), 0.0
+        return _fallback_rect(seed_x, seed_y, existing_px, img_w, img_h), 0.0
 
     sorted_pts = _sort_quad_points(quad)
     corners = [{"x": float(p[0] / img_w), "y": float(p[1] / img_h)} for p in sorted_pts]

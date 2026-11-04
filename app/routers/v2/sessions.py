@@ -298,6 +298,7 @@ class DetectCornersRequest(BaseModel):
     x: float  # normalized [0, 1] tap x coordinate
     y: float  # normalized [0, 1] tap y coordinate
     existing_polygons: list[list[_Point]] = []  # already-defined card outlines to mask out
+    bg_point: _Point | None = None  # where the user clicked the table/background, if they did
 
 
 class DetectCornersResponse(BaseModel):
@@ -333,8 +334,9 @@ async def detect_corners(
         [{"x": p.x, "y": p.y} for p in poly]
         for poly in body.existing_polygons
     ]
+    bg = {"x": body.bg_point.x, "y": body.bg_point.y} if body.bg_point else None
     corners, confidence = card_detector.detect_corners_from_seed(
-        img.image_path, body.x, body.y, existing
+        img.image_path, body.x, body.y, existing, bg
     )
     return DetectCornersResponse(
         corners=[_Point(x=c["x"], y=c["y"]) for c in corners],

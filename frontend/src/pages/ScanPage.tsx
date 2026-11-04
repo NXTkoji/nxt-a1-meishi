@@ -893,8 +893,8 @@ export function ScanPage() {
         cardCount={outlineTarget.count}
         onComplete={handleOutlineComplete}
         onCancel={() => setOutlineTarget(null)}
-        onDetectCorners={(seed, existing) =>
-          detectCorners(session.external_id, outlineTarget.img.id, seed, existing)
+        onDetectCorners={(seed, existing, bgPoint) =>
+          detectCorners(session.external_id, outlineTarget.img.id, seed, existing, bgPoint)
         }
       />
     )}
