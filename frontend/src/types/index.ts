@@ -320,6 +320,9 @@ export interface IssueRequest {
   sold_via_org_ext_id?: string
   chosen_org_ext_id?: string
   create_new?: boolean
+  // Card whose person is exported under the company on approval (unless include_person is false)
+  card_external_id?: string
+  include_person?: boolean
   legacy_codes?: string
 }
 

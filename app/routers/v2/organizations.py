@@ -26,9 +26,15 @@ async def list_organizations(
     q: Optional[str] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
+    # Only organizations with a Customer ID (for the "sold via" picker); not paged,
+    # so an old reseller is never cut off by the limit
+    issued: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
-    if q:
+    if issued:
+        stmt = (select(Organization).where(Organization.customer_code.is_not(None))
+                .order_by(Organization.customer_code.asc()))
+    elif q:
         matched_ids = (await db.execute(
             select(OrganizationName.org_id)
             .where(OrganizationName.is_current == True, OrganizationName.name.ilike(f"%{q}%"))  # noqa: E712
@@ -63,9 +69,15 @@ async def get_organization(org_ext_id: str, db: AsyncSession = Depends(get_db)):
     names = (await db.execute(
         select(OrganizationName).where(OrganizationName.org_id == org.id).order_by(OrganizationName.id)
     )).scalars().all()
+    # The NXT customer panel reads the switch and the issued codes from here
     return OrgOut(
         id=org.id,
         external_id=org.external_id,
         created_at=org.created_at,
-        names=[OrgNameOut(language=n.language, name=n.name, is_current=n.is_current) for n in names],
+        names=[OrgNameOut.model_validate(n) for n in names],
+        is_nxt_customer=org.is_nxt_customer,
+        tax_id=org.tax_id,
+        customer_code=org.customer_code,
+        drive_url=org.drive_url,
+        legacy_codes=org.legacy_codes,
     )

@@ -559,3 +559,33 @@ def test_api_nxt_customer_switch(api):
     env.commit(org_ext_id=ext, customer_name=None)
     r = client.put(f"/api/v2/organizations/{ext}/nxt-customer", json={"enabled": False})
     assert r.status_code == 409 and "C0200" in r.json()["detail"]
+
+
+def test_api_get_organization_returns_names_and_nxt_fields(api):
+    """The NXT customer panel reads its state from GET /organizations/{id}."""
+    client, env = api
+    org_id = env.run(lambda db: _make_org(db, "頂期"))
+    ext = env.run(lambda db: db.get(Organization, org_id)).external_id
+
+    before = client.get(f"/api/v2/organizations/{ext}")
+    assert before.status_code == 200
+    assert before.json()["names"][0]["name"] == "頂期" and before.json()["is_nxt_customer"] is False
+
+    client.put(f"/api/v2/organizations/{ext}/nxt-customer", json={"enabled": True})
+    assert client.get(f"/api/v2/organizations/{ext}").json()["is_nxt_customer"] is True
+
+    env.commit(org_ext_id=ext, customer_name=None, legacy_codes="DS176")
+    after = client.get(f"/api/v2/organizations/{ext}").json()
+    assert after["customer_code"] == "C0200" and after["tax_id"] == TAX
+    assert after["legacy_codes"] == "DS176"
+    assert after["drive_url"].startswith("https://drive.google.com/drive/folders/")
+
+
+def test_api_list_only_issued_organizations(api):
+    """The "sold via" picker must find every issued customer, not just the newest page."""
+    client, env = api
+    issued = env.run(lambda db: _make_org(db, "經銷商", tax_id=TAX, code="C0200"))
+    env.run(lambda db: _make_org(db, "路人公司"))
+    listing = client.get("/api/v2/organizations?issued=true").json()
+    assert [o["id"] for o in listing] == [issued]
+    assert len(client.get("/api/v2/organizations").json()) == 2

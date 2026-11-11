@@ -155,13 +155,18 @@ class DriveFolders:
 
     async def find_folders_by_code(self, code: str) -> List[FolderRef]:
         """Folders anywhere in this Drive whose name is `code` or starts with "<code> "
-        (an old customer or site folder such as "DS176 甜蜜蜜台北店")."""
+        (an old customer or site folder such as "DS176 甜蜜蜜台北店").
+
+        Only folders this account owns count. The search also sees folders shared from
+        other accounts (e.g. "NXT Customers Old"); those must never be moved by the app
+        and must not make an owned folder look ambiguous, so they are treated as absent
+        (the caller then warns that the folder has to be moved by hand)."""
         found: List[FolderRef] = []
         page_token: Optional[str] = None
         while True:
             params = {
                 "q": f"name contains '{_q(code)}' and mimeType = '{FOLDER_MIME}' and trashed = false",
-                "fields": "nextPageToken, files(id, name, parents)",
+                "fields": "nextPageToken, files(id, name, parents, ownedByMe)",
                 "pageSize": 100,
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true",
@@ -170,7 +175,7 @@ class DriveFolders:
                 params["pageToken"] = page_token
             data = await self._request("GET", "/files", params=params)
             found.extend(FolderRef(f["id"], f["name"], tuple(f.get("parents", [])))
-                         for f in data.get("files", []))
+                         for f in data.get("files", []) if f.get("ownedByMe"))
             page_token = data.get("nextPageToken")
             if not page_token:
                 break

@@ -189,6 +189,7 @@ export function CardDetailPage() {
       {person && (
         <PersonEditor
           person={person}
+          cardExtId={card.external_id}
           onUpdated={() => qc.invalidateQueries({ queryKey: ['person', card.person_external_id] })}
         />
       )}

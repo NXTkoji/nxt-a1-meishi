@@ -12,7 +12,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   commitProject,
   getOrganization,
-  listOrganizations,
+  listIssuedOrganizations,
   proposeProject,
   retryIssueRun,
   setNxtCustomer,
@@ -58,7 +58,12 @@ function FolderLink({ url, label }: { url?: string | null; label: string }) {
   )
 }
 
-export function NxtCustomerPanel({ orgExtId, orgName }: { orgExtId: string; orgName: string }) {
+export function NxtCustomerPanel({ orgExtId, orgName, cardExtId }: {
+  orgExtId: string
+  orgName: string
+  /** Card whose person is exported under the company on approval; absent = no person step */
+  cardExtId?: string
+}) {
   const { t } = useLang()
   const { showToast } = useToast()
   const qc = useQueryClient()
@@ -76,6 +81,7 @@ export function NxtCustomerPanel({ orgExtId, orgName }: { orgExtId: string; orgN
   const [roles, setRoles] = useState<string[]>([])
   const [soldVia, setSoldVia] = useState('')
   const [legacy, setLegacy] = useState('')
+  const [includePerson, setIncludePerson] = useState(true)
 
   const [proposal, setProposal] = useState<IssueProposal | null>(null)
   const [choice, setChoice] = useState<string>('')        // candidate org_ext_id, or 'new'
@@ -86,10 +92,10 @@ export function NxtCustomerPanel({ orgExtId, orgName }: { orgExtId: string; orgN
   // Only needed for the "sold via" picker; lists customers that already have a Customer ID
   const { data: orgs } = useQuery({
     queryKey: ['orgs-issued'],
-    queryFn: listOrganizations,
+    queryFn: listIssuedOrganizations,
     enabled: formOpen,
   })
-  const resellers = (orgs ?? []).filter(o => o.customer_code && o.external_id !== orgExtId)
+  const resellers = (orgs ?? []).filter(o => o.external_id !== orgExtId)
 
   if (isError) return <p className="text-xs text-red-500">{t.nxtLoadError}</p>
   if (!org) return null
@@ -119,6 +125,8 @@ export function NxtCustomerPanel({ orgExtId, orgName }: { orgExtId: string; orgN
     roles,
     sold_via_org_ext_id: soldVia || undefined,
     legacy_codes: legacy.trim() || undefined,
+    // Export the card's person under the company after the company step
+    ...(cardExtId ? { card_external_id: cardExtId, include_person: includePerson } : {}),
     // The user's pick among fuzzy candidates, when the proposal asked for one
     ...(choice === 'new' ? { create_new: true } : choice ? { chosen_org_ext_id: choice } : {}),
   })
@@ -258,6 +266,15 @@ export function NxtCustomerPanel({ orgExtId, orgName }: { orgExtId: string; orgN
                 <input className={inputCls} value={legacy} placeholder={org.legacy_codes ?? 'DS176'}
                   onChange={e => { setLegacy(e.target.value); setProposal(null) }} />
               </Field>
+
+              {/* Changes what approval does, so it clears the review like every other field */}
+              {cardExtId && (
+                <label className="flex items-center gap-1.5 text-xs text-gray-700">
+                  <input type="checkbox" checked={includePerson}
+                    onChange={e => { setIncludePerson(e.target.checked); setProposal(null) }} />
+                  {t.nxtIncludePerson}
+                </label>
+              )}
 
               <div className="flex gap-2">
                 <button className={btnPrimary} disabled={busy || !site.trim()} onClick={review}>

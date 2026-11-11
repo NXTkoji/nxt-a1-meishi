@@ -20,9 +20,11 @@ class FakeDrive:
         self.fail_next: list[int] = []   # status codes to return before succeeding
         self.requests = 0
 
-    def add(self, name, parent):
+    def add(self, name, parent, owned=True):
+        # owned=False: a folder shared from another Google account (e.g. "NXT Customers Old")
         self._n += 1
-        f = {"id": f"id{self._n}", "name": name, "parents": [parent], "trashed": False}
+        f = {"id": f"id{self._n}", "name": name, "parents": [parent], "trashed": False,
+             "ownedByMe": owned}
         self.files.append(f)
         return f["id"]
 
@@ -40,7 +42,8 @@ class FakeDrive:
                 term = re.search(r"name contains '([^']+)'", q).group(1)
                 hits = [f for f in self.files if term in f["name"] and not f["trashed"]]
             return httpx.Response(200, json={"files": [
-                {"id": f["id"], "name": f["name"], "parents": f["parents"]} for f in hits]})
+                {"id": f["id"], "name": f["name"], "parents": f["parents"],
+                 "ownedByMe": f["ownedByMe"]} for f in hits]})
         if request.method == "PATCH":
             params = request.url.params
             f = next(f for f in self.files if f["id"] == request.url.path.rsplit("/", 1)[1])
@@ -241,3 +244,15 @@ def test_peek_legacy_folder_changes_nothing(drive, monkeypatch):
     status, folder = run(d.peek_legacy_folder("DS176", None))
     assert status == "movable" and folder.name == "DS176 甜蜜蜜"
     assert fake.files == before
+
+
+def test_old_folders_of_another_account_are_ignored(drive):
+    """Folders shared from another account (e.g. "NXT Customers Old") are never moved,
+    and do not make an owned folder with the same code ambiguous."""
+    fake, d = drive
+    other = fake.add("DS999", "OLD_DS", owned=False)
+    assert run(d.peek_legacy_folder("DS999")) == ("not_found", None)
+    mine = fake.add("DS999 ZZ old", "ROOT")
+    status, folder = run(d.peek_legacy_folder("DS999"))
+    assert status == "movable" and folder.id == mine
+    assert other not in [f.id for f in run(d.find_folders_by_code("DS999"))]

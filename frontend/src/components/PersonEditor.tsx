@@ -464,9 +464,12 @@ function honorificLabel(nameLang: string, fallback: string): string {
 export function PersonEditor({
   person,
   onUpdated,
+  cardExtId,
 }: {
   person: Person
   onUpdated: () => void
+  /** The card being viewed (or the person's newest card); issuing exports its person to Odoo */
+  cardExtId?: string
 }) {
   const { t } = useLang()
   const { showToast } = useToast()
@@ -671,7 +674,7 @@ export function PersonEditor({
 
             {/* NXT customer switch and project-code issuing (hidden detail unless switched on) */}
             {pos.org_ext_id && (
-              <NxtCustomerPanel orgExtId={pos.org_ext_id} orgName={pos.org_names[0]?.name ?? ''} />
+              <NxtCustomerPanel orgExtId={pos.org_ext_id} orgName={pos.org_names[0]?.name ?? ''} cardExtId={cardExtId} />
             )}
           </div>
         </section>

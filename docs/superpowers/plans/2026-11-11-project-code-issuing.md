@@ -64,8 +64,16 @@ Status is updated by each PR. Mark a task done only when its tests pass.
 | 5 Propose and commit | done (mocked tests pass) |
 | 6 API routes | done (mocked tests pass) |
 | 6b Old customers (legacy codes, move old folder) | done (mocked tests pass) |
-| 7 UI | built (type-check and production build pass); needs a look in the browser on the Mac |
-| 8 Live verification | not started |
+| 7 UI | done (checked in the browser on the Mac, ja/en/zh-TW and narrow width) |
+| 8 Live verification | done 2026-11-11 (checklist 1-8 pass against real Odoo and Drive; test records deleted) |
+
+Live verification fixes (2026-11-11):
+- `GET /api/v2/organizations/{id}` returned 500 (names built without `id`) and left out the NXT fields, so the panel could not load and the switch never stayed on.
+- The panel never sent `card_external_id`, so the person step was always skipped; it now sends the viewed card (or the person's newest card) with an "also add this card's person" checkbox.
+- The "sold via" picker only saw the newest 200 organizations; it now uses `GET /api/v2/organizations?issued=true`.
+- The old-folder lookup also found folders shared from other accounts ("NXT Customers Old"), which the app must not move and which made an owned folder ambiguous; it now only counts folders this account owns.
+- Real Odoo needed nothing beyond `name`, `partner_id` and the x_ fields for `project.project` (the alias is created by Odoo). The API user is uid 2.
+- The live test drew C0200 (records since deleted). Kept as is by decision: the sequence `nxt.customer` stands at 201, C0200 is never issued, and the first real customer is C0201.
 
 Split: tasks 1-6 are backend with mocked Odoo and Drive (no credentials needed). Tasks 7-8 need a local machine: the UI needs a browser check, and live verification needs the real `.env`.
 

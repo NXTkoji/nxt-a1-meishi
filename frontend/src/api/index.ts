@@ -211,8 +211,9 @@ export * from './sessions'
 export const getOrganization = (orgExtId: string) =>
   get<import('../types').OrgInfo>(`/api/v2/organizations/${orgExtId}`)
 
-export const listOrganizations = () =>
-  get<import('../types').OrgListItem[]>('/api/v2/organizations?limit=200')
+/** Every organization with a Customer ID (the "sold via" picker); not paged. */
+export const listIssuedOrganizations = () =>
+  get<import('../types').OrgListItem[]>('/api/v2/organizations?issued=true')
 
 export const setNxtCustomer = (orgExtId: string, enabled: boolean) =>
   put<import('../types').OrgInfo>(`/api/v2/organizations/${orgExtId}/nxt-customer`, { enabled })
