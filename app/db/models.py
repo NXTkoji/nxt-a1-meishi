@@ -152,6 +152,21 @@ class Organization(Base):
     # Free-text memo about the organization itself. Organizations are shared,
     # so this is the same memo on every person linked to it.
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    # --- NXT customer / project-code fields (see the project-code issuing spec) ---
+    # Off by default: most scanned organizations are not NXT customers.
+    is_nxt_customer: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
+    # 統一編號 (8 digits). Unique when present.
+    tax_id: Mapped[Optional[str]] = mapped_column(String(16), unique=True)
+    # Permanent Customer ID drawn from Odoo, e.g. "C0200". Unique when present.
+    customer_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True)
+    # Cache of the Odoo company partner id (Odoo is the source of truth)
+    odoo_partner_id: Mapped[Optional[int]] = mapped_column(Integer)
+    drive_folder_id: Mapped[Optional[str]] = mapped_column(String(128))
+    drive_url: Mapped[Optional[str]] = mapped_column(String(512))
+    # Old codes kept as aliases, e.g. "DS176, P065S50"
+    legacy_codes: Mapped[Optional[str]] = mapped_column(String(256))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
@@ -178,6 +193,54 @@ class OrganizationName(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     organization: Mapped["Organization"] = relationship(back_populates="names")
+
+
+# ---------------------------------------------------------------------------
+# Projects  (NXT customer projects with an issued project code)
+# ---------------------------------------------------------------------------
+
+class Project(Base):
+    """A project issued for an NXT customer, e.g. code "C0200-DS01"."""
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    # DS = SH200 deodorization, DJ = NXT-JM oil removal
+    product_line: Mapped[str] = mapped_column(String(8), nullable=False)
+    site_name: Mapped[Optional[str]] = mapped_column(String(256))
+    # The reseller that sold this project, if any
+    sold_via_org_id: Mapped[Optional[int]] = mapped_column(ForeignKey("organizations.id"))
+    odoo_project_id: Mapped[Optional[int]] = mapped_column(Integer)
+    drive_folder_id: Mapped[Optional[str]] = mapped_column(String(128))
+    drive_url: Mapped[Optional[str]] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    organization: Mapped["Organization"] = relationship(foreign_keys=[org_id])
+    sold_via: Mapped[Optional["Organization"]] = relationship(foreign_keys=[sold_via_org_id])
+
+
+class IssueRun(Base):
+    """
+    One approved issue request. The commit runs as named steps; each finished
+    step's result is stored in steps_json so a failed run can be retried from the
+    failing step without creating anything twice.
+    status: running, failed, done
+    """
+    __tablename__ = "issue_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    external_id: Mapped[str] = mapped_column(
+        String(36), default=_uuid, unique=True, nullable=False
+    )
+    org_id: Mapped[Optional[int]] = mapped_column(ForeignKey("organizations.id"))
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"))
+    status: Mapped[str] = mapped_column(String(16), default="running", nullable=False)
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    steps_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
 
 # ---------------------------------------------------------------------------

@@ -194,6 +194,8 @@ export interface PositionDetail {
 export interface Position {
   id: number
   org_id: number
+  /** External id of the organization; addresses its NXT customer panel. */
+  org_ext_id?: string | null
   status: string
   org_names: OrgName[]
   details: PositionDetail[]
@@ -284,4 +286,82 @@ export interface RelationshipType {
   key: string
   label: string
   is_predefined: boolean
+}
+
+
+// ─── NXT customers / project codes ────────────────────────────────────────────
+
+export interface OrgInfo {
+  id: number
+  external_id: string
+  is_nxt_customer: boolean
+  tax_id?: string | null
+  customer_code?: string | null
+  drive_url?: string | null
+  legacy_codes?: string | null
+}
+
+export interface OrgListItem {
+  id: number
+  external_id: string
+  primary_name?: string | null
+  is_nxt_customer: boolean
+  customer_code?: string | null
+}
+
+export interface IssueRequest {
+  org_ext_id?: string
+  customer_name?: string
+  tax_id?: string
+  phone?: string
+  product_line: string
+  site_name: string
+  roles: string[]
+  sold_via_org_ext_id?: string
+  chosen_org_ext_id?: string
+  create_new?: boolean
+  // Card whose person is exported under the company on approval (unless include_person is false)
+  card_external_id?: string
+  include_person?: boolean
+  legacy_codes?: string
+}
+
+export interface IssueCandidate {
+  org_ext_id: string
+  name: string
+  customer_code?: string | null
+  tax_id?: string | null
+  reason: string
+  confidence: number
+  auto: boolean
+}
+
+export interface IssueProposal {
+  customer_mode: 'existing' | 'new'
+  org_ext_id?: string | null
+  customer_name: string
+  tax_id?: string | null
+  customer_code?: string | null
+  suggested_customer_code?: string | null
+  needs_choice: boolean
+  candidates: IssueCandidate[]
+  project_code?: string | null
+  project_code_tentative: boolean
+  product_line: string
+  site_name: string
+  sold_via_name?: string | null
+  actions: string[]
+  warnings: string[]
+}
+
+export interface IssueRun {
+  run_id: string
+  status: 'done' | 'failed' | 'running'
+  failed_step?: string | null
+  error?: string | null
+  steps: Record<string, unknown>
+  customer_code?: string | null
+  project_code?: string | null
+  customer_drive_url?: string | null
+  project_drive_url?: string | null
 }

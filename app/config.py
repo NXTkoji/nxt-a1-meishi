@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # Google Drive (image backup)
     google_drive_folder_id: str = ""
     google_drive_images_folder_id: str = ""
+    # Folder id of "NXT Customers" on the NXT Google Drive; customer folders are
+    # created inside it when a project code is issued.
+    google_drive_customers_folder_id: str = ""
 
     # Microsoft Graph (OneDrive)
     ms_client_id: str = ""

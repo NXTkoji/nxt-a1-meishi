@@ -119,6 +119,8 @@ export function PersonDetailPage() {
       {/* Editable person data */}
       <PersonEditor
         person={person}
+        // Cards come newest first; that one is exported when a project code is issued
+        cardExtId={cards?.[0]?.external_id}
         onUpdated={() => qc.invalidateQueries({ queryKey: ['person', extId] })}
       />
 
