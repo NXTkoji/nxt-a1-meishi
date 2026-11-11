@@ -6,6 +6,7 @@ import xmlrpc.client
 
 from app.config import settings
 from app.models.card import Card
+from app.services.project_codes import normalize_org_name, strip_legal_forms
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +31,31 @@ def _call(obj, uid, model: str, method: str, *args, **kwargs):
 
 
 def _find_or_create_company(obj, uid, company_name: str) -> int | None:
-    """Find existing company partner or create a new one."""
+    """Find the existing company partner or create one.
+
+    A company counts as the same when its name matches after ignoring case, width,
+    spaces and legal form ("允將餐飲" = "允將餐飲股份有限公司"). When several match,
+    the one carrying a Customer ID (`ref`) wins, so cards for an NXT customer link
+    to the customer record instead of a stray duplicate.
+    """
     if not company_name:
         return None
 
+    wanted = normalize_org_name(company_name)
+    # Exact name (the old behaviour) or the legal-form-free name, so that "X" also
+    # finds "X股份有限公司". Spacing is kept for the Odoo query; names are compared
+    # in normalized form below.
+    core = strip_legal_forms(company_name) or company_name
     ids = _call(obj, uid, "res.partner", "search", [
-        [["is_company", "=", True], ["name", "=", company_name]]
+        ["&", ["is_company", "=", True],
+         "|", ["name", "=", company_name], ["name", "ilike", core]]
     ])
     if ids:
-        return ids[0]
+        rows = _call(obj, uid, "res.partner", "read", [ids], {"fields": ["name", "ref"]})
+        same = [r for r in rows if normalize_org_name(r["name"]) == wanted]
+        if same:
+            same.sort(key=lambda r: (not r.get("ref"), r["id"]))
+            return same[0]["id"]
 
     return _call(obj, uid, "res.partner", "create", [{
         "name": company_name,
@@ -65,8 +82,17 @@ def _resolve_state(obj, uid, state_name: str, country_id: int | None) -> int | N
     return ids[0] if ids else None
 
 
-async def sync_to_odoo(card: Card, existing_id: int | None = None) -> int:
-    """Create or update an Odoo res.partner from card data. Returns partner ID."""
+async def sync_to_odoo(
+    card: Card,
+    existing_id: int | None = None,
+    company_partner_id: int | None = None,
+) -> int:
+    """Create or update an Odoo res.partner from card data. Returns partner ID.
+
+    company_partner_id: when given, the person is placed under that company
+    partner instead of looking the company up by the name on the card (used when
+    the company is a known NXT customer).
+    """
     _, obj, uid = _get_odoo_clients()
     person = card.person
 
@@ -85,7 +111,7 @@ async def sync_to_odoo(card: Card, existing_id: int | None = None) -> int:
     # First position
     pos = person.positions[0] if person.positions else None
     company_name = pos.company if pos else ""
-    company_id = _find_or_create_company(obj, uid, company_name)
+    company_id = company_partner_id or _find_or_create_company(obj, uid, company_name)
 
     # Phones
     work_phone = ""

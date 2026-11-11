@@ -14,6 +14,7 @@ the Odoo client; the propose step merges both.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -133,19 +134,30 @@ def next_project_number(existing_codes: List[str], customer_code: str, product_l
 # Legal-form words that differ between how a company is written on a card and how
 # it is registered. They are not part of the identity, so they are ignored when
 # comparing names. Longest first so "股份有限公司" is removed before "有限公司".
-_LEGAL_FORMS = (
+_CJK_LEGAL_FORMS = (
     "股份有限公司", "有限公司", "股份有限", "企業社", "合同会社", "株式会社",
-    "有限会社", "有限會社", "(股)", "(有)", "co.,ltd.", "co.,ltd", "co.ltd", "ltd.", "inc.", "corp.",
+    "有限会社", "有限會社", "(股)", "(有)",
 )
+# English forms tolerate spacing and punctuation ("Co., Ltd." / "Co.,Ltd" / "CO LTD").
+_EN_LEGAL_FORMS = (
+    r"\b(?:co\.?\s*,?\s*ltd\.?|ltd\.?|inc\.?|corp\.?|corporation|limited)(?![a-z0-9])"
+)
+_LEGAL_FORM_RE = re.compile(
+    "|".join(re.escape(f) for f in _CJK_LEGAL_FORMS) + "|" + _EN_LEGAL_FORMS,
+    re.IGNORECASE,
+)
+
+
+def strip_legal_forms(name: str) -> str:
+    """Remove legal-form words from a name, keeping its spacing (for Odoo searches)."""
+    text = unicodedata.normalize("NFKC", name or "")
+    return _LEGAL_FORM_RE.sub("", text).strip(" ,.-")
 
 
 def normalize_org_name(name: str) -> str:
     """Normalize an organization name for comparison (case, width, spaces, legal form)."""
-    value = _normalize_name(name or "")
-    value = value.replace("（", "(").replace("）", ")")
-    for form in _LEGAL_FORMS:
-        value = value.replace(form, "")
-    return value
+    return _normalize_name(strip_legal_forms(name))
+
 
 @dataclass
 class OrgCandidate:
