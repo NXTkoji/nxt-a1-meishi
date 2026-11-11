@@ -8,7 +8,9 @@ import pytest
 
 from app.config import settings
 from app.services import drive_folders as df
-from app.services.drive_folders import DriveError, DriveFolders, PROJECT_SUBFOLDERS
+from app.services.drive_folders import (
+    CUSTOMER_SUBFOLDERS, DriveError, DriveFolders, PROJECT_SUBFOLDERS,
+)
 
 
 class FakeDrive:
@@ -83,8 +85,26 @@ def test_customer_and_project_tree_layout(drive):
     cust, proj = run(go())
     assert cust.name == "C0200 甜蜜蜜台北店"
     assert names_in(fake, "ROOT") == ["C0200 甜蜜蜜台北店"]
-    assert names_in(fake, cust.id) == ["C0200-DS01 台北店"]
+    # finance & logistics sits beside the project folders, once per customer
+    assert names_in(fake, cust.id) == sorted(["C0200-DS01 台北店", *CUSTOMER_SUBFOLDERS])
     assert names_in(fake, proj.id) == sorted(PROJECT_SUBFOLDERS)
+    assert PROJECT_SUBFOLDERS == ("1 requirement", "2 proposal", "3 construction", "4 maintenance")
+    assert CUSTOMER_SUBFOLDERS == ("finance & logistics",)
+
+
+def test_a_customer_can_have_several_project_folders(drive):
+    fake, d = drive
+
+    async def go():
+        cust = await d.ensure_customer_folder("C0200", "甜蜜蜜", parent_id="ROOT")
+        await d.ensure_project_tree(cust.id, "C0200-DS01", "台北店")
+        await d.ensure_project_tree(cust.id, "C0200-DJ01", "信義店")
+        await d.ensure_customer_folder("C0200", "甜蜜蜜", parent_id="ROOT")
+        return cust
+
+    cust = run(go())
+    assert names_in(fake, cust.id) == sorted(
+        ["C0200-DS01 台北店", "C0200-DJ01 信義店", "finance & logistics"])
 
 
 def test_running_twice_creates_nothing_new(drive):
@@ -134,8 +154,8 @@ def test_missing_customers_folder_setting(drive, monkeypatch):
 def test_transient_errors_are_retried(drive):
     fake, d = drive
     fake.fail_next = [503, 429]
-    ref = run(d.ensure_folder("ROOT", "1 photos"))
-    assert ref.name == "1 photos" and fake.requests >= 3
+    ref = run(d.ensure_folder("ROOT", "1 requirement"))
+    assert ref.name == "1 requirement" and fake.requests >= 3
 
 
 def test_persistent_errors_raise_drive_error(drive):
@@ -167,7 +187,7 @@ def test_move_legacy_folder_keeps_its_name(drive, monkeypatch):
     cust, (status, folder) = run(go())
     assert status == "moved" and folder.id == old
     assert names_in(fake, "ROOT") == ["C0200 甜蜜蜜"]
-    assert names_in(fake, cust.id) == ["DS176 甜蜜蜜台北店"]
+    assert names_in(fake, cust.id) == sorted(["DS176 甜蜜蜜台北店", *CUSTOMER_SUBFOLDERS])
 
 
 def test_move_legacy_folder_is_idempotent(drive, monkeypatch):

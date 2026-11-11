@@ -124,17 +124,21 @@ C0200 <customer>/
 - Propose previews this read-only ("Move old folder ... into the customer folder", or a warning that none was found).
 - **Limit:** the app's Drive token only covers the NXT Google Drive. Old folders in another Google account's Drive (for example "NXT Customers Old") or in OneDrive cannot be moved by the app. The warning says so; move them by hand, or handle them in the later bulk migration.
 
-### Project folder template
+### Folder template
 
 ```
 C0200 <customer>/
-  C0200-DS01 <site>/
-    1 photos/
+  finance & logistics/        one per customer, shared by all its projects
+  C0200-DS01 <site>/          a customer can have several project folders
+    1 requirement/
     2 proposal/
     3 construction/
-    4 finance & logistics/
-    5 maintenance/
+    4 maintenance/
+  C0200-DJ01 <site>/
+    ...
 ```
+
+Photos have no folder of their own; they go into whichever numbered folder they belong to. The customer-level `finance & logistics` folder is created with the customer folder (and added to an existing customer folder the next time a project is issued).
 
 ## Changes in this repository
 

@@ -19,7 +19,7 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 - Fix `_find_or_create_company` to look up `ref`, then `vat`, then name, and to set `ref` when it creates. Tests with a mocked XML-RPC proxy.
 
 ## Task 4 — Drive folder creation
-- `app/services/drive_folders.py` using the existing Google OAuth refresh token: `ensure_folder(parent_id, name)` (create only if missing), `ensure_project_tree(...)` for the five subfolders.
+- `app/services/drive_folders.py` using the existing Google OAuth refresh token: `ensure_folder(parent_id, name)` (create only if missing), `ensure_project_tree(...)` for the four project subfolders (requirement, proposal, construction, maintenance); `ensure_customer_folder` also creates the customer-level `finance & logistics` folder.
 - Add `google_drive_customers_folder_id` to `config.py` and `.env.example`. Tests with a mocked Drive client.
 
 ## Task 5 — Propose and commit

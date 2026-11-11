@@ -26,7 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import IssueRun, Organization, OrganizationName, Project
 from app.schemas.api import CandidateOut, IssueRequest, IssueRunOut, ProposalOut
 from app.services import project_codes as pc
-from app.services.drive_folders import DriveError, DriveFolders
+from app.services.drive_folders import (
+    CUSTOMER_SUBFOLDERS, PROJECT_SUBFOLDERS, DriveError, DriveFolders,
+)
 from app.services.odoo_codes import ROLE_TAGS, TAG_CUSTOMER, OdooCodes
 
 logger = logging.getLogger(__name__)
@@ -267,8 +269,9 @@ async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest,
     else:
         actions.append(f"Use existing customer {out.customer_code}")
         actions.append("Make sure the Odoo company carries the NXT Customer tag")
-    actions.append(f"Create customer and project folders in Google Drive ({out.project_code}: "
-                   + ", ".join(pc_subfolders()) + ")")
+    actions.append("Create the customer folder in Google Drive with "
+                   + ", ".join(CUSTOMER_SUBFOLDERS))
+    actions.append(f"Create project folder {out.project_code} with " + ", ".join(PROJECT_SUBFOLDERS))
     legacy_actions, legacy_warnings = await _legacy_preview(
         drive, legacy, org.drive_folder_id if org else None)
     actions.extend(legacy_actions)
@@ -279,11 +282,6 @@ async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest,
     out.actions = actions
     out.warnings = warnings
     return out
-
-
-def pc_subfolders() -> tuple:
-    from app.services.drive_folders import PROJECT_SUBFOLDERS
-    return PROJECT_SUBFOLDERS
 
 
 # ---------------------------------------------------------------------------

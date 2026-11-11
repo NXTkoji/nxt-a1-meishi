@@ -16,7 +16,9 @@ from app.services import drive_folders as df
 from app.services import issue_flow
 from app.services import odoo_sync
 from app.services import project_codes as pc
-from app.services.drive_folders import DriveError, DriveFolders, PROJECT_SUBFOLDERS
+from app.services.drive_folders import (
+    CUSTOMER_SUBFOLDERS, DriveError, DriveFolders, PROJECT_SUBFOLDERS,
+)
 from app.services.odoo_codes import OdooCodes
 from tests.fake_odoo import FakeOdoo
 from tests.test_drive_folders import FakeDrive
@@ -128,10 +130,10 @@ def test_commit_creates_everything(env):
     assert project["x_project_code"] == "C0200-DS01" and project["x_product_line"] == "DS"
     assert project["partner_id"] == company["id"] and project["x_drive_url"] == out.project_drive_url
 
-    # Drive: customer folder, project folder, five subfolders
+    # Drive: customer folder (with finance & logistics beside the project folder), project folder, four subfolders
     assert folders(env.fdrive, ROOT) == ["C0200 甜蜜蜜台北店"]
     cust_id = next(f["id"] for f in env.fdrive.files if f["name"].startswith("C0200 "))
-    assert folders(env.fdrive, cust_id) == ["C0200-DS01 台北店"]
+    assert folders(env.fdrive, cust_id) == sorted(["C0200-DS01 台北店", *CUSTOMER_SUBFOLDERS])
     proj_id = next(f["id"] for f in env.fdrive.files if f["name"].startswith("C0200-DS01"))
     assert folders(env.fdrive, proj_id) == sorted(PROJECT_SUBFOLDERS)
 
@@ -398,7 +400,8 @@ def test_old_folder_is_moved_into_the_new_customer_folder(env):
 
     cust_id = _customer_folder_id(env)
     assert folders(env.fdrive, ROOT) == ["C0200 甜蜜蜜台北店"]        # no second customer folder
-    assert folders(env.fdrive, cust_id) == ["C0200-DS01 台北店", "DS176 甜蜜蜜台北店"]
+    assert folders(env.fdrive, cust_id) == sorted(
+        ["C0200-DS01 台北店", "DS176 甜蜜蜜台北店", *CUSTOMER_SUBFOLDERS])
 
     org = env.run(lambda db: db.scalar(select(Organization)))
     assert org.legacy_codes == "DS176"

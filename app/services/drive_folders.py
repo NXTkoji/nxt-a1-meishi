@@ -5,8 +5,12 @@ Layout (see the project-code issuing spec):
 
     NXT Customers/
       C0200 <customer>/
-        C0200-DS01 <site>/
-          1 photos / 2 proposal / 3 construction / 4 finance & logistics / 5 maintenance
+        finance & logistics/          one per customer, shared by all its projects
+        C0200-DS01 <site>/            a customer can have several project folders
+          1 requirement / 2 proposal / 3 construction / 4 maintenance
+        C0200-DJ01 <site>/
+
+Photos are not a folder of their own; they go into whichever numbered folder they belong to.
 
 Every `ensure_*` method looks for an existing folder first, so re-running a failed
 issue never creates a second copy. Customer and project folders are found by their
@@ -31,11 +35,14 @@ DRIVE_API = "https://www.googleapis.com/drive/v3"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
 PROJECT_SUBFOLDERS = (
-    "1 photos",
+    "1 requirement",
     "2 proposal",
     "3 construction",
-    "4 finance & logistics",
-    "5 maintenance",
+    "4 maintenance",
+)
+# Directly inside the customer folder, next to the project folders
+CUSTOMER_SUBFOLDERS = (
+    "finance & logistics",
 )
 
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -238,7 +245,10 @@ class DriveFolders:
         parent = parent_id or settings.google_drive_customers_folder_id
         if not parent:
             raise DriveError("GOOGLE_DRIVE_CUSTOMERS_FOLDER_ID is not set")
-        return await self.ensure_prefixed_folder(parent, customer_code, name)
+        customer = await self.ensure_prefixed_folder(parent, customer_code, name)
+        for sub in CUSTOMER_SUBFOLDERS:
+            await self.ensure_folder(customer.id, sub)
+        return customer
 
     async def ensure_project_tree(self, customer_folder_id: str, project_code: str,
                                   site_name: str) -> FolderRef:
