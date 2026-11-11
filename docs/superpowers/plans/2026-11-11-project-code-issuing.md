@@ -5,7 +5,7 @@ Spec: `docs/superpowers/specs/2026-11-11-project-code-issuing-design.md`
 Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and `project.project`) are already created. Work happens in this repo only.
 
 ## Task 1 — Database migration
-- Add Alembic revision: columns on `organizations` (`tax_id`, `customer_code`, `odoo_partner_id`, `drive_folder_id`, `drive_url`, `legacy_codes`), unique indexes on `tax_id` and `customer_code` (nullable).
+- Add Alembic revision: columns on `organizations` (`is_nxt_customer` bool default false, `tax_id`, `customer_code`, `odoo_partner_id`, `drive_folder_id`, `drive_url`, `legacy_codes`), unique indexes on `tax_id` and `customer_code` (nullable).
 - Add tables `projects` and `issue_runs` (run id, input JSON, step name, status, result JSON, error, timestamps).
 - Update `app/db/models.py`. Test: migration up/down on a scratch SQLite file.
 
@@ -31,6 +31,8 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 - `app/routers/v2/projects.py`: `POST /api/v2/customers/resolve`, `POST /api/v2/projects/propose`, `POST /api/v2/projects/commit`, `POST /api/v2/projects/{id}/retry`; register in `app/main.py`; schemas in `app/schemas/api.py`.
 
 ## Task 7 — UI
+- "NXT customer" switch in the card editor and organization view (default off). Everything below is hidden unless it is on; with it off the existing card flow is unchanged. Toggling it also sets or removes the Odoo tag `NXT Customer` on the company.
+- On approval, after the company step, create or update the card's person as a child of the company using the existing `sync_to_odoo`; the review card has a checkbox to skip this.
 - Organization view: "Issue project code" button, form (統編, phone, product line, site name, sold via, role), review card showing match, suggested codes and what will be created, Approve button, final result with links and a Retry button on failure. Add Traditional Chinese strings in `i18n.ts`.
 
 ## Task 8 — Verification

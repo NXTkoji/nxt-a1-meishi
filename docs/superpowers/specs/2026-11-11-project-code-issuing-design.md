@@ -20,6 +20,26 @@ Project codes are assigned by hand (DS = SH200 deodorization, P = resellers, DJ 
 3. Issuing is **propose then approve** inside the app. Nobody opens Odoo by hand.
 4. On approval the app creates the Odoo contact, the Odoo project and the Google Drive folders.
 
+## Scope: only for NXT customers
+
+Most scanned cards are not NXT customers, so none of this appears by default.
+
+- An organization has an **NXT customer** switch (`organizations.is_nxt_customer`, default off). In Odoo it is the company tag `NXT Customer`.
+- The card editor shows the extra fields (統編, product line, site name, role, sold via) and the "Issue project code" action **only when the switch is on**. With it off, the card flow is exactly what it is today and no code, folder or project is created.
+- The switch can be turned on later from the organization view (for example, a company scanned months ago becomes a customer). Issuing then reuses the existing Odoo company record and adds the Customer ID to it.
+
+## Odoo record layout
+
+The customer is the **company** record; people are contacts under it, as already done by the card export (`parent_id`).
+
+1. Company partner (`is_company`): `ref` = Customer ID, `vat` = 統編, tag `NXT Customer`, Drive URL.
+2. Person partner(s): child of the company (`parent_id`), created or updated with the existing card export.
+3. Project: `partner_id` = the company.
+
+Individuals without a company: a company-type record named after the store or brand (or the person's name if there is none), with the person as its child contact. The phone number is the match key.
+
+On approval the app ensures the company exists (matching by `ref`, then `vat`, then phone, then name candidates the user confirms), then creates or updates the card's person under it. A checkbox on the review card lets the user skip the person step.
+
 ## Non-Goals
 
 - Renaming or renumbering any legacy folder or code. Legacy codes are kept as aliases.
@@ -102,12 +122,12 @@ C0200 <customer>/
 
 ## Changes in this repository
 
-- **Migration**: `organizations` gains `tax_id` (unique, nullable), `customer_code` (unique, nullable), `odoo_partner_id`, `drive_folder_id`, `drive_url`, `legacy_codes`. New `projects` table (`code` unique, `org_id`, `product_line`, `site_name`, `sold_via_org_id`, `odoo_project_id`, `drive_folder_id`, `drive_url`, `created_at`) and an `issue_runs` table for step state.
+- **Migration**: `organizations` gains `is_nxt_customer` (bool, default false), `tax_id` (unique, nullable), `customer_code` (unique, nullable), `odoo_partner_id`, `drive_folder_id`, `drive_url`, `legacy_codes`. New `projects` table (`code` unique, `org_id`, `product_line`, `site_name`, `sold_via_org_id`, `odoo_project_id`, `drive_folder_id`, `drive_url`, `created_at`) and an `issue_runs` table for step state.
 - **New service** `app/services/project_codes.py`: validation, organization matching, propose, commit, Drive folder creation (Google Drive API, using the existing OAuth with Drive scope).
 - **Config**: `google_drive_customers_folder_id`.
 - **Fix** `_find_or_create_company` in `odoo_sync.py`: look up by `ref` and `vat` before name, and set `ref` on create, so card exports stop creating duplicate companies.
 - **Routes**: `POST /api/v2/customers/resolve`, `POST /api/v2/projects/propose`, `POST /api/v2/projects/commit`, `POST /api/v2/projects/{id}/retry`.
-- **UI**: "Issue project code" action on the organization view, with the review card and Approve button.
+- **UI**: an "NXT customer" switch in the card editor and organization view. Only when it is on: the NXT fields and the "Issue project code" action, with the review card and Approve button.
 
 ## Risks
 
