@@ -66,6 +66,8 @@ def env(client_with_test_db):
 
     e.run = run
     e.propose = lambda **kw: run(lambda db: issue_flow.propose(db, e.codes, req(**kw)))
+    e.propose_with_drive = lambda **kw: run(
+        lambda db: issue_flow.propose(db, e.codes, req(**kw), e.drive))
     e.commit = lambda **kw: run(lambda db: issue_flow.commit(db, e.codes, e.drive, req(**kw)))
     return e
 
@@ -102,6 +104,7 @@ def test_propose_new_customer_has_no_side_effects(env):
     (dict(site_name="  "), "Site name"),
     (dict(roles=["boss"]), "Unknown role"),
     (dict(customer_name=" "), "Customer name"),
+    (dict(legacy_codes="DS17"), "old code"),
 ])
 def test_propose_rejects_bad_input(env, kw, fragment):
     with pytest.raises(pc.ValidationError, match=fragment):
@@ -173,7 +176,7 @@ def test_failed_run_is_resumable_without_duplicates(env):
     assert out.customer_code == "C0200" and out.project_code == "C0200-DS01"
     assert len(env.odoo.rows("res.partner")) == 1 and len(env.odoo.rows("project.project")) == 1
     assert set(out.steps) == {"local_org", "customer_id", "odoo_company", "drive_customer",
-                              "local_project", "odoo_project"}
+                              "legacy", "local_project", "odoo_project"}
 
     again = env.run(lambda db: issue_flow.retry(db, env.codes, env.drive, out.run_id))
     assert again.status == "done" and again.run_id == out.run_id
@@ -381,6 +384,83 @@ def test_later_card_export_lands_under_the_customer(env, monkeypatch):
 
 # ── HTTP routes ───────────────────────────────────────────────────────────────
 
+# ── old customers: legacy codes and folders ──────────────────────────────────
+
+def _customer_folder_id(env):
+    return next(f["id"] for f in env.fdrive.files if f["name"].startswith("C0200 "))
+
+
+def test_old_folder_is_moved_into_the_new_customer_folder(env):
+    env.fdrive.add("DS176 甜蜜蜜台北店", ROOT)
+    out = env.commit(legacy_codes="DS176")
+    assert out.status == "done"
+    assert out.steps["legacy"] == {"DS176": {"status": "moved", "name": "DS176 甜蜜蜜台北店"}}
+
+    cust_id = _customer_folder_id(env)
+    assert folders(env.fdrive, ROOT) == ["C0200 甜蜜蜜台北店"]        # no second customer folder
+    assert folders(env.fdrive, cust_id) == ["C0200-DS01 台北店", "DS176 甜蜜蜜台北店"]
+
+    org = env.run(lambda db: db.scalar(select(Organization)))
+    assert org.legacy_codes == "DS176"
+    (company,) = env.odoo.rows("res.partner")
+    assert company["x_legacy_codes"] == "DS176"
+
+
+def test_old_codes_are_recorded_even_when_no_folder_is_found(env):
+    out = env.commit(legacy_codes="DS176, P065S50")
+    assert out.status == "done"
+    assert out.steps["legacy"]["DS176"]["status"] == "not_found"
+    org = env.run(lambda db: db.scalar(select(Organization)))
+    assert org.legacy_codes == "DS176, P065S50"
+    assert folders(env.fdrive, ROOT) == ["C0200 甜蜜蜜台北店"]
+
+
+def test_second_project_adds_to_the_old_codes(env):
+    env.fdrive.add("DS176 甜蜜蜜台北店", ROOT)
+    env.commit(legacy_codes="DS176")
+    env.fdrive.add("DJ005 甜蜜蜜信義", ROOT)
+    out = env.commit(site_name="信義店", legacy_codes="DS176, DJ005")
+    assert out.steps["legacy"]["DS176"]["status"] == "already_inside"
+    assert out.steps["legacy"]["DJ005"]["status"] == "moved"
+    org = env.run(lambda db: db.scalar(select(Organization)))
+    assert org.legacy_codes == "DS176, DJ005"
+
+
+def test_propose_previews_the_move_without_doing_it(env):
+    env.fdrive.add("DS176 甜蜜蜜台北店", ROOT)
+    before = [dict(f) for f in env.fdrive.files]
+    out = env.propose_with_drive(legacy_codes="DS176")
+    assert any("Move old folder 'DS176 甜蜜蜜台北店'" in a for a in out.actions)
+    assert env.fdrive.files == before and not env.odoo.rows("res.partner")
+
+
+def test_propose_warns_when_the_old_folder_is_not_in_this_drive(env):
+    out = env.propose_with_drive(legacy_codes="DS176")
+    assert any("DS176" in w and "another Drive or OneDrive" in w for w in out.warnings)
+    assert any("Record old code(s) DS176" in a for a in out.actions)
+
+
+def test_propose_without_drive_says_folders_are_checked_on_approval(env):
+    out = env.propose(legacy_codes="DS176")
+    assert any("could not be checked" in w for w in out.warnings)
+
+
+def test_ambiguous_old_folders_stop_the_legacy_step(env):
+    env.fdrive.add("DS176 甜蜜蜜", ROOT)
+    env.fdrive.add("DS176 舊備份", "ELSEWHERE")
+    out = env.commit(legacy_codes="DS176")
+    assert out.status == "failed" and out.failed_step == "legacy"
+    assert "More than one" in out.error
+    assert folders(env.fdrive, "ELSEWHERE") == ["DS176 舊備份"]
+    assert out.customer_code == "C0200"                   # earlier steps are kept
+
+
+def test_old_code_owned_by_another_customer_is_refused(env):
+    env.commit(legacy_codes="DS176")
+    with pytest.raises(pc.ValidationError, match="already belongs to another customer"):
+        env.propose(customer_name="完全不同公司", tax_id="10458574", legacy_codes="DS176")
+
+
 @pytest.fixture
 def api(env):
     async def _odoo():
@@ -391,9 +471,18 @@ def api(env):
 
     app.dependency_overrides[projects_router.get_odoo] = _odoo
     app.dependency_overrides[projects_router.get_drive] = _drive
+
+    async def _opener():
+        async def open_drive():
+            # a separate client over the same fake, because the router closes what it opens
+            return DriveFolders(httpx.AsyncClient(transport=httpx.MockTransport(env.fdrive.handler)), "tok")
+        return open_drive
+
+    app.dependency_overrides[projects_router.get_drive_opener] = _opener
     yield env.client, env
     app.dependency_overrides.pop(projects_router.get_odoo, None)
     app.dependency_overrides.pop(projects_router.get_drive, None)
+    app.dependency_overrides.pop(projects_router.get_drive_opener, None)
 
 
 BODY = {"customer_name": "甜蜜蜜台北店", "tax_id": TAX, "product_line": "DS", "site_name": "台北店"}
@@ -415,6 +504,18 @@ def test_api_propose_commit_list(api):
 
     orgs = client.get("/api/v2/organizations").json()
     assert orgs[0]["is_nxt_customer"] is True and orgs[0]["customer_code"] == "C0200"
+
+
+def test_api_propose_and_commit_with_an_old_code(api):
+    client, env = api
+    env.fdrive.add("DS176 甜蜜蜜台北店", ROOT)
+    body = dict(BODY, legacy_codes="ds176")
+    r = client.post("/api/v2/projects/propose", json=body)
+    assert r.status_code == 200
+    assert any("Move old folder" in a for a in r.json()["actions"])
+    r = client.post("/api/v2/projects/commit", json=body)
+    assert r.status_code == 200 and r.json()["steps"]["legacy"]["DS176"]["status"] == "moved"
+    assert client.post("/api/v2/projects/propose", json=dict(BODY, legacy_codes="DS1")).status_code == 422
 
 
 def test_api_validation_errors_are_422(api):

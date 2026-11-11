@@ -154,3 +154,19 @@ def test_no_match(client_with_test_db):
         await _make_org(db, "山崎金型", tax_id="22099131")
         return await pc.match_organization(db, tax_id="12345675", phone="0900000000", name="XYZ")
     assert _run(client_with_test_db, go) == []
+
+
+def test_parse_legacy_codes():
+    assert pc.parse_legacy_codes(None) == [] and pc.parse_legacy_codes("  ") == []
+    assert pc.parse_legacy_codes("ds176, P065S50  dj005、DS176") == ["DS176", "P065S50", "DJ005"]
+
+
+@pytest.mark.parametrize("bad", ["DS17", "X176", "C0200", "DS176-1", "P065S5"])
+def test_parse_legacy_codes_rejects_other_shapes(bad):
+    with pytest.raises(pc.ValidationError):
+        pc.parse_legacy_codes(bad)
+
+
+def test_merge_legacy_codes_keeps_order_without_duplicates():
+    assert pc.merge_legacy_codes(None, ["DS176"]) == "DS176"
+    assert pc.merge_legacy_codes("DS100, P065", ["DS176", "P065"]) == "DS100, P065, DS176"

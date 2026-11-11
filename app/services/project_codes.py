@@ -33,6 +33,8 @@ from app.services.contact_matcher import (
 PRODUCT_LINES = ("DS", "DJ")
 
 CUSTOMER_CODE_RE = re.compile(r"^C\d{4,}$")
+# Old codes: DS###, DJ###, P###, and reseller sites P###S##
+LEGACY_CODE_RE = re.compile(r"^(?:DS|DJ|P)\d{3}(?:S\d{2})?$")
 PROJECT_CODE_RE = re.compile(r"^(C\d{4,})-([A-Z]{2})(\d{2,})$")
 
 # Confidence for each kind of match. Only "auto" matches may be reused without the
@@ -97,6 +99,30 @@ def validate_product_line(line: str) -> str:
     if code not in PRODUCT_LINES:
         raise ValidationError(f"Product line must be one of {', '.join(PRODUCT_LINES)}")
     return code
+
+
+def parse_legacy_codes(value: Optional[str]) -> List[str]:
+    """Split "DS176, P065S50" into validated, upper-cased, de-duplicated old codes."""
+    codes: List[str] = []
+    for raw in re.split(r"[,\s、，;；]+", value or ""):
+        code = raw.strip().upper()
+        if not code:
+            continue
+        if not LEGACY_CODE_RE.match(code):
+            raise ValidationError(
+                f"{raw!r} is not an old code (expected like DS176, DJ005, P065 or P065S50)")
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
+def merge_legacy_codes(existing: Optional[str], new: List[str]) -> str:
+    """Add codes to a stored ", "-separated list, keeping order and no duplicates."""
+    merged = parse_legacy_codes(existing)
+    for code in new:
+        if code not in merged:
+            merged.append(code)
+    return ", ".join(merged)
 
 
 # ---------------------------------------------------------------------------

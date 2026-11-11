@@ -30,10 +30,13 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 ## Task 6 — API routes
 - `app/routers/v2/projects.py`: `POST /api/v2/customers/resolve`, `POST /api/v2/projects/propose`, `POST /api/v2/projects/commit`, `POST /api/v2/projects/runs/{run_id}/retry`, `GET /api/v2/projects`, `PUT /api/v2/organizations/{org}/nxt-customer`; register in `app/main.py`; schemas in `app/schemas/api.py`.
 
+## Task 6b — Old customers (done)
+- `IssueRequest.legacy_codes`; `project_codes.parse_legacy_codes/merge_legacy_codes`; `DriveFolders.find_folders_by_code/peek_legacy_folder/move_legacy_folder`; issue step `legacy` after `drive_customer`; propose previews the move (its router takes Drive lazily through `get_drive_opener`, only when `legacy_codes` is sent).
+
 ## Task 7 — UI
 - "NXT customer" switch in the card editor and organization view (default off). Everything below is hidden unless it is on; with it off the existing card flow is unchanged. Toggling it calls `PUT /api/v2/organizations/{org}/nxt-customer`. The switch is local only; the Odoo tag `NXT Customer` is added when a Customer ID is issued. Once issued, the switch cannot be turned off (the API returns 409).
 - On approval, after the company step, create or update the card's person as a child of the company using the existing `sync_to_odoo`; the review card has a checkbox to skip this.
-- Organization view: "Issue project code" button, form (統編, phone, product line, site name, sold via, role), review card showing match, suggested codes and what will be created, Approve button, final result with links and a Retry button on failure. Add Traditional Chinese strings in `i18n.ts`.
+- Organization view: "Issue project code" button, form (統編, phone, product line, site name, sold via, role, optional "old codes" such as DS176), review card showing match, suggested codes and what will be created, Approve button, final result with links and a Retry button on failure. Add Traditional Chinese strings in `i18n.ts`.
 
 ## Task 8 — Verification
 - Run the full test suite. Dry-run against Odoo using a clearly named test customer, confirm the partner, project and folders, then delete the test records.
@@ -60,6 +63,7 @@ Status is updated by each PR. Mark a task done only when its tests pass.
 | 4 Drive folders | done (mocked tests pass) |
 | 5 Propose and commit | done (mocked tests pass) |
 | 6 API routes | done (mocked tests pass) |
+| 6b Old customers (legacy codes, move old folder) | done (mocked tests pass) |
 | 7 UI | not started |
 | 8 Live verification | not started |
 
@@ -73,6 +77,7 @@ Use a clearly named test customer, for example `ZZ TEST 請刪除`, and delete t
 - `POST /api/v2/projects/commit` takes the same body (plus `chosen_org_ext_id` / `create_new` from the user's choice). It returns an `IssueRunOut`. On a partial failure `status` is `failed` with `failed_step` and `error`; the UI shows a Retry button that calls `POST /api/v2/projects/runs/{run_id}/retry`.
 - Validation problems (bad 統編 checksum, unknown product line, 統編 owned by another customer, reseller not yet issued) are HTTP 422 with a readable `detail`.
 - Odoo or Drive not configured: 503. Odoo data problem (duplicate Customer ID): 409.
+- `IssueRequest.legacy_codes` (optional, e.g. `DS176, P065`): approval moves each old Drive folder into the customer folder (name kept) and records the codes; `ProposalOut.warnings` says when no old folder was found in the NXT Google Drive. Show these in the review card.
 - Plain card exports now put the person under the organization's Odoo company when it has one (`organizations.odoo_partner_id`), and the name lookup ignores legal forms and prefers a company with a Customer ID.
 - Run tests with `.venv/bin/python -m pytest tests -q`. New test files: `test_project_codes.py`, `test_odoo_codes.py`, `test_drive_folders.py`, `test_issue_flow.py`; fakes in `tests/fake_odoo.py`.
 
@@ -83,4 +88,5 @@ Use a clearly named test customer, for example `ZZ TEST 請刪除`, and delete t
 4. The Google refresh token has Drive scope and can create folders inside `GOOGLE_DRIVE_CUSTOMERS_FOLDER_ID`.
 5. Drive folder names containing 中文 and "&" are created as expected.
 6. A card export for a person at an issued customer lands under the company, and one for a non-customer behaves as before.
-7. Delete the test customer's Odoo records and Drive folders afterwards.
+7. Old folder: create a folder named `DS999 ZZ old` in the NXT Customers tree, issue with `legacy_codes=DS999`, and confirm it moved into the customer folder with its name intact and `x_legacy_codes` set. Delete it afterwards too.
+8. Delete the test customer's Odoo records and Drive folders afterwards.

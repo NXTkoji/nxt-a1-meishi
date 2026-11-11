@@ -51,6 +51,7 @@ class DriveError(RuntimeError):
 class FolderRef:
     id: str
     name: str
+    parents: tuple = ()
 
     @property
     def url(self) -> str:
@@ -144,6 +145,64 @@ class DriveFolders:
             page_token = data.get("nextPageToken")
             if not page_token:
                 return found
+
+    async def find_folders_by_code(self, code: str) -> List[FolderRef]:
+        """Folders anywhere in this Drive whose name is `code` or starts with "<code> "
+        (an old customer or site folder such as "DS176 甜蜜蜜台北店")."""
+        found: List[FolderRef] = []
+        page_token: Optional[str] = None
+        while True:
+            params = {
+                "q": f"name contains '{_q(code)}' and mimeType = '{FOLDER_MIME}' and trashed = false",
+                "fields": "nextPageToken, files(id, name, parents)",
+                "pageSize": 100,
+                "supportsAllDrives": "true",
+                "includeItemsFromAllDrives": "true",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            data = await self._request("GET", "/files", params=params)
+            found.extend(FolderRef(f["id"], f["name"], tuple(f.get("parents", [])))
+                         for f in data.get("files", []))
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        return [f for f in found if f.name == code or f.name.startswith(code + " ")]
+
+    async def move_folder(self, folder: FolderRef, new_parent_id: str) -> None:
+        await self._request(
+            "PATCH", f"/files/{folder.id}",
+            params={"addParents": new_parent_id, "removeParents": ",".join(folder.parents),
+                    "supportsAllDrives": "true", "fields": "id, parents"},
+            json={},
+        )
+        logger.info("Moved Drive folder %r into %s", folder.name, new_parent_id)
+
+    async def peek_legacy_folder(self, code: str, customer_folder_id: Optional[str] = None) -> tuple:
+        """Look up the old folder for `code` without changing anything.
+        Returns (status, folder): not_found, already_inside, or movable."""
+        matches = [m for m in await self.find_folders_by_code(code)
+                   if m.id not in (customer_folder_id, settings.google_drive_customers_folder_id)]
+        if not matches:
+            return "not_found", None
+        if customer_folder_id:
+            inside = next((m for m in matches if customer_folder_id in m.parents), None)
+            if inside:
+                return "already_inside", inside
+        if len(matches) > 1:
+            names = ", ".join(repr(m.name) for m in matches)
+            raise DriveError(f"More than one folder matches {code}: {names}; "
+                             "rename or move the extra one, then retry")
+        return "movable", matches[0]
+
+    async def move_legacy_folder(self, code: str, customer_folder_id: str) -> tuple:
+        """Move the old folder for `code` into the customer folder, keeping its name.
+        Returns (status, folder) with status moved, already_inside or not_found."""
+        status, folder = await self.peek_legacy_folder(code, customer_folder_id)
+        if status == "movable":
+            await self.move_folder(folder, customer_folder_id)
+            return "moved", folder
+        return status, folder
 
     async def _create_folder(self, parent_id: str, name: str) -> FolderRef:
         data = await self._request(

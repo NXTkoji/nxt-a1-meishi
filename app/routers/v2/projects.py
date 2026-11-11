@@ -68,6 +68,20 @@ async def get_drive():
         await drive.aclose()
 
 
+async def _open_drive_or_none():
+    """Drive for read-only previews; None when it cannot be reached (preview then warns)."""
+    try:
+        return await DriveFolders.from_settings()
+    except Exception:  # noqa: BLE001
+        logger.warning("Google Drive unavailable for preview", exc_info=True)
+        return None
+
+
+async def get_drive_opener():
+    """Dependency returning the function that opens Drive (overridable in tests)."""
+    return _open_drive_or_none
+
+
 def _as_http(exc: Exception) -> HTTPException:
     if isinstance(exc, pc.ValidationError):
         return HTTPException(422, str(exc))
@@ -108,11 +122,17 @@ async def propose_project(
     body: IssueRequest,
     db: AsyncSession = Depends(get_db),
     odoo: OdooCodes = Depends(get_odoo),
+    open_drive=Depends(get_drive_opener),
 ):
+    # Drive is only needed to preview old-folder moves, so connect only when asked for
+    drive = await open_drive() if (body.legacy_codes or "").strip() else None
     try:
-        return await issue_flow.propose(db, odoo, body)
+        return await issue_flow.propose(db, odoo, body, drive)
     except (pc.ValidationError, OdooSetupError, OdooDataError) as exc:
         raise _as_http(exc)
+    finally:
+        if drive is not None:
+            await drive.aclose()
 
 
 @router.post("/projects/commit", response_model=IssueRunOut)

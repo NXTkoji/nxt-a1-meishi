@@ -460,6 +460,9 @@ class IssueRequest(BaseModel):
     create_new: bool = False                 # user rejected every candidate
     card_external_id: Optional[str] = None   # also export this card's person under the company
     include_person: bool = True
+    # Old codes of this customer, e.g. "DS176" or "DS176, P065". The old Drive folder
+    # for each is moved into the new customer folder (same Drive only).
+    legacy_codes: Optional[str] = None
 
 
 class CandidateOut(BaseModel):

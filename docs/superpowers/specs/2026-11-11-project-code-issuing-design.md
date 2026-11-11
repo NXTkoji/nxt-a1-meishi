@@ -42,7 +42,7 @@ On approval the app ensures the company exists (matching by `ref`, then `vat`, t
 
 ## Non-Goals
 
-- Renaming or renumbering any legacy folder or code. Legacy codes are kept as aliases.
+- Renaming or renumbering any legacy folder or code. Legacy codes are kept as aliases and old folders keep their names (they are moved, never renamed).
 - Replacing the card scan/export flow. It stays, but must stop creating duplicate companies.
 - The OneDrive mirror (separate scheduled job, not part of the app).
 
@@ -107,6 +107,22 @@ Executed as a resumable sequence of steps, recorded in a local state table so a 
 6. Show the final codes and links.
 
 Every step checks whether its result already exists (by `ref`, `x_project_code`, folder name) before creating, so re-running is safe.
+
+### Old customers (legacy codes and folders)
+
+When an old customer starts a new project, the request carries the optional field `legacy_codes` (for example `DS176, P065S50`). On approval the old folder for each code is **moved, with its name unchanged, into the new customer folder**, so the folder tree itself shows the customer's history:
+
+```
+C0200 <customer>/
+  C0200-DS01 <site>/        new project
+  DS176 <old site>/         old project, moved as is
+```
+
+- Step `legacy` runs after `drive_customer`. It finds a folder named `<code>` or starting with `<code> ` anywhere in the NXT Google Drive (excluding the customer folder and the NXT Customers root) and moves it with `addParents`/`removeParents`. Not found is a warning, not a failure; the code is still recorded.
+- Several folders for one code stops the run at `legacy` (nothing is moved) until the extra one is renamed or moved. A folder already inside the customer folder is left alone, so retries and later projects are safe.
+- The codes are merged into `organizations.legacy_codes` and Odoo `x_legacy_codes`. One old code can belong to only one customer (422 otherwise).
+- Propose previews this read-only ("Move old folder ... into the customer folder", or a warning that none was found).
+- **Limit:** the app's Drive token only covers the NXT Google Drive. Old folders in another Google account's Drive (for example "NXT Customers Old") or in OneDrive cannot be moved by the app. The warning says so; move them by hand, or handle them in the later bulk migration.
 
 ### Project folder template
 

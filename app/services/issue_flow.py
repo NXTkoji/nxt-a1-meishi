@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import IssueRun, Organization, OrganizationName, Project
 from app.schemas.api import CandidateOut, IssueRequest, IssueRunOut, ProposalOut
 from app.services import project_codes as pc
-from app.services.drive_folders import DriveFolders
+from app.services.drive_folders import DriveError, DriveFolders
 from app.services.odoo_codes import ROLE_TAGS, TAG_CUSTOMER, OdooCodes
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ def _clean_request(req: IssueRequest) -> tuple[Optional[str], str, List[str]]:
         if role not in ROLE_TAGS:
             raise pc.ValidationError(f"Unknown role {role!r}; use reseller or end_user")
         roles.append(role)
+    pc.parse_legacy_codes(req.legacy_codes)   # raises ValidationError on a bad old code
     return tax_id, line, roles
 
 
@@ -144,7 +145,54 @@ async def _check_tax_id_conflicts(db: AsyncSession, org: Optional[Organization],
             f"統編 {tax_id} already belongs to another customer ({await _org_name(db, other)})")
 
 
-async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest) -> ProposalOut:
+async def _check_legacy_conflicts(db: AsyncSession, org: Optional[Organization],
+                                  codes: List[str]) -> None:
+    """An old code belongs to one customer; refuse if another customer already has it."""
+    if not codes:
+        return
+    rows = (await db.scalars(select(Organization).where(Organization.legacy_codes.is_not(None)))).all()
+    for other in rows:
+        if org and other.id == org.id:
+            continue
+        clash = [c for c in codes if c in pc.parse_legacy_codes(other.legacy_codes)]
+        if clash:
+            raise pc.ValidationError(
+                f"Old code {clash[0]} already belongs to another customer "
+                f"({await _org_name(db, other)})")
+
+
+async def _legacy_preview(drive: Optional[DriveFolders], codes: List[str],
+                          customer_folder_id: Optional[str]) -> tuple[List[str], List[str]]:
+    """What approval will do about old folders. Returns (actions, warnings); read-only."""
+    actions: List[str] = []
+    warnings: List[str] = []
+    if not codes:
+        return actions, warnings
+    actions.append("Record old code(s) " + ", ".join(codes) + " as aliases of this customer")
+    if drive is None:
+        warnings.append("Google Drive could not be checked now; old folders for "
+                        + ", ".join(codes) + " will be looked for on approval.")
+        return actions, warnings
+    for code in codes:
+        try:
+            status, folder = await drive.peek_legacy_folder(code, customer_folder_id)
+        except DriveError as exc:
+            warnings.append(f"{code}: {exc}")
+            continue
+        if status == "movable":
+            actions.append(f"Move old folder {folder.name!r} into the customer folder")
+        elif status == "already_inside":
+            actions.append(f"Old folder {folder.name!r} is already inside the customer folder")
+        else:
+            warnings.append(
+                f"No folder starting with {code} was found in the NXT Google Drive. The code is "
+                "still recorded. If the folder is in another Drive or OneDrive, move it into the "
+                "customer folder by hand after approval.")
+    return actions, warnings
+
+
+async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest,
+                  drive: Optional[DriveFolders] = None) -> ProposalOut:
     tax_id, line, roles = _clean_request(req)
     if not req.org_ext_id and not (req.customer_name or "").strip():
         raise pc.ValidationError("Customer name is required")
@@ -153,6 +201,8 @@ async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest) -> Propo
     target = await _resolve_target(db, req, tax_id, (req.customer_name or "").strip())
     org = target.org
     await _check_tax_id_conflicts(db, org, tax_id)
+    legacy = pc.parse_legacy_codes(req.legacy_codes)
+    await _check_legacy_conflicts(db, org, legacy)
 
     name = (await _org_name(db, org)) if org else ""
     name = name or (req.customer_name or "").strip()
@@ -219,6 +269,10 @@ async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest) -> Propo
         actions.append("Make sure the Odoo company carries the NXT Customer tag")
     actions.append(f"Create customer and project folders in Google Drive ({out.project_code}: "
                    + ", ".join(pc_subfolders()) + ")")
+    legacy_actions, legacy_warnings = await _legacy_preview(
+        drive, legacy, org.drive_folder_id if org else None)
+    actions.extend(legacy_actions)
+    warnings.extend(legacy_warnings)
     actions.append(f"Create Odoo project {out.project_code}")
     if req.card_external_id and req.include_person:
         actions.append("Export the person on the card under the company in Odoo")
@@ -354,6 +408,23 @@ async def _step_drive_customer(c: _Ctx) -> dict:
     return {"folder_id": folder.id, "url": folder.url}
 
 
+async def _step_legacy(c: _Ctx) -> dict:
+    """Move each old folder into the customer folder (name kept) and record the old codes."""
+    codes = pc.parse_legacy_codes(c.req.legacy_codes)
+    if not codes:
+        return {"skipped": True}
+    org = c.org
+    await _check_legacy_conflicts(c.db, org, codes)
+    results: dict = {}
+    for code in codes:
+        status, folder = await c.drive.move_legacy_folder(code, org.drive_folder_id)
+        results[code] = {"status": status, "name": folder.name if folder else None}
+    org.legacy_codes = pc.merge_legacy_codes(org.legacy_codes, codes)
+    await _in_thread(c.odoo.update_company, org.odoo_partner_id, {"x_legacy_codes": org.legacy_codes})
+    await c.db.commit()
+    return results
+
+
 async def _step_local_project(c: _Ctx) -> dict:
     db, org = c.db, c.org
     project = await db.get(Project, c.run.project_id) if c.run.project_id else None
@@ -430,6 +501,7 @@ _STEPS: List[tuple[str, Callable[[_Ctx], Awaitable[dict]]]] = [
     ("customer_id", _step_customer_id),
     ("odoo_company", _step_odoo_company),
     ("drive_customer", _step_drive_customer),
+    ("legacy", _step_legacy),
     ("local_project", _step_local_project),
     ("odoo_project", _step_odoo_project),
     ("drive_project", _step_drive_project),
@@ -450,13 +522,15 @@ async def _execute(db: AsyncSession, odoo: OdooCodes, drive: DriveFolders,
         c.name = await _org_name(db, await _org_by_ext(db, req.chosen_org_ext_id))
 
     run.status, run.error = "running", None
+    run_ext_id = run.external_id          # read now: a rollback below expires the row
     failed_step = None
     for step_name, fn in _STEPS:
         try:
             steps[step_name] = await fn(c)
         except Exception as exc:  # noqa: BLE001 - report any failure, keep what was done
             await db.rollback()
-            logger.exception("Issue run %s failed at %s", run.external_id, step_name)
+            await db.refresh(run)
+            logger.exception("Issue run %s failed at %s", run_ext_id, step_name)
             failed_step = step_name
             run.status = "failed"
             run.error = f"{step_name}: {exc}"
