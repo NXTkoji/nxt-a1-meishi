@@ -71,8 +71,14 @@ async def _export_one(
     db: AsyncSession,
     card: Card,
     destination: str,
+    company_partner_id: int | None = None,
 ) -> ExportResultItem:
-    """Run one export and persist the result to CardSyncHistory."""
+    """Run one export and persist the result to CardSyncHistory.
+
+    company_partner_id: Odoo company to put the person under. When omitted, the
+    card's first organization is used if it is already linked to an Odoo company
+    (an NXT customer), so exports land under the customer instead of a duplicate.
+    """
     ext_id = card.external_id
     person = card.person
     contact_details = person.contact_details
@@ -87,7 +93,9 @@ async def _export_one(
         if destination == "odoo":
             from app.services.odoo_sync import sync_to_odoo
             existing_odoo_id = card.odoo_partner_id
-            odoo_id = await sync_to_odoo(legacy, existing_odoo_id)
+            if company_partner_id is None and positions:
+                company_partner_id = positions[0].organization.odoo_partner_id
+            odoo_id = await sync_to_odoo(legacy, existing_odoo_id, company_partner_id)
             if odoo_id:
                 result = "updated" if existing_odoo_id else "created"
                 card.odoo_partner_id = odoo_id

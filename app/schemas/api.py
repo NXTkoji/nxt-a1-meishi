@@ -288,6 +288,12 @@ class OrgOut(BaseModel):
     external_id: str
     created_at: datetime
     names: List[OrgNameOut] = Field(default_factory=list)
+    # NXT customer / project-code fields
+    is_nxt_customer: bool = False
+    tax_id: Optional[str] = None
+    customer_code: Optional[str] = None
+    drive_url: Optional[str] = None
+    legacy_codes: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -297,6 +303,8 @@ class OrgListItem(BaseModel):
     external_id: str
     primary_name: Optional[str] = None
     created_at: datetime
+    is_nxt_customer: bool = False
+    customer_code: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -431,3 +439,82 @@ class MergeRequest(BaseModel):
 class MergeResult(BaseModel):
     person: PersonOut
     duplicate_contact_count: int
+
+
+# ---------------------------------------------------------------------------
+# Project code issuing (NXT customers only)
+# ---------------------------------------------------------------------------
+
+class IssueRequest(BaseModel):
+    # An organization already in the app (for example the one on the card being
+    # reviewed). Leave empty to issue for a customer typed in by hand.
+    org_ext_id: Optional[str] = None
+    customer_name: Optional[str] = None      # required when org_ext_id is empty
+    tax_id: Optional[str] = None             # 統一編號
+    phone: Optional[str] = None              # match key when there is no 統編
+    product_line: str                        # DS or DJ
+    site_name: str
+    roles: List[str] = Field(default_factory=list)   # reseller, end_user
+    sold_via_org_ext_id: Optional[str] = None        # the reseller, if any
+    chosen_org_ext_id: Optional[str] = None  # the user's pick among candidates
+    create_new: bool = False                 # user rejected every candidate
+    card_external_id: Optional[str] = None   # also export this card's person under the company
+    include_person: bool = True
+
+
+class CandidateOut(BaseModel):
+    org_ext_id: str
+    name: str
+    customer_code: Optional[str] = None
+    tax_id: Optional[str] = None
+    reason: str
+    confidence: float
+    auto: bool
+
+
+class ProposalOut(BaseModel):
+    customer_mode: str                       # "existing" or "new"
+    org_ext_id: Optional[str] = None
+    customer_name: str
+    tax_id: Optional[str] = None
+    customer_code: Optional[str] = None            # existing customers
+    suggested_customer_code: Optional[str] = None  # new customers; a preview only
+    needs_choice: bool = False
+    candidates: List[CandidateOut] = Field(default_factory=list)
+    project_code: Optional[str] = None
+    project_code_tentative: bool = False
+    product_line: str
+    site_name: str
+    sold_via_name: Optional[str] = None
+    actions: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class IssueRunOut(BaseModel):
+    run_id: str
+    status: str                              # done or failed
+    failed_step: Optional[str] = None
+    error: Optional[str] = None
+    steps: dict = Field(default_factory=dict)
+    customer_code: Optional[str] = None
+    project_code: Optional[str] = None
+    customer_drive_url: Optional[str] = None
+    project_drive_url: Optional[str] = None
+    odoo_partner_id: Optional[int] = None
+    odoo_project_id: Optional[int] = None
+
+
+class ResolveRequest(BaseModel):
+    tax_id: Optional[str] = None
+    phone: Optional[str] = None
+    name: Optional[str] = None
+
+
+class ResolveOut(BaseModel):
+    candidates: List[CandidateOut] = Field(default_factory=list)
+    odoo_customer_code: Optional[str] = None   # a company already in Odoo with this 統編
+    odoo_company_name: Optional[str] = None
+
+
+class NxtCustomerToggle(BaseModel):
+    enabled: bool

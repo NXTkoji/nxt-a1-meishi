@@ -47,7 +47,11 @@ async def list_organizations(
             .order_by(OrganizationName.id.asc())
             .limit(1)
         )
-        items.append(OrgListItem(id=org.id, external_id=org.external_id, primary_name=primary, created_at=org.created_at))
+        items.append(OrgListItem(
+            id=org.id, external_id=org.external_id, primary_name=primary,
+            created_at=org.created_at, is_nxt_customer=org.is_nxt_customer,
+            customer_code=org.customer_code,
+        ))
     return items
 
 

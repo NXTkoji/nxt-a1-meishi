@@ -28,10 +28,10 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 - Tests: full success, failure at the Drive step then retry (no duplicates), existing customer (project only), reseller `sold_via`.
 
 ## Task 6 — API routes
-- `app/routers/v2/projects.py`: `POST /api/v2/customers/resolve`, `POST /api/v2/projects/propose`, `POST /api/v2/projects/commit`, `POST /api/v2/projects/{id}/retry`; register in `app/main.py`; schemas in `app/schemas/api.py`.
+- `app/routers/v2/projects.py`: `POST /api/v2/customers/resolve`, `POST /api/v2/projects/propose`, `POST /api/v2/projects/commit`, `POST /api/v2/projects/runs/{run_id}/retry`, `GET /api/v2/projects`, `PUT /api/v2/organizations/{org}/nxt-customer`; register in `app/main.py`; schemas in `app/schemas/api.py`.
 
 ## Task 7 — UI
-- "NXT customer" switch in the card editor and organization view (default off). Everything below is hidden unless it is on; with it off the existing card flow is unchanged. Toggling it also sets or removes the Odoo tag `NXT Customer` on the company.
+- "NXT customer" switch in the card editor and organization view (default off). Everything below is hidden unless it is on; with it off the existing card flow is unchanged. Toggling it calls `PUT /api/v2/organizations/{org}/nxt-customer`. The switch is local only; the Odoo tag `NXT Customer` is added when a Customer ID is issued. Once issued, the switch cannot be turned off (the API returns 409).
 - On approval, after the company step, create or update the card's person as a child of the company using the existing `sync_to_odoo`; the review card has a checkbox to skip this.
 - Organization view: "Issue project code" button, form (統編, phone, product line, site name, sold via, role), review card showing match, suggested codes and what will be created, Approve button, final result with links and a Retry button on failure. Add Traditional Chinese strings in `i18n.ts`.
 
@@ -54,12 +54,12 @@ Status is updated by each PR. Mark a task done only when its tests pass.
 
 | Task | Status |
 |---|---|
-| 1 Migration | not started |
-| 2 Validation and matching | not started |
-| 3 Odoo client additions | not started |
-| 4 Drive folders | not started |
-| 5 Propose and commit | not started |
-| 6 API routes | not started |
+| 1 Migration | done (mocked tests pass) |
+| 2 Validation and matching | done (mocked tests pass) |
+| 3 Odoo client additions | done (mocked tests pass) |
+| 4 Drive folders | done (mocked tests pass) |
+| 5 Propose and commit | done (mocked tests pass) |
+| 6 API routes | done (mocked tests pass) |
 | 7 UI | not started |
 | 8 Live verification | not started |
 
@@ -67,3 +67,20 @@ Split: tasks 1-6 are backend with mocked Odoo and Drive (no credentials needed).
 
 Live verification needs these `.env` values: `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_PASSWORD`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` (must include Drive scope; mint with `scripts/get_drive_refresh_token.py`), and the new `GOOGLE_DRIVE_CUSTOMERS_FOLDER_ID` (the folder id of NXT Customers on the NXT Google Drive).
 Use a clearly named test customer, for example `ZZ TEST 請刪除`, and delete the Odoo records and Drive folders afterwards.
+
+## What the backend does (tasks 1-6, for whoever builds the UI)
+- `POST /api/v2/projects/propose` takes an `IssueRequest` (see `app/schemas/api.py`) and returns a `ProposalOut`: `customer_mode` (`existing`/`new`), `customer_code` or a tentative `suggested_customer_code`, `project_code`, `candidates` and `needs_choice` (fuzzy name matches; the user must pick one or send `create_new: true`), `actions` (what approval will do) and `warnings`. It creates nothing and consumes no sequence number.
+- `POST /api/v2/projects/commit` takes the same body (plus `chosen_org_ext_id` / `create_new` from the user's choice). It returns an `IssueRunOut`. On a partial failure `status` is `failed` with `failed_step` and `error`; the UI shows a Retry button that calls `POST /api/v2/projects/runs/{run_id}/retry`.
+- Validation problems (bad 統編 checksum, unknown product line, 統編 owned by another customer, reseller not yet issued) are HTTP 422 with a readable `detail`.
+- Odoo or Drive not configured: 503. Odoo data problem (duplicate Customer ID): 409.
+- Plain card exports now put the person under the organization's Odoo company when it has one (`organizations.odoo_partner_id`), and the name lookup ignores legal forms and prefers a company with a Customer ID.
+- Run tests with `.venv/bin/python -m pytest tests -q`. New test files: `test_project_codes.py`, `test_odoo_codes.py`, `test_drive_folders.py`, `test_issue_flow.py`; fakes in `tests/fake_odoo.py`.
+
+## Live verification checklist (task 8; the fakes cannot prove these)
+1. The Odoo API user can call `ir.sequence.next_by_code('nxt.customer')` and read `number_next_actual` (permissions differ from the admin account used to create the sequence).
+2. The API user can read and write the new `x_*` fields on `res.partner` and `project.project`, and create `res.partner.category` tags (they already exist: look up by name).
+3. `project.project` create works with only `name`, `partner_id` and the x_ fields (some Odoo setups require more, such as a company or alias).
+4. The Google refresh token has Drive scope and can create folders inside `GOOGLE_DRIVE_CUSTOMERS_FOLDER_ID`.
+5. Drive folder names containing 中文 and "&" are created as expected.
+6. A card export for a person at an issued customer lands under the company, and one for a non-customer behaves as before.
+7. Delete the test customer's Odoo records and Drive folders afterwards.

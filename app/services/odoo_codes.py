@@ -14,6 +14,7 @@ import logging
 from typing import Any, Iterable, List, Optional
 
 from app.services import odoo_sync
+from app.services.project_codes import normalize_org_name, strip_legal_forms
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,20 @@ class OdooCodes:
             if rows:
                 return rows[0]
         return None
+
+    def find_companies_by_name(self, name: str) -> List[dict]:
+        """Company partners whose name matches `name` ignoring case, width, spacing
+        and legal form. Used to adopt a company created earlier by a card export
+        instead of creating a second one."""
+        core = strip_legal_forms(name) or name
+        ids = self._call("res.partner", "search", [
+            ["&", ["is_company", "=", True], "|", ["name", "=", name], ["name", "ilike", core]]
+        ])
+        if not ids:
+            return []
+        wanted = normalize_org_name(name)
+        rows = self._call("res.partner", "read", [ids], {"fields": COMPANY_FIELDS})
+        return [r for r in rows if normalize_org_name(r["name"]) == wanted]
 
     def ensure_tag_ids(self, names: Iterable[str]) -> List[int]:
         ids: List[int] = []
