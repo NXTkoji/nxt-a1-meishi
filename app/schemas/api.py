@@ -219,6 +219,7 @@ class OrgNameOut(BaseModel):
 class PositionOut(BaseModel):
     id: int
     org_id: int
+    org_ext_id: Optional[str] = None   # lets the UI address the organization's NXT customer panel
     status: str
     org_names: List[OrgNameOut] = Field(default_factory=list)
     details: List[PositionDetailOut] = Field(default_factory=list)

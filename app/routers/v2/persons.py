@@ -128,6 +128,7 @@ async def _load_person_out(db: AsyncSession, person: Person) -> PersonOut:
         positions_out.append(PositionOut(
             id=pos.id,
             org_id=pos.org_id,
+            org_ext_id=org.external_id if org else None,
             status=pos.status,
             org_names=[OrgNameOut(id=on.id, language=on.language, name=on.name, is_current=on.is_current) for on in org_names],
             details=[PositionDetailOut(id=d.id, language=d.language, title=d.title, department=d.department) for d in pos_details],

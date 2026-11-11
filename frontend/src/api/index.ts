@@ -1,4 +1,4 @@
-import { get, post, patch, del, uploadFile } from './client'
+import { get, post, put, patch, del, uploadFile } from './client'
 import type {
   Card,
   CardFacet,
@@ -205,3 +205,23 @@ export const runExport = (body: {
 
 // Re-export sessions API
 export * from './sessions'
+
+
+// NXT customers: Customer ID and project code issuing (propose, then approve)
+export const getOrganization = (orgExtId: string) =>
+  get<import('../types').OrgInfo>(`/api/v2/organizations/${orgExtId}`)
+
+export const listOrganizations = () =>
+  get<import('../types').OrgListItem[]>('/api/v2/organizations?limit=200')
+
+export const setNxtCustomer = (orgExtId: string, enabled: boolean) =>
+  put<import('../types').OrgInfo>(`/api/v2/organizations/${orgExtId}/nxt-customer`, { enabled })
+
+export const proposeProject = (body: import('../types').IssueRequest) =>
+  post<import('../types').IssueProposal>('/api/v2/projects/propose', body)
+
+export const commitProject = (body: import('../types').IssueRequest) =>
+  post<import('../types').IssueRun>('/api/v2/projects/commit', body)
+
+export const retryIssueRun = (runId: string) =>
+  post<import('../types').IssueRun>(`/api/v2/projects/runs/${runId}/retry`)

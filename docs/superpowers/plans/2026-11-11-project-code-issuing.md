@@ -33,7 +33,7 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 ## Task 6b — Old customers (done)
 - `IssueRequest.legacy_codes`; `project_codes.parse_legacy_codes/merge_legacy_codes`; `DriveFolders.find_folders_by_code/peek_legacy_folder/move_legacy_folder`; issue step `legacy` after `drive_customer`; propose previews the move (its router takes Drive lazily through `get_drive_opener`, only when `legacy_codes` is sent).
 
-## Task 7 — UI
+## Task 7 — UI (built: `frontend/src/components/NxtCustomerPanel.tsx`, shown under each organization in `PersonEditor`; `PositionOut.org_ext_id` added so the panel can address the organization)
 - "NXT customer" switch in the card editor and organization view (default off). Everything below is hidden unless it is on; with it off the existing card flow is unchanged. Toggling it calls `PUT /api/v2/organizations/{org}/nxt-customer`. The switch is local only; the Odoo tag `NXT Customer` is added when a Customer ID is issued. Once issued, the switch cannot be turned off (the API returns 409).
 - On approval, after the company step, create or update the card's person as a child of the company using the existing `sync_to_odoo`; the review card has a checkbox to skip this.
 - Organization view: "Issue project code" button, form (統編, phone, product line, site name, sold via, role, optional "old codes" such as DS176), review card showing match, suggested codes and what will be created, Approve button, final result with links and a Retry button on failure. Add Traditional Chinese strings in `i18n.ts`.
@@ -64,7 +64,7 @@ Status is updated by each PR. Mark a task done only when its tests pass.
 | 5 Propose and commit | done (mocked tests pass) |
 | 6 API routes | done (mocked tests pass) |
 | 6b Old customers (legacy codes, move old folder) | done (mocked tests pass) |
-| 7 UI | not started |
+| 7 UI | built (type-check and production build pass); needs a look in the browser on the Mac |
 | 8 Live verification | not started |
 
 Split: tasks 1-6 are backend with mocked Odoo and Drive (no credentials needed). Tasks 7-8 need a local machine: the UI needs a browser check, and live verification needs the real `.env`.
