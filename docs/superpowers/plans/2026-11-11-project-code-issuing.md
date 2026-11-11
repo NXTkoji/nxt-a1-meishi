@@ -41,3 +41,29 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 ## Later phases (not in this plan)
 - Backfill and dedupe of existing customers (separate spec).
 - Scheduled Drive-to-OneDrive mirror.
+
+## Odoo state (already created on 2026-11-11, do not recreate)
+- `ir.sequence` id 77: code `nxt.customer`, prefix `C`, padding 4, next number 200. Draw with `ir.sequence.next_by_code('nxt.customer')`; peek with `number_next_actual` (read only).
+- `res.partner` fields: `x_legacy_codes` (char), `x_drive_url` (char). Native fields used: `ref` (Customer ID), `vat` (統編), `category_id`, `parent_id`.
+- `project.project` fields: `x_project_code` (char), `x_product_line` (selection `DS`/`DJ`), `x_sold_via` (many2one res.partner), `x_drive_url` (char).
+- `res.partner.category` tags: `NXT Customer` (id 9), `NXT Reseller` (id 10), `NXT End User` (id 11). Look tags up by name, not id.
+- Legacy codes (DS###, P###, P###S##, DJ###) are NOT in Odoo yet; the backfill is a later phase.
+
+## Handoff
+Status is updated by each PR. Mark a task done only when its tests pass.
+
+| Task | Status |
+|---|---|
+| 1 Migration | not started |
+| 2 Validation and matching | not started |
+| 3 Odoo client additions | not started |
+| 4 Drive folders | not started |
+| 5 Propose and commit | not started |
+| 6 API routes | not started |
+| 7 UI | not started |
+| 8 Live verification | not started |
+
+Split: tasks 1-6 are backend with mocked Odoo and Drive (no credentials needed). Tasks 7-8 need a local machine: the UI needs a browser check, and live verification needs the real `.env`.
+
+Live verification needs these `.env` values: `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_PASSWORD`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` (must include Drive scope; mint with `scripts/get_drive_refresh_token.py`), and the new `GOOGLE_DRIVE_CUSTOMERS_FOLDER_ID` (the folder id of NXT Customers on the NXT Google Drive).
+Use a clearly named test customer, for example `ZZ TEST 請刪除`, and delete the Odoo records and Drive folders afterwards.
