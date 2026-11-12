@@ -24,7 +24,10 @@ TAG_RESELLER = "NXT Reseller"
 TAG_END_USER = "NXT End User"
 ROLE_TAGS = {"reseller": TAG_RESELLER, "end_user": TAG_END_USER}
 
-COMPANY_FIELDS = ["name", "ref", "vat", "x_drive_url", "x_legacy_codes", "category_id"]
+# Company details filled from the card's work contacts (see company_details.py);
+# read back so an existing company only gets the ones still empty in Odoo
+DETAIL_FIELDS = ["x_studio_name_2nd_language", "street", "country_id", "phone", "x_fax", "website"]
+COMPANY_FIELDS = ["name", "ref", "vat", "x_drive_url", "x_legacy_codes", "category_id"] + DETAIL_FIELDS
 
 
 class OdooSetupError(RuntimeError):
@@ -102,6 +105,13 @@ class OdooCodes:
         wanted = normalize_org_name(name)
         rows = self._call("res.partner", "read", [ids], {"fields": COMPANY_FIELDS})
         return [r for r in rows if normalize_org_name(r["name"]) == wanted]
+
+    def country_id(self, code: str) -> Optional[int]:
+        """Odoo res.country id for an ISO code such as "TW"; None if unknown."""
+        if not code:
+            return None
+        found = self._call("res.country", "search", [[["code", "=", code.upper()]]], {"limit": 1})
+        return found[0] if found else None
 
     def ensure_tag_ids(self, names: Iterable[str]) -> List[int]:
         ids: List[int] = []

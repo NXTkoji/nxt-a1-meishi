@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import IssueRun, Organization, OrganizationName, Project
 from app.schemas.api import CandidateOut, IssueRequest, IssueRunOut, ProposalOut
+from app.services import company_details
 from app.services import project_codes as pc
 from app.services.drive_folders import (
     CUSTOMER_SUBFOLDERS, PROJECT_SUBFOLDERS, DriveError, DriveFolders,
@@ -269,6 +270,13 @@ async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest,
     else:
         actions.append(f"Use existing customer {out.customer_code}")
         actions.append("Make sure the Odoo company carries the NXT Customer tag")
+    if org:
+        details = await company_details.gather(db, org.id, name, req.card_external_id)
+        filled = [label for label, value in [
+            ("other names", details.other_names), ("address", details.address),
+            ("phone", details.phone), ("fax", details.fax), ("website", details.website)] if value]
+        if filled:
+            actions.append("Add to the Odoo company where empty: " + ", ".join(filled))
     actions.append("Create the customer folder in Google Drive with "
                    + ", ".join(CUSTOMER_SUBFOLDERS))
     actions.append(f"Create project folder {out.project_code} with " + ", ".join(PROJECT_SUBFOLDERS))
@@ -375,8 +383,12 @@ async def _step_odoo_company(c: _Ctx) -> dict:
                              "merge them in Odoo first, then retry")
         company = matches[0] if matches else None
 
+    # Other-language names, address, phone, fax and website, from the work contacts
+    details = await company_details.gather(c.db, org.id, c.name, c.req.card_external_id)
+    detail_vals = details.odoo_vals(await _in_thread(odoo.country_id, details.country_code))
+
     if company is None:
-        vals = {"name": c.name, "ref": code}
+        vals = {"name": c.name, "ref": code, **detail_vals}
         if org.tax_id:
             vals["vat"] = org.tax_id
         partner_id = await _in_thread(odoo.create_company, vals, tags)
@@ -390,6 +402,8 @@ async def _step_odoo_company(c: _Ctx) -> dict:
             vals["ref"] = code
         if org.tax_id and not company.get("vat"):
             vals["vat"] = org.tax_id
+        # Fill only what Odoo does not have yet; never overwrite edits made in Odoo
+        vals.update({k: v for k, v in detail_vals.items() if not company.get(k)})
         await _in_thread(odoo.update_company, company["id"], vals, tags)
         partner_id, created = company["id"], False
     org.odoo_partner_id = partner_id
