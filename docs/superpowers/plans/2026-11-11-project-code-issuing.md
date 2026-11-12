@@ -47,7 +47,7 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 
 ## Odoo state (already created on 2026-11-11, do not recreate)
 - `ir.sequence` id 77: code `nxt.customer`, prefix `C`, padding 4, next number 200. Draw with `ir.sequence.next_by_code('nxt.customer')`; peek with `number_next_actual` (read only).
-- `res.partner` fields: `x_legacy_codes` (char), `x_drive_url` (char). Native fields used: `ref` (Customer ID), `vat` (統編), `category_id`, `parent_id`.
+- `res.partner` fields: `x_legacy_codes` (char), `x_drive_url` (char), `x_fax` (char, "Fax", created 2026-11-12; Odoo 18 has no fax field). Native fields used: `ref` (Customer ID), `vat` (統編), `category_id`, `parent_id`, and for company details `street`, `country_id`, `phone`, `website`, `x_studio_name_2nd_language` (other-language names joined with " / ").
 - `project.project` fields: `x_project_code` (char), `x_product_line` (selection `DS`/`DJ`), `x_sold_via` (many2one res.partner), `x_drive_url` (char).
 - `res.partner.category` tags: `NXT Customer` (id 9), `NXT Reseller` (id 10), `NXT End User` (id 11). Look tags up by name, not id.
 - Legacy codes (DS###, P###, P###S##, DJ###) are NOT in Odoo yet; the backfill is a later phase.
