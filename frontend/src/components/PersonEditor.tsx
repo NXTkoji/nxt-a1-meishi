@@ -674,7 +674,13 @@ export function PersonEditor({
 
             {/* NXT customer switch and project-code issuing (hidden detail unless switched on) */}
             {pos.org_ext_id && (
-              <NxtCustomerPanel orgExtId={pos.org_ext_id} orgName={pos.org_names[0]?.name ?? ''} cardExtId={cardExtId} />
+              <NxtCustomerPanel
+                orgExtId={pos.org_ext_id}
+                orgName={pos.org_names[0]?.name ?? ''}
+                cardExtId={cardExtId}
+                // 統一編號 printed on the card, used to prefill the 統編 field
+                cardTaxId={getWorkContactsForPos(pi).find(d => d.detail_type === 'gui_number')?.value}
+              />
             )}
           </div>
         </section>

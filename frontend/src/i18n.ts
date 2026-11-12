@@ -147,6 +147,7 @@ const translations = {
     // NXT customer / project codes
     nxtSection: 'NXT顧客',
     nxtSwitchLabel: 'NXT顧客として管理',
+    nxtIssueAfterSave: '保存すると NXT 顧客として登録されます。プロジェクトコードは保存後に名刺ページから発行してください。',
     nxtSwitchLocked: '顧客ID発行済みのためオフにできません',
     nxtCustomerId: '顧客ID',
     nxtDriveFolder: 'Driveフォルダ',
@@ -484,6 +485,7 @@ const translations = {
     // NXT customer / project codes
     nxtSection: 'NXT customer',
     nxtSwitchLabel: 'Manage as NXT customer',
+    nxtIssueAfterSave: 'Saved as an NXT customer. Issue the project code from the card page after saving.',
     nxtSwitchLocked: 'Cannot be turned off once a Customer ID is issued',
     nxtCustomerId: 'Customer ID',
     nxtDriveFolder: 'Drive folder',
@@ -820,6 +822,7 @@ const translations = {
     // NXT customer / project codes
     nxtSection: 'NXT 客戶',
     nxtSwitchLabel: '設為 NXT 客戶',
+    nxtIssueAfterSave: '儲存後即設為 NXT 客戶。請於儲存後在名片頁面核發專案編號。',
     nxtSwitchLocked: '已核發客戶編號，無法關閉',
     nxtCustomerId: '客戶編號',
     nxtDriveFolder: 'Drive 資料夾',

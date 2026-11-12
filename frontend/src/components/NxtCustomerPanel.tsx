@@ -58,11 +58,13 @@ function FolderLink({ url, label }: { url?: string | null; label: string }) {
   )
 }
 
-export function NxtCustomerPanel({ orgExtId, orgName, cardExtId }: {
+export function NxtCustomerPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
   orgExtId: string
   orgName: string
   /** Card whose person is exported under the company on approval; absent = no person step */
   cardExtId?: string
+  /** 統一編號 read from the card; prefills the 統編 field */
+  cardTaxId?: string
 }) {
   const { t } = useLang()
   const { showToast } = useToast()
@@ -74,7 +76,8 @@ export function NxtCustomerPanel({ orgExtId, orgName, cardExtId }: {
   })
 
   const [formOpen, setFormOpen] = useState(false)
-  const [taxId, setTaxId] = useState('')
+  // Digits only: cards print it as "統一編號：90270905" or with spaces
+  const [taxId, setTaxId] = useState((cardTaxId ?? '').replace(/\D/g, ''))
   const [phone, setPhone] = useState('')
   const [line, setLine] = useState('DS')
   const [site, setSite] = useState('')

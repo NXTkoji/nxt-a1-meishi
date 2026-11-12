@@ -499,6 +499,13 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
         }),
     })
 
+  // NXT customer switch for one organization; saving the card turns it on for the org
+  const setNxtCustomer = (pi: number, enabled: boolean) =>
+    onChange({
+      ...parsed,
+      positions: parsed.positions.map((p, idx) => (idx === pi ? { ...p, is_nxt_customer: enabled } : p)),
+    })
+
   const addOrg = () =>
     onChange({
       ...parsed,
@@ -576,12 +583,24 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
         <section key={pi} className="rounded-lg border border-gray-200">
           <div className="bg-gray-50 px-3 py-1.5 flex items-center gap-2">
             <span className="font-medium text-xs text-gray-600">{t.orgSection(pi + 1)}</span>
+            {/* Saved with the card; the project code is issued later from the card page */}
+            <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-700">
+              <input
+                type="checkbox"
+                checked={pos.is_nxt_customer ?? false}
+                onChange={e => setNxtCustomer(pi, e.target.checked)}
+              />
+              {t.nxtSwitchLabel}
+            </label>
             {parsed.positions.length > 1 && (
-              <button className="ml-auto text-xs text-red-400 hover:text-red-600" onClick={() => deleteOrg(pi)}>
+              <button className="text-xs text-red-400 hover:text-red-600" onClick={() => deleteOrg(pi)}>
                 {t.removeLabel}
               </button>
             )}
           </div>
+          {pos.is_nxt_customer && (
+            <p className="px-3 pt-1.5 text-xs text-blue-700">{t.nxtIssueAfterSave}</p>
+          )}
           <div className="px-3 pt-1">
             {pos.org_names.map((on, oi) => (
               <div key={oi} className="flex items-center gap-1">

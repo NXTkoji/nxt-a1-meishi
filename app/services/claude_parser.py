@@ -79,7 +79,7 @@ _SCHEMA = """\
   ],
   "contact_details": [
     {
-      "detail_type": "phone_work|phone_mobile|phone_fax|email_work|email_personal|address_work|address_home|url_website|social_wechat|social_line|social_linkedin|social_other",
+      "detail_type": "phone_work|phone_mobile|phone_fax|email_work|email_personal|address_work|address_home|url_website|gui_number|social_wechat|social_line|social_linkedin|social_other",
       "value": {"value": "...", "confidence": 1.0},
       "label": "original label printed on card or null",
       "country_code": "ISO 3166-1 alpha-2 code for address_* types (e.g. JP, US, TW) or null"
@@ -111,6 +111,8 @@ EXTRACTION RULES:
    (e.g. JP for Japan, US for USA, TW for Taiwan, CN for China). Omit only
    if country truly cannot be determined.
 6. Social: WeChat ID (微信) → social_wechat, LINE ID → social_line.
+   Company tax number: 統一編號/統編/GUI No./Tax ID (Taiwan, 8 digits) →
+   gui_number, digits only.
 7. Back/additional sides: MERGE information — do not duplicate. Use extra
    sides to fill in missing language versions or additional contact details.
 8. Return ONLY the JSON object. No markdown fences, no explanation."""

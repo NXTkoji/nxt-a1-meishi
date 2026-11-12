@@ -686,6 +686,8 @@ async def _confirm_one_card(
             draft_position_ids.append(None)
             continue
         org = await _find_or_create_org(db, parsed_pos.org_names)
+        if parsed_pos.is_nxt_customer:
+            org.is_nxt_customer = True
 
         # Find or create position
         pos = await db.scalar(
