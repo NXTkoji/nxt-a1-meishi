@@ -18,6 +18,10 @@ class Position(BaseModel):
     department: str = ""
     title: str = ""
     title_english: str = ""
+    # This organization's work phone and address from the card (copied to the Odoo company)
+    phone: str = ""
+    address: str = ""
+    address_country_code: str = ""
 
 
 class Phone(BaseModel):

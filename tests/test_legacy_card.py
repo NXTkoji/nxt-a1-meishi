@@ -55,7 +55,7 @@ def _plain_card(title_lang="zh-TW"):
     """Duck-typed card for build_legacy_card: one zh-TW position and a work address."""
     from types import SimpleNamespace as NS
     org = NS(names=[NS(name="誠實化工機械有限公司", language="zh-TW", is_current=True)])
-    pos = NS(organization=org, details=[NS(language=title_lang, title="經理", department=None)])
+    pos = NS(id=1, organization=org, details=[NS(language=title_lang, title="經理", department=None)])
     person = NS(names=[NS(full_name="張煒南", language="zh-TW", name_type="primary", is_current=True)],
                 relationships_from=[], birthday=None, notes=None)
     contacts = [NS(detail_type="address_work", value="302新竹縣竹北市新溪街175巷36號",
@@ -91,3 +91,70 @@ def test_odoo_export_sends_title_and_address(monkeypatch):
     assert rec["function"] == "經理"
     assert rec["street"] == "302新竹縣竹北市新溪街175巷36號"
     assert rec["parent_id"] == company
+
+
+# ── The company gets the card's work address and phone ──────────────────────
+
+def _two_org_card():
+    """A person at two organizations; each work contact names its own by "_pos:N"."""
+    from types import SimpleNamespace as NS
+    a = NS(names=[NS(name="Elsewhere Ltd", language="en", is_current=True)])
+    b = NS(names=[NS(name="誠實化工機械有限公司", language="zh-TW", is_current=True)])
+    # Passed in id order 7, 3: the labels count positions by id, so 3 is index 0
+    positions = [NS(id=7, organization=b, details=[]), NS(id=3, organization=a, details=[])]
+    person = NS(names=[NS(full_name="張煒南", language="zh-TW", name_type="primary", is_current=True)],
+                relationships_from=[], birthday=None, notes=None)
+
+    def cd(t, v, label=None, cc=None):
+        return NS(detail_type=t, value=v, label=label, country_code=cc)
+
+    contacts = [
+        cd("phone_work", "02-1111111"),                                   # index 0: Elsewhere
+        cd("phone_work", "03-5551234", "_pos:1"),                          # index 1: 誠實化工
+        cd("address_work", "302新竹縣竹北市新溪街175巷36號", "_pos:1", "TW"),
+        cd("phone_mobile", "0937-547848"),                                 # personal
+    ]
+    card = NS(my_company_links=[], occasion=None, occasion_label=None,
+              received_date=None, received_location=None, notes=None)
+    return card, person, contacts, positions
+
+
+def test_each_position_carries_its_own_work_address_and_phone():
+    from app.services.legacy_card import build_legacy_card
+    first, second = build_legacy_card(*_two_org_card()).person.positions
+    assert first.company == "誠實化工機械有限公司"
+    assert (first.phone, first.address, first.address_country_code) == (
+        "03-5551234", "302新竹縣竹北市新溪街175巷36號", "TW")
+    assert (second.company, second.phone, second.address) == ("Elsewhere Ltd", "02-1111111", "")
+
+
+def _export(monkeypatch, fake, company_partner_id=None):
+    from app.services import odoo_sync
+    from app.services.legacy_card import build_legacy_card
+    monkeypatch.setattr(odoo_sync, "_get_odoo_clients", lambda: (None, fake, 1))
+    legacy = build_legacy_card(*_two_org_card())
+    return asyncio.run(odoo_sync.sync_to_odoo(legacy, None, company_partner_id))
+
+
+def test_new_company_from_an_export_gets_address_and_phone(monkeypatch):
+    from tests.fake_odoo import FakeOdoo
+    fake = FakeOdoo()
+    tw = fake.add("res.country", name="Taiwan", code="TW")
+    _export(monkeypatch, fake)
+    co = next(r for r in fake.rows("res.partner") if r.get("is_company"))
+    assert co["name"] == "誠實化工機械有限公司"
+    assert co["street"] == "302新竹縣竹北市新溪街175巷36號" and co["country_id"] == tw
+    assert co["phone"] == "03-5551234"
+    assert not co.get("mobile")
+
+
+def test_export_only_fills_what_the_company_lacks(monkeypatch):
+    from tests.fake_odoo import FakeOdoo
+    fake = FakeOdoo()
+    fake.add("res.country", name="Taiwan", code="TW")
+    company = fake.add("res.partner", name="誠實化工機械有限公司", is_company=True, ref="C0201",
+                       phone="03-9999999", street="", country_id=False)
+    _export(monkeypatch, fake, company)
+    co = fake.data["res.partner"][company]
+    assert co["phone"] == "03-9999999"                  # edited in Odoo: kept
+    assert co["street"] == "302新竹縣竹北市新溪街175巷36號"
