@@ -72,6 +72,7 @@ def build_legacy_card(
             phone=work_phone.value if work_phone else "",
             address=work_address.value if work_address else "",
             address_country_code=(work_address.country_code or "") if work_address else "",
+            odoo_partner_id=getattr(pos.organization, "odoo_partner_id", None),
         ))
 
     phones, emails, addresses = [], [], []

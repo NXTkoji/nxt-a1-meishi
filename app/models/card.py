@@ -22,6 +22,8 @@ class Position(BaseModel):
     phone: str = ""
     address: str = ""
     address_country_code: str = ""
+    # Odoo company already linked to this organization (organizations.odoo_partner_id)
+    odoo_partner_id: int | None = None
 
 
 class Phone(BaseModel):

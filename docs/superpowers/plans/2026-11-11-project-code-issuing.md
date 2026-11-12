@@ -16,7 +16,7 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 
 ## Task 3 — Odoo client additions
 - In `odoo_sync.py` (or a new `odoo_codes.py`): `peek_next_customer_id()` (read `number_next_actual`, no consumption), `draw_customer_id()` (`ir.sequence.next_by_code('nxt.customer')`), `find_partner_by_ref_or_vat()`, `next_project_number(customer_ref, line)`, `create_project()`.
-- Fix `_find_or_create_company` to look up `ref`, then `vat`, then name, and to set `ref` when it creates. Tests with a mocked XML-RPC proxy.
+- Fix `_find_or_create_company` to prefer the same-name company with a Customer ID in `company_registry` (originally written against `ref`; moved 2026-11-12). Tests with a mocked XML-RPC proxy.
 
 ## Task 4 — Drive folder creation
 - `app/services/drive_folders.py` using the existing Google OAuth refresh token: `ensure_folder(parent_id, name)` (create only if missing), `ensure_project_tree(...)` for the four project subfolders (requirement, proposal, construction, maintenance); `ensure_customer_folder` also creates the customer-level `finance & logistics` folder.
@@ -47,10 +47,10 @@ Odoo prerequisites (sequence `nxt.customer`, custom fields on `res.partner` and 
 
 ## Odoo state (already created on 2026-11-11, do not recreate)
 - `ir.sequence` id 77: code `nxt.customer`, prefix `C`, padding 4, next number 200. Draw with `ir.sequence.next_by_code('nxt.customer')`; peek with `number_next_actual` (read only).
-- `res.partner` fields: `x_legacy_codes` (char), `x_drive_url` (char), `x_fax` (char, "Fax", created 2026-11-12; Odoo 18 has no fax field). Native fields used: `ref` (Customer ID), `vat` (統編), `category_id`, `parent_id`, and for company details `street`, `country_id`, `phone`, `website`, `x_studio_name_2nd_language` (other-language names joined with " / ").
+- `res.partner` fields: `x_legacy_codes` (char), `x_drive_url` (char), `x_fax` (char, "Fax", created 2026-11-12; Odoo 18 has no fax field). Native fields used: `company_registry` ("Company ID" = Customer ID; holds old codes for older customers, moved to `x_legacy_codes` on issue; `ref` is the user's short names and is not used), `vat` (統編), `category_id`, `parent_id`, and for company details `street`, `country_id`, `phone`, `website`, `x_studio_name_2nd_language` (other-language names joined with " / ").
 - `project.project` fields: `x_project_code` (char), `x_product_line` (selection `DS`/`DJ`), `x_sold_via` (many2one res.partner), `x_drive_url` (char).
 - `res.partner.category` tags: `NXT Customer` (id 9), `NXT Reseller` (id 10), `NXT End User` (id 11). Look tags up by name, not id.
-- Legacy codes (DS###, P###, P###S##, DJ###) are NOT in Odoo yet; the backfill is a later phase.
+- Legacy codes (DS###, P###, P###S##, DJ###, also SA###, S###, SM###, short codes like JFE) are already in Odoo's Company ID (`company_registry`) on ~100 companies, not in `x_legacy_codes`. Issuing moves them; the backfill of the rest is a later phase.
 
 ## Handoff
 Status is updated by each PR. Mark a task done only when its tests pass.

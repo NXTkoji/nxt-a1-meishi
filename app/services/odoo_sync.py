@@ -30,12 +30,17 @@ def _call(obj, uid, model: str, method: str, *args, **kwargs):
     )
 
 
+def _is_customer_id(value) -> bool:
+    from app.services.project_codes import CUSTOMER_CODE_RE
+    return bool(value) and bool(CUSTOMER_CODE_RE.match(str(value).strip()))
+
+
 def _find_or_create_company(obj, uid, company_name: str) -> int | None:
     """Find the existing company partner or create one.
 
     A company counts as the same when its name matches after ignoring case, width,
     spaces and legal form ("允將餐飲" = "允將餐飲股份有限公司"). When several match,
-    the one carrying a Customer ID (`ref`) wins, so cards for an NXT customer link
+    the one carrying a Customer ID (in "Company ID", `company_registry`) wins, so cards for an NXT customer link
     to the customer record instead of a stray duplicate.
     """
     if not company_name:
@@ -51,10 +56,11 @@ def _find_or_create_company(obj, uid, company_name: str) -> int | None:
          "|", ["name", "=", company_name], ["name", "ilike", core]]
     ])
     if ids:
-        rows = _call(obj, uid, "res.partner", "read", [ids], {"fields": ["name", "ref"]})
+        rows = _call(obj, uid, "res.partner", "read", [ids], {"fields": ["name", "company_registry"]})
         same = [r for r in rows if normalize_org_name(r["name"]) == wanted]
         if same:
-            same.sort(key=lambda r: (not r.get("ref"), r["id"]))
+            # The issued customer wins: its Customer ID (C0201) is in "Company ID"
+            same.sort(key=lambda r: (not _is_customer_id(r.get("company_registry")), r["id"]))
             return same[0]["id"]
 
     return _call(obj, uid, "res.partner", "create", [{
@@ -131,8 +137,15 @@ async def sync_to_odoo(
     pos = person.positions[0] if person.positions else None
     company_name = pos.company if pos else ""
     company_id = company_partner_id or _find_or_create_company(obj, uid, company_name)
-    if company_id and pos:
-        _fill_company_contact(obj, uid, company_id, pos)
+    # Fill the company only from the position that belongs to it. A company given by id
+    # (an issued NXT customer) need not be the person's first organization; a company
+    # found by name is the first position's own.
+    if company_partner_id:
+        source = next((p for p in person.positions if p.odoo_partner_id == company_partner_id), None)
+    else:
+        source = pos
+    if company_id and source:
+        _fill_company_contact(obj, uid, company_id, source)
 
     # Phones
     work_phone = ""

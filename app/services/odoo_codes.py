@@ -1,7 +1,9 @@
 """
 Odoo access for project code issuing.
 
-Layout: the customer is the COMPANY partner (`ref` = Customer ID, `vat` = 統編);
+Layout: the customer is the COMPANY partner (`company_registry`, labelled "Company ID"
+in Odoo, = Customer ID; `vat` = 統編). `ref` ("Reference") holds the user's short
+names and is never read or written here;
 people are child contacts (`parent_id`), created by the card export. Projects are
 `project.project` records with the x_* fields created on 2026-11-11.
 
@@ -14,7 +16,7 @@ import logging
 from typing import Any, Iterable, List, Optional
 
 from app.services import odoo_sync
-from app.services.project_codes import normalize_org_name, strip_legal_forms
+from app.services.project_codes import CUSTOMER_CODE_RE, normalize_org_name, strip_legal_forms
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +26,26 @@ TAG_RESELLER = "NXT Reseller"
 TAG_END_USER = "NXT End User"
 ROLE_TAGS = {"reseller": TAG_RESELLER, "end_user": TAG_END_USER}
 
+# Odoo's "Company ID" field. It also holds older identifiers (DS127, SA028, JFE), so only
+# a value shaped like a Customer ID (C0201) counts as one.
+CUSTOMER_ID_FIELD = "company_registry"
+
+
+def customer_id_of(record: dict) -> Optional[str]:
+    """The record's Customer ID, or None when its Company ID is empty or an old code."""
+    value = (record.get(CUSTOMER_ID_FIELD) or "").strip()
+    return value if CUSTOMER_CODE_RE.match(value) else None
+
+
+def old_code_of(record: dict) -> Optional[str]:
+    """An older identifier in the Company ID field (DS127, SA028, JFE), else None."""
+    value = (record.get(CUSTOMER_ID_FIELD) or "").strip()
+    return value if value and not CUSTOMER_CODE_RE.match(value) else None
+
 # Company details filled from the card's work contacts (see company_details.py);
 # read back so an existing company only gets the ones still empty in Odoo
 DETAIL_FIELDS = ["x_studio_name_2nd_language", "street", "country_id", "phone", "x_fax", "website"]
-COMPANY_FIELDS = ["name", "ref", "vat", "x_drive_url", "x_legacy_codes", "category_id"] + DETAIL_FIELDS
+COMPANY_FIELDS = ["name", CUSTOMER_ID_FIELD, "vat", "x_drive_url", "x_legacy_codes", "category_id"] + DETAIL_FIELDS
 
 
 class OdooSetupError(RuntimeError):
@@ -73,11 +91,12 @@ class OdooCodes:
 
     # -- company partners ---------------------------------------------------
 
-    def find_company(self, *, ref: Optional[str] = None, vat: Optional[str] = None) -> Optional[dict]:
+    def find_company(self, *, customer_id: Optional[str] = None,
+                     vat: Optional[str] = None) -> Optional[dict]:
         """Find the company partner by Customer ID first, then by 統編. None if absent."""
         attempts = []
-        if ref:
-            attempts.append(("ref", "=", ref))
+        if customer_id:
+            attempts.append((CUSTOMER_ID_FIELD, "=", customer_id))
         if vat:
             # Odoo may hold the 統編 with or without a "TW" prefix
             attempts.append(("vat", "in", [vat, f"TW{vat}"]))
@@ -87,7 +106,8 @@ class OdooCodes:
                               {"fields": COMPANY_FIELDS, "limit": 2,
                                "context": {"active_test": False}})
             if len(rows) > 1:
-                raise OdooDataError(f"More than one company has {field} {value!r}")
+                label = "Company ID" if field == CUSTOMER_ID_FIELD else "統編"
+                raise OdooDataError(f"More than one Odoo company has {label} {value!r}")
             if rows:
                 return rows[0]
         return None
@@ -126,8 +146,11 @@ class OdooCodes:
         if tags:
             vals["category_id"] = [(6, 0, tags)]
         partner_id = self._call("res.partner", "create", [vals])
-        logger.info("Created Odoo company %d (%s)", partner_id, vals.get("ref"))
+        logger.info("Created Odoo company %d (%s)", partner_id, vals.get(CUSTOMER_ID_FIELD))
         return partner_id
+
+    def read_company(self, partner_id: int) -> dict:
+        return self._call("res.partner", "read", [[partner_id]], {"fields": COMPANY_FIELDS})[0]
 
     def update_company(self, partner_id: int, vals: dict, add_tag_names: Iterable[str] = ()) -> None:
         vals = dict(vals)

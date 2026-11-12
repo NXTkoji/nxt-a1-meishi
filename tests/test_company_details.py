@@ -40,7 +40,7 @@ async def _org_with_contacts(db):
 
 
 def _company(env):
-    return next(r for r in env.odoo.rows("res.partner") if r.get("ref") == "C0200")
+    return next(r for r in env.odoo.rows("res.partner") if r.get("company_registry") == "C0200")
 
 
 def test_new_company_gets_names_address_phone_fax_and_website(env):
@@ -64,7 +64,7 @@ def test_existing_company_keeps_what_odoo_already_has(env):
     run = env.commit(org_ext_id=ext, customer_name="誠實化工機械有限公司")
     assert run.status == "done", run.error
     co = env.odoo.data["res.partner"][existing]
-    assert co["ref"] == "C0200"
+    assert co["company_registry"] == "C0200"
     assert co["phone"] == "03-9999999"                 # not overwritten
     assert co["x_fax"] == "03-5352292" and co["website"] == "https://example.tw"
 

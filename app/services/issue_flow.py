@@ -30,7 +30,9 @@ from app.services import project_codes as pc
 from app.services.drive_folders import (
     CUSTOMER_SUBFOLDERS, PROJECT_SUBFOLDERS, DriveError, DriveFolders,
 )
-from app.services.odoo_codes import ROLE_TAGS, TAG_CUSTOMER, OdooCodes
+from app.services.odoo_codes import (
+    ROLE_TAGS, TAG_CUSTOMER, OdooCodes, customer_id_of, old_code_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,20 +231,22 @@ async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest,
 
     # Does Odoo already know this customer (by Customer ID, or by 統編)?
     customer_code = org.customer_code if org else None
-    odoo_company = await _in_thread(odoo.find_company, ref=customer_code, vat=tax_id)
-    if odoo_company and odoo_company.get("ref"):
-        if customer_code and odoo_company["ref"] != customer_code:
+    odoo_company = await _in_thread(odoo.find_company, customer_id=customer_code, vat=tax_id)
+    odoo_code = customer_id_of(odoo_company) if odoo_company else None
+    if odoo_code:
+        if customer_code and odoo_code != customer_code:
             raise pc.ValidationError(
-                f"Odoo has {odoo_company['ref']} for this 統編 but this customer is {customer_code}")
-        customer_code = odoo_company["ref"]
+                f"Odoo has {odoo_code} for this 統編 but this customer is {customer_code}")
+        customer_code = odoo_code
     elif odoo_company:
         warnings.append(f"Odoo already has a company named {odoo_company['name']!r} without a "
                         "Customer ID; it will be reused rather than duplicated.")
     elif name:
         # Not found by Customer ID or 統編; a card export may still have created it by name
         same_name = [m for m in await _in_thread(odoo.find_companies_by_name, name)
-                     if not m.get("ref")]
+                     if not customer_id_of(m)]
         if len(same_name) == 1:
+            odoo_company = same_name[0]
             warnings.append(f"Odoo already has a company named {same_name[0]['name']!r} without a "
                             "Customer ID; it will be reused rather than duplicated.")
         elif len(same_name) > 1:
@@ -280,6 +284,12 @@ async def propose(db: AsyncSession, odoo: OdooCodes, req: IssueRequest,
     actions.append("Create the customer folder in Google Drive with "
                    + ", ".join(CUSTOMER_SUBFOLDERS))
     actions.append(f"Create project folder {out.project_code} with " + ", ".join(PROJECT_SUBFOLDERS))
+    # An old code in the company's "Company ID" field makes room for the Customer ID
+    old_code = old_code_of(odoo_company) if odoo_company and not customer_id_of(odoo_company) else None
+    if old_code:
+        actions.append(f"Move old code {old_code} from Company ID to Legacy Codes in Odoo")
+        if pc.LEGACY_CODE_RE.match(old_code.upper()) and old_code.upper() not in legacy:
+            legacy = legacy + [old_code.upper()]
     legacy_actions, legacy_warnings = await _legacy_preview(
         drive, legacy, org.drive_folder_id if org else None)
     actions.extend(legacy_actions)
@@ -309,6 +319,7 @@ class _Ctx:
     name: str
     org: Optional[Organization] = None
     project: Optional[Project] = None
+    steps: dict = field(default_factory=dict)   # results saved so far (kept across retries)
 
 
 def _contains_cjk(text: str) -> bool:
@@ -359,8 +370,8 @@ async def _step_customer_id(c: _Ctx) -> dict:
         return {"customer_code": org.customer_code, "reused": True}
     # A company already in Odoo with this 統編 may carry a Customer ID from before
     found = await _in_thread(c.odoo.find_company, vat=org.tax_id) if org.tax_id else None
-    if found and found.get("ref"):
-        code, source = found["ref"], "odoo"
+    if found and customer_id_of(found):
+        code, source = customer_id_of(found), "odoo"
     else:
         code, source = await _in_thread(c.odoo.draw_customer_id), "drawn"
     org.customer_code = code
@@ -373,11 +384,11 @@ async def _step_odoo_company(c: _Ctx) -> dict:
     code = org.customer_code
     tags = [TAG_CUSTOMER] + [ROLE_TAGS[r] for r in c.roles]
 
-    company = await _in_thread(odoo.find_company, ref=code, vat=org.tax_id)
+    company = await _in_thread(odoo.find_company, customer_id=code, vat=org.tax_id)
     if company is None:
         # A card export may already have created this company without a Customer ID
         matches = [m for m in await _in_thread(odoo.find_companies_by_name, c.name)
-                   if not m.get("ref")]
+                   if not customer_id_of(m)]
         if len(matches) > 1:
             raise IssueError(f"Odoo has {len(matches)} companies named {c.name!r}; "
                              "merge them in Odoo first, then retry")
@@ -388,18 +399,23 @@ async def _step_odoo_company(c: _Ctx) -> dict:
     detail_vals = details.odoo_vals(await _in_thread(odoo.country_id, details.country_code))
 
     if company is None:
-        vals = {"name": c.name, "ref": code, **detail_vals}
+        vals = {"name": c.name, "company_registry": code, **detail_vals}
         if org.tax_id:
             vals["vat"] = org.tax_id
         partner_id = await _in_thread(odoo.create_company, vals, tags)
         created = True
     else:
-        if company.get("ref") and company["ref"] != code:
+        existing_code = customer_id_of(company)
+        if existing_code and existing_code != code:
             raise IssueError(f"Odoo company {company['name']!r} already has Customer ID "
-                             f"{company['ref']}, not {code}")
+                             f"{existing_code}, not {code}")
         vals = {}
-        if not company.get("ref"):
-            vals["ref"] = code
+        if not existing_code:
+            # An old code in "Company ID" (DS127, SA028, JFE) moves to Legacy Codes
+            old = old_code_of(company)
+            if old:
+                vals["x_legacy_codes"] = pc.merge_code_text(company.get("x_legacy_codes"), [old])
+            vals["company_registry"] = code
         if org.tax_id and not company.get("vat"):
             vals["vat"] = org.tax_id
         # Fill only what Odoo does not have yet; never overwrite edits made in Odoo
@@ -408,7 +424,10 @@ async def _step_odoo_company(c: _Ctx) -> dict:
         partner_id, created = company["id"], False
     org.odoo_partner_id = partner_id
     await c.db.commit()
-    return {"partner_id": partner_id, "created": created}
+    # Remember the old code across retries: after the first run it is no longer in Odoo
+    old_code = (old_code_of(company) if company is not None and not customer_id_of(company) else None) \
+        or c.steps.get("odoo_company", {}).get("old_code")
+    return {"partner_id": partner_id, "created": created, "old_code": old_code}
 
 
 async def _step_drive_customer(c: _Ctx) -> dict:
@@ -423,6 +442,9 @@ async def _step_drive_customer(c: _Ctx) -> dict:
 async def _step_legacy(c: _Ctx) -> dict:
     """Move each old folder into the customer folder (name kept) and record the old codes."""
     codes = pc.parse_legacy_codes(c.req.legacy_codes)
+    found = (c.steps.get("odoo_company", {}).get("old_code") or "").upper()
+    if pc.LEGACY_CODE_RE.match(found) and found not in codes:
+        codes.append(found)
     if not codes:
         return {"skipped": True}
     org = c.org
@@ -432,7 +454,10 @@ async def _step_legacy(c: _Ctx) -> dict:
         status, folder = await c.drive.move_legacy_folder(code, org.drive_folder_id)
         results[code] = {"status": status, "name": folder.name if folder else None}
     org.legacy_codes = pc.merge_legacy_codes(org.legacy_codes, codes)
-    await _in_thread(c.odoo.update_company, org.odoo_partner_id, {"x_legacy_codes": org.legacy_codes})
+    # Merge into what Odoo has: Legacy Codes may also hold identifiers the app does not parse
+    current = (await _in_thread(c.odoo.read_company, org.odoo_partner_id)).get("x_legacy_codes")
+    await _in_thread(c.odoo.update_company, org.odoo_partner_id,
+                     {"x_legacy_codes": pc.merge_code_text(current, codes)})
     await c.db.commit()
     return results
 
@@ -527,7 +552,7 @@ async def _execute(db: AsyncSession, odoo: OdooCodes, drive: DriveFolders,
     tax_id, line, roles = _clean_request(req)
     steps: dict = json.loads(run.steps_json or "{}")
     c = _Ctx(db=db, odoo=odoo, drive=drive, req=req, run=run, tax_id=tax_id, line=line,
-             roles=roles, name=(req.customer_name or "").strip())
+             roles=roles, name=(req.customer_name or "").strip(), steps=steps)
     if req.org_ext_id and not c.name:
         c.name = await _org_name(db, await _org_by_ext(db, req.org_ext_id))
     if not c.name and req.chosen_org_ext_id:
