@@ -147,7 +147,8 @@ async def sync_to_odoo(
         vals["x_studio_name_2nd_language"] = second_lang_name
 
     if addr:
-        vals["street"] = addr.street
+        # Card addresses are one formatted line (street/city are never split out)
+        vals["street"] = addr.street or addr.full
         vals["city"] = addr.city
         vals["zip"] = addr.postal_code
         if country_id:
