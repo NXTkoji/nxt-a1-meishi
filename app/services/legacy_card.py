@@ -5,6 +5,7 @@ objects, for handing off to the Odoo and Google Contacts sync services
 from __future__ import annotations
 
 from app.db.models import Card as DBCard, ContactDetail, Person, Position
+from app.services.work_contact_labels import pos_index
 
 
 def build_legacy_card(
@@ -31,8 +32,18 @@ def build_legacy_card(
         if n.is_current
     ]
 
+    # Work contacts name their organization by index into the positions in id order
+    # ("_pos:N"); positions may arrive in any order, so look the index up per position
+    index_of = {pos.id: i for i, pos in enumerate(sorted(positions, key=lambda p: p.id))}
+
+    def _work(detail_type: str, index: int):
+        return next((cd for cd in contact_details
+                     if cd.detail_type == detail_type and cd.value and pos_index(cd.label) == index), None)
+
     legacy_positions = []
     for pos in positions:
+        work_phone = _work("phone_work", index_of[pos.id])
+        work_address = _work("address_work", index_of[pos.id])
         org_name_ja = next(
             (on.name for on in pos.organization.names if on.language == "ja" and on.is_current),
             next((on.name for on in pos.organization.names if on.is_current), ""),
@@ -58,6 +69,9 @@ def build_legacy_card(
             title=title_ja,
             title_english=title_en,
             department=dept,
+            phone=work_phone.value if work_phone else "",
+            address=work_address.value if work_address else "",
+            address_country_code=(work_address.country_code or "") if work_address else "",
         ))
 
     phones, emails, addresses = [], [], []

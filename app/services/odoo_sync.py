@@ -82,6 +82,25 @@ def _resolve_state(obj, uid, state_name: str, country_id: int | None) -> int | N
     return ids[0] if ids else None
 
 
+def _fill_company_contact(obj, uid, company_id: int, pos) -> None:
+    """Copy the card's work address and phone for this organization to its Odoo company,
+    only into fields the company does not have yet (edits made in Odoo are kept).
+    The person's mobile never goes to the company."""
+    current = _call(obj, uid, "res.partner", "read", [[company_id]],
+                    {"fields": ["street", "country_id", "phone"]})[0]
+    vals: dict = {}
+    if pos.address and not current.get("street"):
+        vals["street"] = pos.address
+        country_id = _resolve_country(obj, uid, pos.address_country_code)
+        if country_id and not current.get("country_id"):
+            vals["country_id"] = country_id
+    if pos.phone and not current.get("phone"):
+        vals["phone"] = pos.phone
+    if vals:
+        _call(obj, uid, "res.partner", "write", [[company_id], vals])
+        logger.info("Filled Odoo company %d with %s", company_id, ", ".join(sorted(vals)))
+
+
 async def sync_to_odoo(
     card: Card,
     existing_id: int | None = None,
@@ -112,6 +131,8 @@ async def sync_to_odoo(
     pos = person.positions[0] if person.positions else None
     company_name = pos.company if pos else ""
     company_id = company_partner_id or _find_or_create_company(obj, uid, company_name)
+    if company_id and pos:
+        _fill_company_contact(obj, uid, company_id, pos)
 
     # Phones
     work_phone = ""
