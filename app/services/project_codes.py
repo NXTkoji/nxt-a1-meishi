@@ -116,6 +116,16 @@ def parse_legacy_codes(value: Optional[str]) -> List[str]:
     return codes
 
 
+def merge_code_text(existing, new: List[str]) -> str:
+    """Add codes to Odoo's free-text Legacy Codes ("P030, SA028"), without validating
+    them: it may hold identifiers such as SA028 or JFE that are not project codes."""
+    merged = [part.strip() for part in re.split(r"[,、，;；]+", existing or "") if part.strip()]
+    for code in new:
+        if code and code not in merged:
+            merged.append(code)
+    return ", ".join(merged)
+
+
 def merge_legacy_codes(existing: Optional[str], new: List[str]) -> str:
     """Add codes to a stored ", "-separated list, keeping order and no duplicates."""
     merged = parse_legacy_codes(existing)

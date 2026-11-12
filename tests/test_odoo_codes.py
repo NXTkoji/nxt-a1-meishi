@@ -39,14 +39,14 @@ def test_missing_sequence_is_a_setup_error():
 
 # ── Company partners ──────────────────────────────────────────────────────────
 
-def test_find_company_by_ref_then_vat(odoo):
+def test_find_company_by_customer_id_then_vat(odoo):
     fake, client = odoo
-    a = fake.add("res.partner", name="甜蜜蜜", is_company=True, ref="C0200", vat="22099131")
-    fake.add("res.partner", name="某人", is_company=False, ref="C0200")  # a person, ignored
-    assert client.find_company(ref="C0200")["id"] == a
+    a = fake.add("res.partner", name="甜蜜蜜", is_company=True, company_registry="C0200", vat="22099131")
+    fake.add("res.partner", name="某人", is_company=False, company_registry="C0200")  # a person, ignored
+    assert client.find_company(customer_id="C0200")["id"] == a
     assert client.find_company(vat="22099131")["id"] == a
-    assert client.find_company(ref="C9999", vat="22099131")["id"] == a  # falls back to vat
-    assert client.find_company(ref="C9999") is None
+    assert client.find_company(customer_id="C9999", vat="22099131")["id"] == a  # falls back to vat
+    assert client.find_company(customer_id="C9999") is None
     assert client.find_company() is None
 
 
@@ -56,19 +56,19 @@ def test_find_company_accepts_tw_prefixed_vat(odoo):
     assert client.find_company(vat="22099131")["id"] == a
 
 
-def test_duplicate_ref_is_reported(odoo):
+def test_duplicate_customer_id_is_reported(odoo):
     fake, client = odoo
-    fake.add("res.partner", name="A", is_company=True, ref="C0200")
-    fake.add("res.partner", name="B", is_company=True, ref="C0200")
+    fake.add("res.partner", name="A", is_company=True, company_registry="C0200")
+    fake.add("res.partner", name="B", is_company=True, company_registry="C0200")
     with pytest.raises(OdooDataError):
-        client.find_company(ref="C0200")
+        client.find_company(customer_id="C0200")
 
 
 def test_create_company_adds_tags_once(odoo):
     fake, client = odoo
-    pid = client.create_company({"name": "甜蜜蜜", "ref": "C0200", "vat": "22099131"},
+    pid = client.create_company({"name": "甜蜜蜜", "company_registry": "C0200", "vat": "22099131"},
                                 tag_names=[odoo_codes.TAG_CUSTOMER, odoo_codes.TAG_RESELLER])
-    client.create_company({"name": "別家", "ref": "C0201"}, tag_names=[odoo_codes.TAG_CUSTOMER])
+    client.create_company({"name": "別家", "company_registry": "C0201"}, tag_names=[odoo_codes.TAG_CUSTOMER])
     names = {r["name"] for r in fake.rows("res.partner.category")}
     assert names == {"NXT Customer", "NXT Reseller"}  # not duplicated
     partner = fake.data["res.partner"][pid]
@@ -77,7 +77,7 @@ def test_create_company_adds_tags_once(odoo):
 
 def test_update_company_adds_tag_without_dropping_others(odoo):
     fake, client = odoo
-    pid = client.create_company({"name": "X", "ref": "C0200"}, tag_names=[odoo_codes.TAG_CUSTOMER])
+    pid = client.create_company({"name": "X", "company_registry": "C0200"}, tag_names=[odoo_codes.TAG_CUSTOMER])
     client.update_company(pid, {"x_drive_url": "https://drive/x"}, add_tag_names=[odoo_codes.TAG_END_USER])
     partner = fake.data["res.partner"][pid]
     assert partner["x_drive_url"] == "https://drive/x"
@@ -119,7 +119,7 @@ def test_export_reuses_company_despite_legal_form(odoo):
 def test_export_prefers_the_company_with_a_customer_id(odoo):
     fake, _ = odoo
     fake.add("res.partner", name="允將餐飲", is_company=True)
-    customer = fake.add("res.partner", name="允將餐飲有限公司", is_company=True, ref="C0200")
+    customer = fake.add("res.partner", name="允將餐飲有限公司", is_company=True, company_registry="C0200")
     assert _find(fake, "允將餐飲") == customer
 
 
@@ -142,3 +142,20 @@ def test_export_creates_when_missing_and_ignores_people(odoo):
     new_id = _find(fake, "山崎金型")
     assert fake.data["res.partner"][new_id]["is_company"] is True
     assert _find(fake, "") is None
+
+
+def test_customer_id_is_only_a_c_number_in_company_id():
+    """Company ID also holds old codes (DS127, SA028, JFE); only a C-number is a Customer ID."""
+    assert odoo_codes.customer_id_of({"company_registry": "C0201"}) == "C0201"
+    for value in ("DS127", "SA028", "JFE", "", False, None):
+        assert odoo_codes.customer_id_of({"company_registry": value}) is None
+    assert odoo_codes.customer_id_of({"ref": "C0201"}) is None      # Reference is not read
+
+
+def test_export_ignores_short_names_in_reference(odoo):
+    """Reference holds short names (亞東石化); it must not make a company look like a customer."""
+    fake, _ = odoo
+    nickname = fake.add("res.partner", name="允將餐飲有限公司", is_company=True, ref="允將")
+    customer = fake.add("res.partner", name="允將餐飲", is_company=True, company_registry="C0200")
+    assert _find(fake, "允將餐飲") == customer
+    assert nickname != customer

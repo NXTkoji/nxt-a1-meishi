@@ -122,7 +122,7 @@ def test_commit_creates_everything(env):
 
     # Odoo: company first, with the code, 統編 and tags
     (company,) = env.odoo.rows("res.partner")
-    assert company["is_company"] and company["ref"] == "C0200" and company["vat"] == TAX
+    assert company["is_company"] and company["company_registry"] == "C0200" and company["vat"] == TAX
     assert company["x_drive_url"] == out.customer_drive_url
     tag_names = {env.odoo.data["res.partner.category"][i]["name"] for i in company["category_id"]}
     assert tag_names == {"NXT Customer", "NXT End User"}
@@ -209,7 +209,7 @@ def test_adopts_odoo_company_created_earlier_by_a_card_export(env):
     assert out.status == "done"
     assert len(env.odoo.rows("res.partner")) == 1             # no duplicate company
     company = env.odoo.data["res.partner"][existing]
-    assert company["ref"] == "C0200" and company["vat"] == TAX and out.odoo_partner_id == existing
+    assert company["company_registry"] == "C0200" and company["vat"] == TAX and out.odoo_partner_id == existing
 
 
 def test_ambiguous_odoo_companies_stop_the_run(env):
@@ -223,7 +223,7 @@ def test_ambiguous_odoo_companies_stop_the_run(env):
 
 
 def test_odoo_company_with_a_different_customer_id_is_a_conflict(env):
-    env.odoo.add("res.partner", name="別名", is_company=True, ref="C0150", vat=TAX)
+    env.odoo.add("res.partner", name="別名", is_company=True, company_registry="C0150", vat=TAX)
     proposal = env.propose()
     assert proposal.customer_mode == "existing" and proposal.customer_code == "C0150"
     out = env.commit()
@@ -316,7 +316,7 @@ def test_sold_via_is_recorded_on_the_project(env):
     project = next(p for p in env.odoo.rows("project.project") if p["x_project_code"] == "C0201-DS01")
     assert project["x_sold_via"] == reseller.odoo_partner_id
     # the reseller stays a reseller; the end user is a separate customer
-    tags = {p["ref"]: len(p["category_id"]) for p in env.odoo.rows("res.partner")}
+    tags = {p.get("company_registry"): len(p["category_id"]) for p in env.odoo.rows("res.partner")}
     assert tags == {"C0200": 2, "C0201": 2}
 
 
@@ -539,7 +539,7 @@ def test_api_failed_run_then_retry(api):
 
 def test_api_resolve(api):
     client, env = api
-    env.odoo.add("res.partner", name="山崎金型", is_company=True, ref="C0150", vat=TAX)
+    env.odoo.add("res.partner", name="山崎金型", is_company=True, company_registry="C0150", vat=TAX)
     r = client.post("/api/v2/customers/resolve", json={"tax_id": TAX}).json()
     assert r["odoo_customer_code"] == "C0150" and r["odoo_company_name"] == "山崎金型"
     assert client.post("/api/v2/customers/resolve", json={"tax_id": "1"}).status_code == 422
@@ -589,3 +589,53 @@ def test_api_list_only_issued_organizations(api):
     listing = client.get("/api/v2/organizations?issued=true").json()
     assert [o["id"] for o in listing] == [issued]
     assert len(client.get("/api/v2/organizations").json()) == 2
+
+
+# ── Customer ID in Odoo's Company ID field; Reference holds the user's short names ──
+
+def test_new_customer_id_goes_to_company_id_not_reference(env):
+    run = env.commit()
+    assert run.status == "done", run.error
+    co = next(r for r in env.odoo.rows("res.partner") if r.get("is_company"))
+    assert co["company_registry"] == "C0200" and not co.get("ref")
+
+
+def test_old_customer_with_short_name_and_old_code_is_reused(env):
+    """亞東石化-style record: Reference = short name, Company ID = old code DS127."""
+    env.fdrive.add("DS127 亞東石化 舊案", ROOT)
+    existing = env.odoo.add("res.partner", name="甜蜜蜜台北店", is_company=True, vat=TAX,
+                            ref="甜蜜蜜", company_registry="DS127")
+    run = env.commit()
+    assert run.status == "done", run.error
+    assert len([r for r in env.odoo.rows("res.partner") if r.get("is_company")]) == 1
+    co = env.odoo.data["res.partner"][existing]
+    assert co["company_registry"] == "C0200"
+    assert co["ref"] == "甜蜜蜜"                              # short name untouched
+    assert co["x_legacy_codes"] == "DS127"
+    assert run.steps["legacy"]["DS127"]["status"] == "moved"
+    org = env.run(lambda db: db.scalar(select(Organization).where(Organization.customer_code == "C0200")))
+    assert org.legacy_codes == "DS127"
+
+
+def test_company_found_by_name_with_a_short_name_is_adopted(env):
+    existing = env.odoo.add("res.partner", name="甜蜜蜜台北店", is_company=True, ref="甜蜜蜜")
+    run = env.commit(tax_id=None)
+    assert run.status == "done", run.error
+    assert [r["id"] for r in env.odoo.rows("res.partner") if r.get("is_company")] == [existing]
+    assert env.odoo.data["res.partner"][existing]["company_registry"] == "C0200"
+
+
+def test_other_old_identifiers_are_kept_as_text_only(env):
+    existing = env.odoo.add("res.partner", name="甜蜜蜜台北店", is_company=True, vat=TAX,
+                            company_registry="SA028", x_legacy_codes="P030")
+    run = env.commit()
+    assert run.status == "done", run.error
+    co = env.odoo.data["res.partner"][existing]
+    assert co["company_registry"] == "C0200" and co["x_legacy_codes"] == "P030, SA028"
+    assert run.steps["legacy"] == {"skipped": True}
+
+
+def test_review_says_the_old_code_moves_to_legacy_codes(env):
+    env.odoo.add("res.partner", name="甜蜜蜜台北店", is_company=True, vat=TAX, company_registry="DS127")
+    out = env.propose()
+    assert any("DS127" in a and "Legacy Codes" in a for a in out.actions)

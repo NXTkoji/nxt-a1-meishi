@@ -32,13 +32,13 @@ Most scanned cards are not NXT customers, so none of this appears by default.
 
 The customer is the **company** record; people are contacts under it, as already done by the card export (`parent_id`).
 
-1. Company partner (`is_company`): `ref` = Customer ID, `vat` = 統編, tag `NXT Customer`, Drive URL.
+1. Company partner (`is_company`): `company_registry` ("Company ID" in Odoo) = Customer ID, `vat` = 統編, tag `NXT Customer`, Drive URL. `ref` ("Reference") holds the user's own short names (e.g. 亞東石化) and is never used by the app.
 2. Person partner(s): child of the company (`parent_id`), created or updated with the existing card export.
 3. Project: `partner_id` = the company.
 
 Individuals without a company: a company-type record named after the store or brand (or the person's name if there is none), with the person as its child contact. The phone number is the match key.
 
-On approval the app ensures the company exists (matching by `ref`, then `vat`, then phone, then name candidates the user confirms), then creates or updates the card's person under it. A checkbox on the review card lets the user skip the person step.
+On approval the app ensures the company exists (matching by Customer ID in `company_registry`, then `vat`, then phone, then name candidates the user confirms), then creates or updates the card's person under it. A checkbox on the review card lets the user skip the person step.
 
 ## Non-Goals
 
@@ -62,7 +62,7 @@ On approval the app ensures the company exists (matching by `ref`, then `vat`, t
 
 ## Odoo model (set up on 2026-11-11)
 
-Already existed: `res.partner.ref` (Customer ID), `vat` (統一編號), `category_id` (tags), `parent_id`.
+Already existed: `res.partner.company_registry` ("Company ID": the Customer ID; before this feature it held old codes such as DS127, P030, SA028 or JFE), `vat` (統一編號), `category_id` (tags), `parent_id`. A Company ID counts as a Customer ID only when it matches `C` + 4 digits. When a company that already has an old code there is issued, the old code moves to `x_legacy_codes` (and, if it is a project-style code such as DS127, its Drive folder is moved like any other old code).
 
 Created by API:
 
@@ -100,13 +100,13 @@ The user can correct product line, site name or the chosen candidate, then appro
 Executed as a resumable sequence of steps, recorded in a local state table so a failure can be retried without duplicating anything:
 
 1. Draw the real Customer ID with Odoo `next_by_code` (atomic). It can differ from the tentative one if someone else issued meanwhile; the final value is shown.
-2. Create or update `res.partner` (`ref`, `vat`, tags).
+2. Create or update `res.partner` (`company_registry`, `vat`, tags; an old code in `company_registry` moves to `x_legacy_codes`).
 3. Create the customer folder `C0200 <name>` under NXT Customers and store its URL on the partner.
 4. Create `project.project` with `x_project_code`, `x_product_line`, `x_sold_via`.
 5. Create the project folder `C0200-DS01 <site>` with subfolders and store its URL.
 6. Show the final codes and links.
 
-Every step checks whether its result already exists (by `ref`, `x_project_code`, folder name) before creating, so re-running is safe.
+Every step checks whether its result already exists (by Customer ID, `x_project_code`, folder name) before creating, so re-running is safe.
 
 ### Old customers (legacy codes and folders)
 
@@ -145,7 +145,7 @@ Photos have no folder of their own; they go into whichever numbered folder they 
 - **Migration**: `organizations` gains `is_nxt_customer` (bool, default false), `tax_id` (unique, nullable), `customer_code` (unique, nullable), `odoo_partner_id`, `drive_folder_id`, `drive_url`, `legacy_codes`. New `projects` table (`code` unique, `org_id`, `product_line`, `site_name`, `sold_via_org_id`, `odoo_project_id`, `drive_folder_id`, `drive_url`, `created_at`) and an `issue_runs` table for step state.
 - **New service** `app/services/project_codes.py`: validation, organization matching, propose, commit, Drive folder creation (Google Drive API, using the existing OAuth with Drive scope).
 - **Config**: `google_drive_customers_folder_id`.
-- **Fix** `_find_or_create_company` in `odoo_sync.py`: look up by `ref` and `vat` before name, and set `ref` on create, so card exports stop creating duplicate companies.
+- **Fix** `_find_or_create_company` in `odoo_sync.py`: look up by `vat` and name, preferring the company with a Customer ID in `company_registry`, so card exports stop creating duplicate companies.
 - **Routes**: `POST /api/v2/customers/resolve`, `POST /api/v2/projects/propose`, `POST /api/v2/projects/commit`, `POST /api/v2/projects/{id}/retry`.
 - **UI**: an "NXT customer" switch in the card editor and organization view. Only when it is on: the NXT fields and the "Issue project code" action, with the review card and Approve button.
 

@@ -83,7 +83,7 @@ def test_odoo_export_sends_title_and_address(monkeypatch):
     from tests.fake_odoo import FakeOdoo
     fake = FakeOdoo()
     fake.add("res.country", name="Taiwan", code="TW")
-    company = fake.add("res.partner", name="誠實化工機械有限公司", is_company=True, ref="C0201")
+    company = fake.add("res.partner", name="誠實化工機械有限公司", is_company=True, company_registry="C0201")
     monkeypatch.setattr(odoo_sync, "_get_odoo_clients", lambda: (None, fake, 1))
     legacy = build_legacy_card(*_plain_card())
     pid = asyncio.run(odoo_sync.sync_to_odoo(legacy, None, company))
@@ -132,7 +132,10 @@ def _export(monkeypatch, fake, company_partner_id=None):
     from app.services import odoo_sync
     from app.services.legacy_card import build_legacy_card
     monkeypatch.setattr(odoo_sync, "_get_odoo_clients", lambda: (None, fake, 1))
-    legacy = build_legacy_card(*_two_org_card())
+    card, person, contacts, positions = _two_org_card()
+    # As in the app: a company given by id is the one linked to the card's organization
+    positions[0].organization.odoo_partner_id = company_partner_id
+    legacy = build_legacy_card(card, person, contacts, positions)
     return asyncio.run(odoo_sync.sync_to_odoo(legacy, None, company_partner_id))
 
 
@@ -152,9 +155,47 @@ def test_export_only_fills_what_the_company_lacks(monkeypatch):
     from tests.fake_odoo import FakeOdoo
     fake = FakeOdoo()
     fake.add("res.country", name="Taiwan", code="TW")
-    company = fake.add("res.partner", name="誠實化工機械有限公司", is_company=True, ref="C0201",
+    company = fake.add("res.partner", name="誠實化工機械有限公司", is_company=True, company_registry="C0201",
                        phone="03-9999999", street="", country_id=False)
     _export(monkeypatch, fake, company)
     co = fake.data["res.partner"][company]
     assert co["phone"] == "03-9999999"                  # edited in Odoo: kept
     assert co["street"] == "302新竹縣竹北市新溪街175巷36號"
+
+
+def test_company_given_by_id_is_filled_only_from_its_own_position(monkeypatch):
+    """Issuing passes the issued company's id; the person's first position may be
+    another organization, whose address and phone must not land on the customer."""
+    from types import SimpleNamespace as NS
+    from app.services import odoo_sync
+    from app.services.legacy_card import build_legacy_card
+    from tests.fake_odoo import FakeOdoo
+    fake = FakeOdoo()
+    fake.add("res.country", name="Taiwan", code="TW")
+    other = fake.add("res.partner", name="Elsewhere Ltd", is_company=True)
+    customer = fake.add("res.partner", name="誠實化工機械有限公司", is_company=True, company_registry="C0201")
+    card, person, contacts, positions = _two_org_card()
+    # First position (id 3) is Elsewhere at index 0; the customer (id 7) is index 1
+    positions = [positions[1], positions[0]]
+    positions[0].organization.odoo_partner_id = other
+    positions[1].organization.odoo_partner_id = customer
+    monkeypatch.setattr(odoo_sync, "_get_odoo_clients", lambda: (None, fake, 1))
+    legacy = build_legacy_card(card, person, contacts, positions)
+    asyncio.run(odoo_sync.sync_to_odoo(legacy, None, customer))
+    co = fake.data["res.partner"][customer]
+    assert co.get("phone") == "03-5551234"              # its own office phone, not 02-1111111
+    assert co.get("street") == "302新竹縣竹北市新溪街175巷36號"
+    assert not fake.data["res.partner"][other].get("phone")
+
+
+def test_unknown_company_id_is_not_filled(monkeypatch):
+    from app.services import odoo_sync
+    from app.services.legacy_card import build_legacy_card
+    from tests.fake_odoo import FakeOdoo
+    fake = FakeOdoo()
+    stranger = fake.add("res.partner", name="Unrelated Co", is_company=True)
+    monkeypatch.setattr(odoo_sync, "_get_odoo_clients", lambda: (None, fake, 1))
+    legacy = build_legacy_card(*_two_org_card())        # no position links to `stranger`
+    asyncio.run(odoo_sync.sync_to_odoo(legacy, None, stranger))
+    assert not fake.data["res.partner"][stranger].get("phone")
+    assert not fake.data["res.partner"][stranger].get("street")

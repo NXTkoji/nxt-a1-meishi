@@ -29,7 +29,7 @@ from app.schemas.api import (
 from app.services import issue_flow
 from app.services import project_codes as pc
 from app.services.drive_folders import DriveError, DriveFolders
-from app.services.odoo_codes import OdooCodes, OdooDataError, OdooSetupError
+from app.services.odoo_codes import OdooCodes, OdooDataError, OdooSetupError, customer_id_of
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ async def resolve_customer(
         raise _as_http(exc)
     return ResolveOut(
         candidates=[issue_flow._candidate_out(c, ext_ids) for c in candidates],
-        odoo_customer_code=(company or {}).get("ref") or None,
+        odoo_customer_code=customer_id_of(company) if company else None,
         odoo_company_name=(company or {}).get("name"),
     )
 
