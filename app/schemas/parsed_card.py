@@ -61,6 +61,9 @@ class ParsedPositionDetail(BaseModel):
 class ParsedPosition(BaseModel):
     org_names: List[ParsedOrgName] = Field(default_factory=list)
     details: List[ParsedPositionDetail] = Field(default_factory=list)
+    # Set by the user in the scan review, never by Claude: saving the card turns the
+    # organization's NXT customer switch on (an unticked box never turns it off).
+    is_nxt_customer: bool = False
 
 
 # ---------------------------------------------------------------------------

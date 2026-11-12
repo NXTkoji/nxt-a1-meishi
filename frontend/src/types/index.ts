@@ -27,6 +27,8 @@ export interface ParsedPositionDetail {
 export interface ParsedPosition {
   org_names: ParsedOrgName[]
   details: ParsedPositionDetail[]
+  // Set in the scan review; saving the card turns the org's NXT customer switch on
+  is_nxt_customer?: boolean
 }
 
 export interface ParsedContactDetail {
