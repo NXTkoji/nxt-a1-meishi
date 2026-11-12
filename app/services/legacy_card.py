@@ -41,7 +41,12 @@ def build_legacy_card(
             (on.name for on in pos.organization.names if on.language == "en" and on.is_current),
             "",
         )
-        title_ja = next((pd.title or "" for pd in pos.details if pd.language == "ja"), "")
+        # Prefer the Japanese title, else the first one in any language (a zh-TW card
+        # has no ja title, and Odoo would get an empty job position)
+        title_ja = next(
+            (pd.title for pd in pos.details if pd.language == "ja" and pd.title),
+            next((pd.title for pd in pos.details if pd.title), ""),
+        )
         title_en = next((pd.title or "" for pd in pos.details if pd.language == "en"), "")
         dept = next(
             (pd.department or "" for pd in pos.details if pd.language == "ja"),
@@ -69,7 +74,7 @@ def build_legacy_card(
             emails.append(Email(value=cd.value, type=kind))
         elif t in ("address_work", "address_home"):
             kind = t.replace("address_", "")
-            addresses.append(Address(type=kind, full=cd.value))
+            addresses.append(Address(type=kind, full=cd.value, country_code=cd.country_code or ""))
         elif t == "url_website":
             website = cd.value
         elif t == "url_personal":

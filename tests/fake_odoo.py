@@ -53,7 +53,7 @@ class FakeOdoo:
     def __init__(self):
         self.data: dict[str, dict[int, dict]] = {
             "res.partner": {}, "res.partner.category": {},
-            "project.project": {}, "ir.sequence": {},
+            "project.project": {}, "ir.sequence": {}, "res.country": {},
         }
         self._next_id = {m: 1 for m in self.data}
         self.calls: list[tuple] = []
