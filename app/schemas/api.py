@@ -453,7 +453,7 @@ class IssueRequest(BaseModel):
     customer_name: Optional[str] = None      # required when org_ext_id is empty
     tax_id: Optional[str] = None             # 統一編號
     phone: Optional[str] = None              # match key when there is no 統編
-    product_line: str                        # DS or DJ
+    product_line: str                        # S (SH200) or J (NXT-JM)
     site_name: str
     roles: List[str] = Field(default_factory=list)   # reseller, end_user
     sold_via_org_ext_id: Optional[str] = None        # the reseller, if any

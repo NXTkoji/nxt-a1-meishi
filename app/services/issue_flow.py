@@ -81,8 +81,9 @@ def _clean_request(req: IssueRequest) -> tuple[Optional[str], str, List[str]]:
 
 
 async def _local_project_codes(db: AsyncSession, customer_code: str) -> List[str]:
-    rows = await db.scalars(select(Project.code).where(Project.code.like(f"{customer_code}-%")))
-    return list(rows)
+    rows = await db.scalars(select(Project.code).where(Project.code.like(f"{customer_code}%")))
+    # the LIKE is only a prefilter ("C1000%" also matches "C10000S01"); keep exact customer matches
+    return [c for c in rows if (pc.parse_project_code(c) or ("",))[0] == customer_code]
 
 
 async def _sold_via(db: AsyncSession, req: IssueRequest) -> Optional[Organization]:
@@ -498,7 +499,7 @@ async def _step_odoo_project(c: _Ctx) -> dict:
             "name": f"{project.code} {project.site_name}".strip(),
             "partner_id": org.odoo_partner_id,
             "x_project_code": project.code,
-            "x_product_line": project.product_line,
+            "x_product_line": pc.ODOO_PRODUCT_LINE[project.product_line],
         }
         if project.sold_via_org_id:
             sold_via = await c.db.get(Organization, project.sold_via_org_id)

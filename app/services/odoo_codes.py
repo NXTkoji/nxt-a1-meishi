@@ -16,7 +16,12 @@ import logging
 from typing import Any, Iterable, List, Optional
 
 from app.services import odoo_sync
-from app.services.project_codes import CUSTOMER_CODE_RE, normalize_org_name, strip_legal_forms
+from app.services.project_codes import (
+    CUSTOMER_CODE_RE,
+    normalize_org_name,
+    parse_project_code,
+    strip_legal_forms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -165,9 +170,11 @@ class OdooCodes:
     def project_codes_for(self, customer_ref: str) -> List[str]:
         """Every project code already used for this customer (archived included)."""
         rows = self._call("project.project", "search_read",
-                          [[["x_project_code", "=like", f"{customer_ref}-%"]]],
+                          [[["x_project_code", "=like", f"{customer_ref}%"]]],
                           {"fields": ["x_project_code"], "context": {"active_test": False}})
-        return [r["x_project_code"] for r in rows if r.get("x_project_code")]
+        # the =like is only a prefilter ("C1000%" also matches "C10000S01")
+        codes = [r["x_project_code"] for r in rows if r.get("x_project_code")]
+        return [c for c in codes if (parse_project_code(c) or ("",))[0] == customer_ref]
 
     def find_project(self, code: str) -> Optional[dict]:
         rows = self._call("project.project", "search_read",

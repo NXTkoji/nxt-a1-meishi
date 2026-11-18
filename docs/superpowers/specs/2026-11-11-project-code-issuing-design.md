@@ -51,12 +51,12 @@ On approval the app ensures the company exists (matching by Customer ID in `comp
 | Object | Format | Example |
 |---|---|---|
 | Customer ID | `C` + 4 digits, never reused | `C0200` |
-| Project code | `<customer>-<line><nn>` | `C0200-DS01`, `C0200-DJ01` |
-| Product lines | `DS` = SH200 deodorization, `DJ` = NXT-JM oil removal | |
+| Project code | `<customer><line><nn>` (no hyphen) | `C0200S01`, `C0200J01` |
+| Product lines | `S` = SH200 deodorization, `J` = NXT-JM oil removal | The earlier `C0200-DS01` form ("D" = direct sale, plus a hyphen) was shortened on 2026-11-18: the `D` carried no information once `P` was retired. Old input `DS`/`DJ` is still accepted. |
 | Legacy alias | free text list | `DS176`, `P065, P065S50` |
 
 - Customer numbering starts at **200**, above every legacy number (highest seen: DS176).
-- `P` is retired as a prefix. A reseller-sold SH200 job is a `DS` project with `sold_via` = the reseller.
+- `P` is retired as a prefix. A reseller-sold SH200 job is an `S` project with `sold_via` = the reseller.
 - Project number `nn` = highest existing number for that customer and line, plus 1.
 - Role (Reseller, End user, or both) is an Odoo **tag**, not part of any code.
 
@@ -72,7 +72,7 @@ Created by API:
 | `res.partner` | `x_legacy_codes` | char |
 | `res.partner` | `x_drive_url` | char |
 | `project.project` | `x_project_code` | char (indexed) |
-| `project.project` | `x_product_line` | selection DS / DJ |
+| `project.project` | `x_product_line` | selection DS / DJ (kept as is in Odoo; the app maps S to DS and J to DJ) |
 | `project.project` | `x_sold_via` | many2one res.partner |
 | `project.project` | `x_drive_url` | char |
 
@@ -103,7 +103,7 @@ Executed as a resumable sequence of steps, recorded in a local state table so a 
 2. Create or update `res.partner` (`company_registry`, `vat`, tags; an old code in `company_registry` moves to `x_legacy_codes`).
 3. Create the customer folder `C0200 <name>` under NXT Customers and store its URL on the partner.
 4. Create `project.project` with `x_project_code`, `x_product_line`, `x_sold_via`.
-5. Create the project folder `C0200-DS01 <site>` with subfolders and store its URL.
+5. Create the project folder `C0200S01 <site>` with subfolders and store its URL.
 6. Show the final codes and links.
 
 Every step checks whether its result already exists (by Customer ID, `x_project_code`, folder name) before creating, so re-running is safe.
@@ -114,7 +114,7 @@ When an old customer starts a new project, the request carries the optional fiel
 
 ```
 C0200 <customer>/
-  C0200-DS01 <site>/        new project
+  C0200S01 <site>/        new project
   DS176 <old site>/         old project, moved as is
 ```
 
@@ -129,12 +129,12 @@ C0200 <customer>/
 ```
 C0200 <customer>/
   finance & logistics/        one per customer, shared by all its projects
-  C0200-DS01 <site>/          a customer can have several project folders
+  C0200S01 <site>/          a customer can have several project folders
     1 requirement/
     2 proposal/
     3 construction/
     4 maintenance/
-  C0200-DJ01 <site>/
+  C0200J01 <site>/
     ...
 ```
 

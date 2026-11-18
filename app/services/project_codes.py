@@ -6,7 +6,7 @@ See docs/superpowers/specs/2026-11-11-project-code-issuing-design.md.
 
 Code formats
   Customer ID   C0200            (permanent, drawn from Odoo's `nxt.customer` sequence)
-  Project code  C0200-DS01       (<customer>-<product line><nn>)
+  Project code  C0200S01        (<customer><product line letter><nn>; S = SH200, J = NXT-JM)
 
 Matching is local-DB only. Looking up customers that exist only in Odoo is done by
 the Odoo client; the propose step merges both.
@@ -28,14 +28,23 @@ from app.services.contact_matcher import (
     _trigram_similarity,
 )
 
-# DS = SH200 deodorization, DJ = NXT-JM oil removal. "P" is retired as a prefix:
-# resellers are an Odoo tag plus "sold via" on the project.
-PRODUCT_LINES = ("DS", "DJ")
+# S = SH200 deodorization, J = NXT-JM oil removal. The old "D" (direct sale) and "P"
+# (partner) prefixes are retired: resellers are an Odoo tag plus "sold via" on the project.
+PRODUCT_LINES = ("S", "J")
+# Odoo's Product Line field (project.project.x_product_line) is a selection with the values
+# DS / DJ; keep those there and translate at the boundary.
+ODOO_PRODUCT_LINE = {"S": "DS", "J": "DJ"}
+# The first scheme wrote these as DS / DJ; still accepted as input (a run saved before the
+# change can be retried) and mapped to the short form.
+_OLD_PRODUCT_LINES = {"DS": "S", "DJ": "J"}
 
 CUSTOMER_CODE_RE = re.compile(r"^C\d{4,}$")
 # Old codes: DS###, DJ###, P###, and reseller sites P###S##
 LEGACY_CODE_RE = re.compile(r"^(?:DS|DJ|P)\d{3}(?:S\d{2})?$")
-PROJECT_CODE_RE = re.compile(r"^(C\d{4,})-([A-Z]{2})(\d{2,})$")
+# C0201S01: customer code, one product-line letter, a serial of at least two digits
+PROJECT_CODE_RE = re.compile(r"^(C\d{4,})([A-Z])(\d{2,})$")
+# The short-lived first format, C0201-DS01; read so numbering stays correct if one is left anywhere
+_OLD_PROJECT_CODE_RE = re.compile(r"^(C\d{4,})-D([A-Z])(\d{2,})$")
 
 # Confidence for each kind of match. Only "auto" matches may be reused without the
 # user choosing; fuzzy name matches are shown as candidates and never auto-merged.
@@ -96,6 +105,7 @@ def normalize_phone(phone: str) -> str:
 
 def validate_product_line(line: str) -> str:
     code = (line or "").strip().upper()
+    code = _OLD_PRODUCT_LINES.get(code, code)
     if code not in PRODUCT_LINES:
         raise ValidationError(f"Product line must be one of {', '.join(PRODUCT_LINES)}")
     return code
@@ -142,12 +152,13 @@ def merge_legacy_codes(existing: Optional[str], new: List[str]) -> str:
 def format_project_code(customer_code: str, product_line: str, number: int) -> str:
     if not CUSTOMER_CODE_RE.match(customer_code or ""):
         raise ValidationError(f"Invalid customer code: {customer_code!r}")
-    return f"{customer_code}-{validate_product_line(product_line)}{number:02d}"
+    return f"{customer_code}{validate_product_line(product_line)}{number:02d}"
 
 
 def parse_project_code(code: str) -> Optional[tuple[str, str, int]]:
-    """Split "C0200-DS01" into ("C0200", "DS", 1); None if it does not match."""
-    m = PROJECT_CODE_RE.match(code or "")
+    """Split "C0200S01" into ("C0200", "S", 1); None if it does not match.
+    The earlier "C0200-DS01" form is read as the same project."""
+    m = PROJECT_CODE_RE.match(code or "") or _OLD_PROJECT_CODE_RE.match(code or "")
     if not m:
         return None
     return m.group(1), m.group(2), int(m.group(3))
