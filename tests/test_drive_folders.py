@@ -82,14 +82,14 @@ def test_customer_and_project_tree_layout(drive):
 
     async def go():
         cust = await d.ensure_customer_folder("C0200", "甜蜜蜜台北店", parent_id="ROOT")
-        proj = await d.ensure_project_tree(cust.id, "C0200-DS01", "台北店")
+        proj = await d.ensure_project_tree(cust.id, "C0200S01", "台北店")
         return cust, proj
 
     cust, proj = run(go())
     assert cust.name == "C0200 甜蜜蜜台北店"
     assert names_in(fake, "ROOT") == ["C0200 甜蜜蜜台北店"]
     # finance & logistics sits beside the project folders, once per customer
-    assert names_in(fake, cust.id) == sorted(["C0200-DS01 台北店", *CUSTOMER_SUBFOLDERS])
+    assert names_in(fake, cust.id) == sorted(["C0200S01 台北店", *CUSTOMER_SUBFOLDERS])
     assert names_in(fake, proj.id) == sorted(PROJECT_SUBFOLDERS)
     assert PROJECT_SUBFOLDERS == ("1 requirement", "2 proposal", "3 construction", "4 maintenance")
     assert CUSTOMER_SUBFOLDERS == ("finance & logistics",)
@@ -100,14 +100,14 @@ def test_a_customer_can_have_several_project_folders(drive):
 
     async def go():
         cust = await d.ensure_customer_folder("C0200", "甜蜜蜜", parent_id="ROOT")
-        await d.ensure_project_tree(cust.id, "C0200-DS01", "台北店")
-        await d.ensure_project_tree(cust.id, "C0200-DJ01", "信義店")
+        await d.ensure_project_tree(cust.id, "C0200S01", "台北店")
+        await d.ensure_project_tree(cust.id, "C0200J01", "信義店")
         await d.ensure_customer_folder("C0200", "甜蜜蜜", parent_id="ROOT")
         return cust
 
     cust = run(go())
     assert names_in(fake, cust.id) == sorted(
-        ["C0200-DS01 台北店", "C0200-DJ01 信義店", "finance & logistics"])
+        ["C0200S01 台北店", "C0200J01 信義店", "finance & logistics"])
 
 
 def test_running_twice_creates_nothing_new(drive):
@@ -115,7 +115,7 @@ def test_running_twice_creates_nothing_new(drive):
 
     async def once():
         cust = await d.ensure_customer_folder("C0200", "甜蜜蜜", parent_id="ROOT")
-        return await d.ensure_project_tree(cust.id, "C0200-DS01", "台北店")
+        return await d.ensure_project_tree(cust.id, "C0200S01", "台北店")
 
     first = run(once())
     count = len(fake.files)

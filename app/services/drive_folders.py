@@ -6,9 +6,9 @@ Layout (see the project-code issuing spec):
     NXT Customers/
       C0200 <customer>/
         finance & logistics/          one per customer, shared by all its projects
-        C0200-DS01 <site>/            a customer can have several project folders
+        C0200S01 <site>/            a customer can have several project folders
           1 requirement / 2 proposal / 3 construction / 4 maintenance
-        C0200-DJ01 <site>/
+        C0200J01 <site>/
 
 Photos are not a folder of their own; they go into whichever numbered folder they belong to.
 

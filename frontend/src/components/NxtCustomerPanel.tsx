@@ -79,7 +79,7 @@ export function NxtCustomerPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
   // Digits only: cards print it as "統一編號：90270905" or with spaces
   const [taxId, setTaxId] = useState((cardTaxId ?? '').replace(/\D/g, ''))
   const [phone, setPhone] = useState('')
-  const [line, setLine] = useState('DS')
+  const [line, setLine] = useState('S')
   const [site, setSite] = useState('')
   const [roles, setRoles] = useState<string[]>([])
   const [soldVia, setSoldVia] = useState('')
@@ -230,8 +230,8 @@ export function NxtCustomerPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
                 </Field>
                 <Field label={t.nxtProductLine}>
                   <select className={inputCls} value={line} onChange={e => { setLine(e.target.value); setProposal(null) }}>
-                    <option value="DS">{t.nxtLineDS}</option>
-                    <option value="DJ">{t.nxtLineDJ}</option>
+                    <option value="S">{t.nxtLineS}</option>
+                    <option value="J">{t.nxtLineJ}</option>
                   </select>
                 </Field>
                 <Field label={t.nxtSiteName}>

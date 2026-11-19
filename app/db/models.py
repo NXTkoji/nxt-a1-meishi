@@ -200,13 +200,13 @@ class OrganizationName(Base):
 # ---------------------------------------------------------------------------
 
 class Project(Base):
-    """A project issued for an NXT customer, e.g. code "C0200-DS01"."""
+    """A project issued for an NXT customer, e.g. code "C0200S01"."""
     __tablename__ = "projects"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     org_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), nullable=False)
-    # DS = SH200 deodorization, DJ = NXT-JM oil removal
+    # S = SH200 deodorization, J = NXT-JM oil removal
     product_line: Mapped[str] = mapped_column(String(8), nullable=False)
     site_name: Mapped[Optional[str]] = mapped_column(String(256))
     # The reseller that sold this project, if any

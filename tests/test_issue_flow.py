@@ -75,7 +75,7 @@ def env(client_with_test_db):
 
 
 def req(**kw):
-    base = dict(customer_name="甜蜜蜜台北店", tax_id=TAX, product_line="DS", site_name="台北店")
+    base = dict(customer_name="甜蜜蜜台北店", tax_id=TAX, product_line="S", site_name="台北店")
     base.update(kw)
     return IssueRequest(**base)
 
@@ -90,7 +90,7 @@ def test_propose_new_customer_has_no_side_effects(env):
     out = env.propose()
     assert out.customer_mode == "new" and out.needs_choice is False
     assert out.suggested_customer_code == "C0200"
-    assert out.project_code == "C0200-DS01" and out.project_code_tentative
+    assert out.project_code == "C0200S01" and out.project_code_tentative
     assert any("Odoo" in a for a in out.actions) and any("Drive" in a for a in out.actions)
     # nothing created, nothing consumed
     assert env.odoo.rows("res.partner") == [] and env.odoo.rows("project.project") == []
@@ -118,7 +118,7 @@ def test_propose_rejects_bad_input(env, kw, fragment):
 def test_commit_creates_everything(env):
     out = env.commit(roles=["end_user"])
     assert out.status == "done" and out.failed_step is None
-    assert out.customer_code == "C0200" and out.project_code == "C0200-DS01"
+    assert out.customer_code == "C0200" and out.project_code == "C0200S01"
 
     # Odoo: company first, with the code, 統編 and tags
     (company,) = env.odoo.rows("res.partner")
@@ -127,31 +127,31 @@ def test_commit_creates_everything(env):
     tag_names = {env.odoo.data["res.partner.category"][i]["name"] for i in company["category_id"]}
     assert tag_names == {"NXT Customer", "NXT End User"}
     (project,) = env.odoo.rows("project.project")
-    assert project["x_project_code"] == "C0200-DS01" and project["x_product_line"] == "DS"
+    assert project["x_project_code"] == "C0200S01" and project["x_product_line"] == "DS"
     assert project["partner_id"] == company["id"] and project["x_drive_url"] == out.project_drive_url
 
     # Drive: customer folder (with finance & logistics beside the project folder), project folder, four subfolders
     assert folders(env.fdrive, ROOT) == ["C0200 甜蜜蜜台北店"]
     cust_id = next(f["id"] for f in env.fdrive.files if f["name"].startswith("C0200 "))
-    assert folders(env.fdrive, cust_id) == sorted(["C0200-DS01 台北店", *CUSTOMER_SUBFOLDERS])
-    proj_id = next(f["id"] for f in env.fdrive.files if f["name"].startswith("C0200-DS01"))
+    assert folders(env.fdrive, cust_id) == sorted(["C0200S01 台北店", *CUSTOMER_SUBFOLDERS])
+    proj_id = next(f["id"] for f in env.fdrive.files if f["name"].startswith("C0200S01"))
     assert folders(env.fdrive, proj_id) == sorted(PROJECT_SUBFOLDERS)
 
     # Local rows
     org = env.run(lambda db: db.scalar(select(Organization)))
     assert org.is_nxt_customer and org.customer_code == "C0200" and org.tax_id == TAX
     assert org.odoo_partner_id == company["id"]
-    assert env.run(lambda db: db.scalar(select(Project.code))) == "C0200-DS01"
+    assert env.run(lambda db: db.scalar(select(Project.code))) == "C0200S01"
 
 
 def test_second_project_for_same_customer_reuses_everything(env):
     first = env.commit()
-    proposal = env.propose(product_line="DS", site_name="信義店")
+    proposal = env.propose(product_line="S", site_name="信義店")
     assert proposal.customer_mode == "existing" and proposal.customer_code == "C0200"
-    assert proposal.project_code == "C0200-DS02" and not proposal.project_code_tentative
+    assert proposal.project_code == "C0200S02" and not proposal.project_code_tentative
 
     second = env.commit(site_name="信義店")
-    assert second.customer_code == "C0200" and second.project_code == "C0200-DS02"
+    assert second.customer_code == "C0200" and second.project_code == "C0200S02"
     assert len(env.odoo.rows("res.partner")) == 1
     assert len(env.odoo.rows("project.project")) == 2
     assert env.codes.peek_next_customer_id() == "C0201"        # nothing extra drawn
@@ -160,11 +160,11 @@ def test_second_project_for_same_customer_reuses_everything(env):
 
 
 def test_customer_buying_both_products_gets_two_lines(env):
-    env.commit(product_line="DS", site_name="台北店")
-    out = env.commit(product_line="DJ", site_name="廚房")
-    assert out.customer_code == "C0200" and out.project_code == "C0200-DJ01"
+    env.commit(product_line="S", site_name="台北店")
+    out = env.commit(product_line="J", site_name="廚房")
+    assert out.customer_code == "C0200" and out.project_code == "C0200J01"
     assert sorted(r["x_project_code"] for r in env.odoo.rows("project.project")) == [
-        "C0200-DJ01", "C0200-DS01"]
+        "C0200J01", "C0200S01"]
 
 
 # ── commit: failure and retry ─────────────────────────────────────────────────
@@ -175,14 +175,14 @@ def test_failed_run_is_resumable_without_duplicates(env):
     assert out.status == "failed" and out.failed_step == "drive_project"
     assert "Drive is down" in out.error
     # Everything before the failing step happened, and only once
-    assert out.customer_code == "C0200" and out.project_code == "C0200-DS01"
+    assert out.customer_code == "C0200" and out.project_code == "C0200S01"
     assert len(env.odoo.rows("res.partner")) == 1 and len(env.odoo.rows("project.project")) == 1
     assert set(out.steps) == {"local_org", "customer_id", "odoo_company", "drive_customer",
                               "legacy", "local_project", "odoo_project"}
 
     again = env.run(lambda db: issue_flow.retry(db, env.codes, env.drive, out.run_id))
     assert again.status == "done" and again.run_id == out.run_id
-    assert again.customer_code == "C0200" and again.project_code == "C0200-DS01"
+    assert again.customer_code == "C0200" and again.project_code == "C0200S01"
     assert len(env.odoo.rows("res.partner")) == 1 and len(env.odoo.rows("project.project")) == 1
     assert env.codes.peek_next_customer_id() == "C0201"        # drawn exactly once
     assert len([f for f in env.fdrive.files if f["name"].startswith("C0200 ")]) == 1
@@ -227,7 +227,7 @@ def test_odoo_company_with_a_different_customer_id_is_a_conflict(env):
     proposal = env.propose()
     assert proposal.customer_mode == "existing" and proposal.customer_code == "C0150"
     out = env.commit()
-    assert out.customer_code == "C0150" and out.project_code == "C0150-DS01"
+    assert out.customer_code == "C0150" and out.project_code == "C0150S01"
     assert env.codes.peek_next_customer_id() == "C0200"        # adopted, not drawn
 
 
@@ -312,8 +312,8 @@ def test_sold_via_is_recorded_on_the_project(env):
         select(Organization.external_id).where(Organization.customer_code == reseller.customer_code)))
     out = env.commit(customer_name="青沐餐廳", tax_id=None, phone="0299990000",
                      site_name="敦化北路店", sold_via_org_ext_id=reseller_ext, roles=["end_user"])
-    assert out.customer_code == "C0201" and out.project_code == "C0201-DS01"
-    project = next(p for p in env.odoo.rows("project.project") if p["x_project_code"] == "C0201-DS01")
+    assert out.customer_code == "C0201" and out.project_code == "C0201S01"
+    project = next(p for p in env.odoo.rows("project.project") if p["x_project_code"] == "C0201S01")
     assert project["x_sold_via"] == reseller.odoo_partner_id
     # the reseller stays a reseller; the end user is a separate customer
     tags = {p.get("company_registry"): len(p["category_id"]) for p in env.odoo.rows("res.partner")}
@@ -401,7 +401,7 @@ def test_old_folder_is_moved_into_the_new_customer_folder(env):
     cust_id = _customer_folder_id(env)
     assert folders(env.fdrive, ROOT) == ["C0200 甜蜜蜜台北店"]        # no second customer folder
     assert folders(env.fdrive, cust_id) == sorted(
-        ["C0200-DS01 台北店", "DS176 甜蜜蜜台北店", *CUSTOMER_SUBFOLDERS])
+        ["C0200S01 台北店", "DS176 甜蜜蜜台北店", *CUSTOMER_SUBFOLDERS])
 
     org = env.run(lambda db: db.scalar(select(Organization)))
     assert org.legacy_codes == "DS176"
@@ -488,13 +488,13 @@ def api(env):
     app.dependency_overrides.pop(projects_router.get_drive_opener, None)
 
 
-BODY = {"customer_name": "甜蜜蜜台北店", "tax_id": TAX, "product_line": "DS", "site_name": "台北店"}
+BODY = {"customer_name": "甜蜜蜜台北店", "tax_id": TAX, "product_line": "S", "site_name": "台北店"}
 
 
 def test_api_propose_commit_list(api):
     client, env = api
     r = client.post("/api/v2/projects/propose", json=BODY)
-    assert r.status_code == 200 and r.json()["project_code"] == "C0200-DS01"
+    assert r.status_code == 200 and r.json()["project_code"] == "C0200S01"
 
     r = client.post("/api/v2/projects/commit", json=BODY)
     assert r.status_code == 200
@@ -503,7 +503,7 @@ def test_api_propose_commit_list(api):
     assert data["project_drive_url"].startswith("https://drive.google.com/drive/folders/")
 
     listing = client.get("/api/v2/projects").json()
-    assert [p["code"] for p in listing] == ["C0200-DS01"]
+    assert [p["code"] for p in listing] == ["C0200S01"]
 
     orgs = client.get("/api/v2/organizations").json()
     assert orgs[0]["is_nxt_customer"] is True and orgs[0]["customer_code"] == "C0200"
@@ -534,7 +534,7 @@ def test_api_failed_run_then_retry(api):
     first = client.post("/api/v2/projects/commit", json=BODY).json()
     assert first["status"] == "failed" and first["failed_step"] == "drive_project"
     second = client.post(f"/api/v2/projects/runs/{first['run_id']}/retry").json()
-    assert second["status"] == "done" and second["project_code"] == "C0200-DS01"
+    assert second["status"] == "done" and second["project_code"] == "C0200S01"
 
 
 def test_api_resolve(api):

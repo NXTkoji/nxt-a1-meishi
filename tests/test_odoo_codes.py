@@ -88,19 +88,19 @@ def test_update_company_adds_tag_without_dropping_others(odoo):
 
 def test_project_codes_for_customer(odoo):
     fake, client = odoo
-    fake.add("project.project", name="a", x_project_code="C0200-DS01")
-    fake.add("project.project", name="b", x_project_code="C0200-DJ01")
-    fake.add("project.project", name="c", x_project_code="C0201-DS01")
+    fake.add("project.project", name="a", x_project_code="C0200S01")
+    fake.add("project.project", name="b", x_project_code="C0200J01")
+    fake.add("project.project", name="c", x_project_code="C0201S01")
     fake.add("project.project", name="d")  # no code
-    assert sorted(client.project_codes_for("C0200")) == ["C0200-DJ01", "C0200-DS01"]
+    assert sorted(client.project_codes_for("C0200")) == ["C0200J01", "C0200S01"]
 
 
 def test_find_and_create_project(odoo):
     fake, client = odoo
-    assert client.find_project("C0200-DS01") is None
-    pid = client.create_project({"name": "C0200-DS01 台北店", "x_project_code": "C0200-DS01",
-                                 "x_product_line": "DS"})
-    assert client.find_project("C0200-DS01")["id"] == pid
+    assert client.find_project("C0200S01") is None
+    pid = client.create_project({"name": "C0200S01 台北店", "x_project_code": "C0200S01",
+                                 "x_product_line": "S"})
+    assert client.find_project("C0200S01")["id"] == pid
 
 
 # ── Card export: company lookup (the duplicate-company fix) ───────────────────
@@ -159,3 +159,10 @@ def test_export_ignores_short_names_in_reference(odoo):
     customer = fake.add("res.partner", name="允將餐飲", is_company=True, company_registry="C0200")
     assert _find(fake, "允將餐飲") == customer
     assert nickname != customer
+
+
+def test_project_codes_for_does_not_mix_customers_with_a_shared_prefix(odoo):
+    fake, client = odoo
+    fake.add("project.project", name="a", x_project_code="C1000S01")
+    fake.add("project.project", name="b", x_project_code="C10000S01")   # another customer
+    assert client.project_codes_for("C1000") == ["C1000S01"]

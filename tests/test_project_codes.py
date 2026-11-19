@@ -51,9 +51,9 @@ def test_normalize_phone_taiwan(raw, expected):
 # ── Code formats ──────────────────────────────────────────────────────────────
 
 def test_format_and_parse_project_code():
-    assert pc.format_project_code("C0200", "ds", 1) == "C0200-DS01"
-    assert pc.format_project_code("C0200", "DJ", 12) == "C0200-DJ12"
-    assert pc.parse_project_code("C0200-DS01") == ("C0200", "DS", 1)
+    assert pc.format_project_code("C0200", "s", 1) == "C0200S01"
+    assert pc.format_project_code("C0200", "J", 12) == "C0200J12"
+    assert pc.parse_project_code("C0200S01") == ("C0200", "S", 1)
     assert pc.parse_project_code("DS176") is None
     assert pc.parse_project_code("P065S50") is None
 
@@ -66,11 +66,11 @@ def test_format_rejects_bad_input():
 
 
 def test_next_project_number_is_per_customer_and_line():
-    existing = ["C0200-DS01", "C0200-DS03", "C0200-DJ01", "C0201-DS09", "junk"]
-    assert pc.next_project_number(existing, "C0200", "DS") == 4
-    assert pc.next_project_number(existing, "C0200", "DJ") == 2
-    assert pc.next_project_number(existing, "C0202", "DS") == 1
-    assert pc.next_project_number([], "C0200", "DS") == 1
+    existing = ["C0200S01", "C0200S03", "C0200J01", "C0201S09", "junk"]
+    assert pc.next_project_number(existing, "C0200", "S") == 4
+    assert pc.next_project_number(existing, "C0200", "J") == 2
+    assert pc.next_project_number(existing, "C0202", "S") == 1
+    assert pc.next_project_number([], "C0200", "S") == 1
 
 
 # ── Organization matching ─────────────────────────────────────────────────────
@@ -170,3 +170,26 @@ def test_parse_legacy_codes_rejects_other_shapes(bad):
 def test_merge_legacy_codes_keeps_order_without_duplicates():
     assert pc.merge_legacy_codes(None, ["DS176"]) == "DS176"
     assert pc.merge_legacy_codes("DS100, P065", ["DS176", "P065"]) == "DS100, P065, DS176"
+
+
+def test_short_code_format_and_five_digit_customers():
+    assert pc.format_project_code("C0201", "S", 1) == "C0201S01"
+    assert pc.format_project_code("C10000", "J", 3) == "C10000J03"
+    assert pc.parse_project_code("C10000J03") == ("C10000", "J", 3)
+    assert pc.parse_project_code("C0201S100") == ("C0201", "S", 100)   # serial may pass 99
+    for bad in ["C0201-S01", "C0201S1", "C201S01", "0201S01", "C0201SS01", ""]:
+        assert pc.parse_project_code(bad) is None, bad
+
+
+def test_old_hyphen_form_is_read_as_the_same_project():
+    assert pc.parse_project_code("C0201-DS01") == ("C0201", "S", 1)
+    assert pc.parse_project_code("C0201-DJ02") == ("C0201", "J", 2)
+    # so a leftover old-format code still counts when numbering the next one
+    assert pc.next_project_number(["C0201-DS01"], "C0201", "S") == 2
+
+
+def test_old_product_line_names_are_still_accepted_as_input():
+    assert pc.validate_product_line("DS") == "S" and pc.validate_product_line(" dj ") == "J"
+    assert pc.format_project_code("C0200", "DS", 1) == "C0200S01"
+    with pytest.raises(pc.ValidationError):
+        pc.validate_product_line("X")
