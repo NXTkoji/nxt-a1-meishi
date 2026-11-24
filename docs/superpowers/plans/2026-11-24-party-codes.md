@@ -75,7 +75,7 @@ Update this table in each PR. Mark a task done only when its tests pass.
 | 5 Drive supplier folders | done (`ensure_supplier_folder`, `GOOGLE_DRIVE_SUPPLIERS_FOLDER_ID`; the id must be set in `.env` before first use) |
 | 6 Propose and commit | done (`supplier_flow.py`) |
 | 7 API routes | done (`routers/v2/suppliers.py`; retry dispatches on kind; customer flow and card export keep statuses) |
-| 8 UI | not started |
+| 8 UI | done (`RelationshipPanel.tsx`, `SupplierSection.tsx`, shared `partyShared.tsx`/`partyUi.ts`; checked in headless Chrome at 900 and 360 px in ja, en, zh-TW with mocked API; not yet clicked through against the real backend) |
 | 9 Backfill script | not started |
 | 10 Live verification | not started |
 

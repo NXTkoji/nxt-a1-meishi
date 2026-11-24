@@ -150,14 +150,14 @@ export function SupplierSection({ org, orgExtId, orgName, cardExtId, cardTaxId, 
         <>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
             {org.supplier_code && (<><dt className="text-gray-500">{t.supCode}</dt><dd className="font-mono">{org.supplier_code}</dd></>)}
-            {org.supplier_category && (<><dt className="text-gray-500">{t.supCategory}</dt><dd>{t.supCategories[org.supplier_category]}</dd></>)}
+            {hasCode && org.supplier_category && (<><dt className="text-gray-500">{t.supCategory}</dt><dd title={t.supCategoryLocked}>{t.supCategories[org.supplier_category]}</dd></>)}
             {org.supplier_drive_url && (<><dt className="text-gray-500">{t.nxtDriveFolder}</dt><dd><FolderLink url={org.supplier_drive_url} label={t.nxtOpenFolder} /></dd></>)}
           </dl>
 
-          {/* Category: set while a prospect, fixed once the code and folder exist */}
-          {status !== '' && !formOpen && (
-            <Field label={t.supCategory} hint={hasCode ? t.supCategoryLocked : undefined}>
-              <select className={inputCls} value={org.supplier_category ?? ''} disabled={hasCode}
+          {/* Category: editable while a prospect; once the code and folder exist it is the read-only row above */}
+          {status !== '' && !formOpen && !hasCode && (
+            <Field label={t.supCategory}>
+              <select className={inputCls} value={org.supplier_category ?? ''}
                 onChange={e => e.target.value && changeCategory(e.target.value as SupplierCategoryKey)}>
                 <option value="">{t.supCategoryChoose}</option>
                 {CATEGORY_KEYS.map(k => <option key={k} value={k}>{t.supCategories[k]}</option>)}
