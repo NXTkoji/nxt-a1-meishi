@@ -6,10 +6,10 @@ Tests never touch the real DB, Odoo or Drive (see `tests/conftest.py`, fakes in 
 
 ## Task 1 — Odoo setup (production, by API, once)
 Do this only after the spec PR is merged. Create, checking each exists first:
-- `ir.sequence` code `nxt.supplier`, prefix `S`, padding 3, next number 100.
+- `ir.sequence` code `nxt.supplier`, prefix `S`, padding 3, next number 100, `company_id` = NXT (id 1), like `nxt.customer`.
 - `res.partner` fields `x_supplier_code` (char, indexed), `x_supplier_drive_url` (char), `x_customer_status` and `x_supplier_status` (selection: potential / active / inactive).
 - Tags `Supplier: Parts`, `Supplier: Administration`, `Supplier: Construction`, `Supplier: Forwarding`, `Supplier: Inspection`, `Supplier: Marketing`, `Supplier: Packaging`, `Supplier: Other`.
-- Check the Odoo API user can `next_by_code('nxt.supplier')`, read `number_next_actual`, and write the new fields (same checks as the customer live verification).
+- Check the Odoo API user can `next_by_code('nxt.supplier')` with context `allowed_company_ids=[1]`, read `number_next_actual`, and write the new fields (same checks as the customer live verification).
 
 ## Task 2 — Database migration and models
 - Alembic revision (head = the revision no other file lists as `down_revision`): `organizations` gets `supplier_code` (unique, nullable), `supplier_category`, `customer_status`, `supplier_status`, `supplier_drive_folder_id`, `supplier_drive_url`; `tax_id` widened to 32; `issue_runs.kind` (default `project`).
@@ -24,7 +24,8 @@ Do this only after the spec PR is merged. Create, checking each exists first:
 ## Task 4 — Odoo client additions
 - In `app/services/odoo_codes.py`: `peek_next_supplier_code()`, `draw_supplier_code()`, `find_company(supplier_code=...)`, supplier fields in `COMPANY_FIELDS`, write of `x_supplier_*`, status fields and category tags.
 - Guard (spec, "Changes to the customer flow"): `customer_id_of` / `old_code_of` ignore supplier-shaped values; the customer step moves a supplier-shaped old code to `x_supplier_code` instead of `x_legacy_codes` and never queues it as a folder to move.
-- Tests with the fake Odoo, including the S059-becomes-customer case.
+- Company scoping (spec, "Odoo companies"): `ODOO_COMPANY_ID` setting (+ `.env.example`); every call passes `allowed_company_ids`; searches use `company_id in (<id>, False)`; created partners get `company_id`. Apply it to the existing customer lookups too.
+- Tests with the fake Odoo, including the S059-becomes-customer case and a partner of another company that must never match (same name, `company_id = 2`).
 
 ## Task 5 — Drive supplier folders
 - Config `google_drive_suppliers_folder_id` (+ `.env.example`).
@@ -46,7 +47,7 @@ Do this only after the spec PR is merged. Create, checking each exists first:
 
 ## Task 9 — Backfill script
 - `scripts/backfill_suppliers.py`: dry-run CSV report by default, `--apply` to write; rules and conflict handling as in the spec. Idempotent.
-- Tests: dry-run report on fakes (code match, short-name move, minimal company creation, potential folders, `S058` conflict, 光殿貿易 name-only candidate), apply twice changes nothing.
+- Tests: dry-run report on fakes (code match, other-company partner skipped, shared partner listed not changed, minimal company creation, potential folders, `S058` conflict, 光殿貿易 name-only candidate), apply twice changes nothing.
 - First real run: dry-run on the Mac, review the CSV with the user, then `--apply`.
 
 ## Task 10 — Live verification
@@ -79,7 +80,9 @@ Update this table in each PR. Mark a task done only when its tests pass.
 | 10 Live verification | not started |
 
 Facts from the 2026-11-24 audit (for whoever builds the backfill):
-- Odoo: 44 records have `supplier_rank > 0`; 31 companies carry a supplier code in Company ID (`S001`, `S010`, `S049`, `S059`, `S063`, `S067`, `S072`, `S073`, `SA002 SA006 SA025 SA028 SA034 SA035 SA038 SA039 SA042 SA043 SA044`, `SC029 SC060 SC061 SC070`, `SF003`, `SM013 SM023 SM024 SM025 SM026`, `SP045`). Overseas suppliers carry short names (`VGJ`, `WHL`, `BLD`, `LGJ`, `NHC`, `JFI`, `OKK`, `TOM`, `KMR`, `ACT`, `LNV`). Three companies are customer and supplier at once: 光殿貿易 (Company ID `P030`; Drive `SM009`), 縉業金屬工業 (`DS117`), 美羅池餐飲 (`DS164 MLC`).
+- Odoo companies: 1 NXT, 2 智原フードサービス (Tomohara), 3 正康有限公司 (Zenkan), 9 福原康児. Only company 1 is in scope. The sequence `nxt.customer` (id 77, next 202 at the time) belongs to company 1.
+- NXT records: 30 top-level companies carry a supplier code in Company ID (`S001`, `S010`, `S049`, `S059`, `S063`, `S067`, `S072`, `S073`, `SA002 SA006 SA025 SA028 SA034 SA035 SA038 SA039 SA042 SA043 SA044`, `SC029 SC060 SC061 SC070`, `SF003`, `SM013 SM023 SM024 SM025 SM026`, `SP045`). The short names (`VGJ`, `WHL`, `BLD`, `LGJ`, `NHC`, `JFI`, `OKK`, `TOM`, `KMR`, `ACT`, `LNV`, `MJP`, `JFE`, `MRI`, `WNL`) all belong to company 2 and are out of scope. Four partners are shared (no company): 美羅池餐飲 (`DS164 MLC`), 奇桔數位行銷 (`SM025`), 香榭裡商號 (`SA043`), 正康有限公司 (`P076`).
+- Three NXT-side companies are customer and supplier at once: 光殿貿易 (Company ID `P030`; Drive `SM009`), 縉業金屬工業 (`DS117`), and 美羅池餐飲 (shared).
 - Drive "NXT Suppliers", top level only: Parts 20 coded (S049 to S075), Japan 9 coded (S001 to S058) plus 7 uncoded, Administration 23 (SA001 to SA046), Construction 9 coded plus regional folders (台中, 台北新北, 台南, 嘉義, 高雄), Forwarding 4, Inspection 3, Marketing 17, Package 4. That is 89 coded folders before looking inside regional, "Potential", "not in use" and "inactive parts suppliers" folders, so the real total is higher. Odoo has `SC029`, `SC060`, `SC061`, which are not at the top level of the Construction folder (probably in the regional folders).
 - `S058` is used twice (上億國際 Aqua Aircon in Parts, エスポ化学 in Japan). `S999 Others` is a folder, not a supplier.
 - `SA034` is on both 交通部 and its branch 公路總局 in Odoo: not a conflict (branch under parent).

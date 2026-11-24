@@ -9,7 +9,7 @@
 Customers and suppliers were split into two code schemes only because QuickBooks Online forced it (it has been replaced by Odoo). The split now causes trouble:
 
 - A supplier sometimes buys from us (and a customer sometimes sells to us), so the same legal entity has two codes and two folders with no link between them. Example: 光殿貿易 is `P030` in NXT Customers and `SM009` in NXT Suppliers. 縉業金屬工業 and 美羅池餐飲 are already both customer and supplier in Odoo.
-- Odoo's "Company ID" (`company_registry`) can hold only one code per party. Today it holds customer codes (`DS127`, `P030`, `C0201`) and supplier codes (`S059`, `SA002`, `SC070`) alike, and short names for overseas suppliers (`VGJ`, `BLD`, `WHL`).
+- Odoo's "Company ID" (`company_registry`) can hold only one code per party. Today it holds customer codes (`DS127`, `P030`, `C0201`) and supplier codes (`S059`, `SA002`, `SC070`) alike.
 - Supplier codes carry a category prefix (S, SA, SC, SF, SI, SM, SP). Parts (S049 to S075) and Japan (S001 to S058) share the `S` namespace and collide at `S058` (上億國際 Aqua Aircon and エスポ化学). A supplier that changes category would carry a wrong prefix.
 - There is no way to register a **potential** customer or supplier. Folders named "Potential" exist in Drive, but nothing in Odoo marks a party as potential; Odoo's `customer_rank` / `supplier_rank` are counters of posted documents and are 0 for both a prospect and an unclassified contact.
 - The customer flow would misfile a supplier code: if a supplier with `S059` in Company ID becomes a customer, the issue step moves `S059` into `x_legacy_codes` (customer aliases) and overwrites Company ID.
@@ -21,8 +21,25 @@ Customers and suppliers were split into two code schemes only because QuickBooks
 3. **Potential parties get no code** until promoted to active. Promotion goes through the same propose-then-approve flow as customer codes.
 4. **Neutral wording.** The app will be used by other companies later, so user-facing text (labels, review card, help) must not say "NXT". Internal names (`is_nxt_customer`, Odoo tag `NXT Customer`, sequence `nxt.customer`) stay as they are for now.
 5. **Scope of the first build:** the supplier role and the status model for both roles in the app and Odoo, plus the backfill of existing suppliers. The customer issue flow is unchanged except for the two guards listed under "Changes to the customer flow".
+6. **Existing unique supplier codes are kept as they are** (`S059`, `SA002`, `SC070`), so folder name and code stay equal and nothing printed changes. Only new suppliers draw from `S100`. (The alternative, re-issuing every old code as `S1xx`, was rejected.)
+7. **Only NXT is in scope.** The Odoo database holds several companies (see "Odoo companies"); records of the other companies are never read, coded or changed by this work.
 
-Refinement made while writing this spec (not yet confirmed with the user): existing supplier codes that are already unique are **kept as they are** (`S059`, `SA002`, `SC070`), so folder name and code stay equal and nothing printed changes. Only new suppliers draw from `S100`. The alternative is re-issuing every old code as `S1xx` and keeping the old one as an alias; it gives one uniform format but breaks the folder-name equals code rule for about 60 folders.
+## Odoo companies
+
+The Odoo database is multi-company. Checked on 2026-11-24:
+
+| id | Company | Scope |
+|---|---|---|
+| 1 | 紐克仕綠能科技股份有限公司 (NXT) | **in scope** |
+| 2 | 智原フードサービス合同会社 (Tomohara) | out of scope. Its Japanese suppliers carry short names in Company ID (`VGJ`, `WHL`, `BLD`, `LGJ`, `NHC`, `JFI`, `OKK`, `TOM`, `KMR`, `ACT`, `LNV`, ...); these are not NXT codes and are never touched |
+| 3 | 正康有限公司 (Zenkan) | out of scope |
+| 9 | 福原康児 | out of scope |
+
+Rules for every Odoo call this work makes:
+- Searches use the domain `company_id in (1, False)` (NXT's own partners plus shared ones), and every call passes the context `allowed_company_ids = [1]`, so sequences and defaults resolve for NXT. The NXT company id is a setting (`ODOO_COMPANY_ID`), not a constant.
+- Partners the app creates get `company_id = 1`. The new sequence is created for company 1, like `nxt.customer` (id 77).
+- **Shared partners** (no company, for example 美羅池餐飲, 奇桔數位行銷 `SM025`, 香榭裡商號 `SA043`, 正康有限公司) are visible to every company, so a status or code written there is visible to all. The app and the backfill do not change them automatically: they are listed for confirmation.
+- The existing customer lookups (`find_company`, `find_companies_by_name`) get the same company scoping, so a card export or issue run can never match another company's partner.
 
 ## Model
 
@@ -67,7 +84,7 @@ To be created by API (production Odoo, done in plan task 1, not before):
 | `res.partner.category` | tags `Supplier: Parts`, `Administration`, `Construction`, `Forwarding`, `Inspection`, `Marketing`, `Packaging`, `Other` | look up by name |
 
 Rules:
-- Company ID holds only Customer IDs from now on. The backfill moves supplier-shaped codes out of it into `x_supplier_code`.
+- For NXT records, Company ID holds only Customer IDs from now on. The backfill moves supplier-shaped codes out of it into `x_supplier_code`.
 - Statuses and the category tag are written whenever the app creates or updates the company (card export included), with no code drawn for `potential`.
 - Companies under a parent (branches, e.g. 公路總局 under 交通部) carry no code of their own; the code sits on the top-level company.
 
@@ -121,13 +138,13 @@ A script, `scripts/backfill_suppliers.py`, dry-run by default (writes a CSV repo
 Matching: by code first (the Company ID value equals the folder's code), then by normalized name plus tax ID. A name-only match is a candidate the user confirms, never an automatic merge (this is how 光殿貿易 `P030` meets `SM009`).
 
 Rules, in order:
-1. Company ID holds a supplier-shaped code: copy it to `x_supplier_code`, clear Company ID, set supplier status `active`, add the category tag from the folder it lives in.
-2. Company ID holds a short name (`VGJ`, `BLD`, `WHL`, `JFI`, and so on) on a supplier: move it to `x_legacy_codes`, draw a new `S1xx`, status `active`.
-3. A coded Drive folder with no Odoo record: create a minimal company (name, code, category, status) unless the report marks it skipped.
-4. Uncoded folders in `Potential*` locations and the regional Construction folders: status `potential`, no code.
-5. The seven known uncoded Japanese folders and anything ambiguous: listed in the report with the default `potential`, for the user to decide.
-6. Conflicts are listed, never auto-resolved: the same code on two folders or two companies (`S058` is the known one; `SA034` on a parent and a branch is not a conflict), and customers whose Company ID looks like a supplier code.
-7. Dual-role parties (customer and supplier) get both statuses and both codes; the customer code is not drawn here, it keeps coming from the customer flow.
+0. Scope: only partners with `company_id in (1, False)`. Partners of other companies are counted in the report and never read further.
+1. Company ID holds a supplier-shaped code: copy it to `x_supplier_code`, clear Company ID, set supplier status `active`, add the category tag from the folder it lives in. Shared partners (no company) are listed for confirmation instead.
+2. A coded Drive folder with no Odoo record: create a minimal company (name, code, category, status, `company_id = 1`) unless the report marks it skipped.
+3. Uncoded folders in `Potential*` locations and the regional Construction folders: status `potential`, no code.
+4. The seven uncoded Japanese folders and anything ambiguous: listed in the report with the default `potential`, for the user to decide.
+5. Conflicts are listed, never auto-resolved: the same code on two folders or two companies (`S058` is the known one; `SA034` on a parent and a branch is not a conflict), and customers whose Company ID looks like a supplier code.
+6. Dual-role parties (customer and supplier) get both statuses and both codes; the customer code is not drawn here, it keeps coming from the customer flow.
 
 Re-running is safe: every write checks the current Odoo value first.
 
