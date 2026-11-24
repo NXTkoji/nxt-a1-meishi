@@ -14,7 +14,9 @@ Business-card scanner. FastAPI + SQLAlchemy/Alembic on local SQLite (`~/.nxt-a1/
 - Odoo is the source of truth for customer data; the local SQLite is a cache. Odoo access is direct XML-RPC (`app/services/odoo_sync.py`).
 - Odoo layout: company partner first, people as child contacts (`parent_id`).
 - Never run anything that calls real Odoo or Google from tests. Mock the XML-RPC and Drive clients.
-- UI strings are bilingual; add Traditional Chinese strings in `frontend/src/i18n.ts`.
+- UI strings are bilingual; add Traditional Chinese strings in `frontend/src/i18n.ts`. The app will be used by other companies later: user-facing text must not say "NXT".
 
 ## Active work
-Project code issuing: `docs/superpowers/specs/2026-11-11-project-code-issuing-design.md` and its plan. Continue from the Handoff section at the end of the plan.
+Party codes (suppliers, potential customers and suppliers, one record per organization): `docs/superpowers/specs/2026-11-24-party-codes-design.md` and `docs/superpowers/plans/2026-11-24-party-codes.md`. Continue from the Handoff section at the end of the plan.
+
+Project code issuing (`2026-11-11-project-code-issuing-*`) is done and live; read its spec before changing the customer flow.
