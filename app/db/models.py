@@ -158,7 +158,7 @@ class Organization(Base):
         Boolean, default=False, server_default="0", nullable=False
     )
     # 統一編號 (8 digits). Unique when present.
-    tax_id: Mapped[Optional[str]] = mapped_column(String(16), unique=True)
+    tax_id: Mapped[Optional[str]] = mapped_column(String(32), unique=True)
     # Permanent Customer ID drawn from Odoo, e.g. "C0200". Unique when present.
     customer_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True)
     # Cache of the Odoo company partner id (Odoo is the source of truth)
@@ -167,6 +167,16 @@ class Organization(Base):
     drive_url: Mapped[Optional[str]] = mapped_column(String(512))
     # Old codes kept as aliases, e.g. "DS176, P065S50"
     legacy_codes: Mapped[Optional[str]] = mapped_column(String(256))
+    # --- Party roles (see the party-codes spec). Status None means "none";
+    # otherwise potential / active / inactive. Active means the role has a code.
+    customer_status: Mapped[Optional[str]] = mapped_column(String(16))
+    supplier_status: Mapped[Optional[str]] = mapped_column(String(16))
+    # Supplier code, e.g. "S100", or an existing one such as "SA002". Unique when present.
+    supplier_code: Mapped[Optional[str]] = mapped_column(String(16), unique=True)
+    # Category key from app/services/supplier_codes.py (parts, administration, ...)
+    supplier_category: Mapped[Optional[str]] = mapped_column(String(16))
+    supplier_drive_folder_id: Mapped[Optional[str]] = mapped_column(String(128))
+    supplier_drive_url: Mapped[Optional[str]] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
@@ -235,6 +245,8 @@ class IssueRun(Base):
     )
     org_id: Mapped[Optional[int]] = mapped_column(ForeignKey("organizations.id"))
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"))
+    # "project" (customer project code) or "supplier"
+    kind: Mapped[str] = mapped_column(String(16), default="project", server_default="project", nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="running", nullable=False)
     input_json: Mapped[str] = mapped_column(Text, nullable=False)
     steps_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)

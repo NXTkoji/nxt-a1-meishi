@@ -212,13 +212,14 @@ class OrgCandidate:
     name: str
     customer_code: Optional[str]
     tax_id: Optional[str]
-    reason: str          # "tax_id", "phone", "name_exact", "name_fuzzy"
+    reason: str          # "supplier_code", "tax_id", "phone", "name_exact", "name_fuzzy"
     confidence: float
+    supplier_code: Optional[str] = None
 
     @property
     def auto(self) -> bool:
         """True when the match is certain enough to reuse without asking."""
-        return self.reason in ("tax_id", "phone")
+        return self.reason in ("supplier_code", "tax_id", "phone")
 
 
 async def _org_display_name(db: AsyncSession, org_id: int) -> str:
@@ -237,12 +238,13 @@ async def match_organization(
     tax_id: Optional[str] = None,
     phone: Optional[str] = None,
     name: Optional[str] = None,
+    supplier_code: Optional[str] = None,
 ) -> List[OrgCandidate]:
-    """Find organizations that may be the same customer, best match first.
+    """Find organizations that may be the same customer (or supplier), best match first.
 
-    Order of evidence: 統編 exact, phone exact (any person's phone at the
-    organization), name exact, name similar. One entry per organization, keeping
-    its strongest reason. `tax_id` must already be validated by the caller.
+    Order of evidence: supplier code exact, 統編 exact, phone exact (any person's
+    phone at the organization), name exact, name similar. One entry per organization,
+    keeping its strongest reason. `tax_id` must already be validated by the caller.
     """
     best: dict[int, OrgCandidate] = {}
     orgs: dict[int, Organization] = {}
@@ -260,7 +262,15 @@ async def match_organization(
             tax_id=org.tax_id,
             reason=reason,
             confidence=confidence,
+            supplier_code=org.supplier_code,
         )
+
+    if supplier_code:
+        org = await db.scalar(
+            select(Organization).where(Organization.supplier_code == supplier_code.strip().upper()))
+        if org:
+            orgs[org.id] = org
+            await _remember(org.id, "supplier_code", 1.0)
 
     if tax_id:
         org = await db.scalar(select(Organization).where(Organization.tax_id == tax_id))
