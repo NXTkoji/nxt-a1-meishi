@@ -291,7 +291,49 @@ export interface RelationshipType {
 }
 
 
-// ─── NXT customers / project codes ────────────────────────────────────────────
+// ─── Customers, suppliers and project codes ───────────────────────────────────
+
+/** null = none; a code exists only for active and inactive */
+export type PartyStatus = 'potential' | 'active' | 'inactive'
+
+export type SupplierCategoryKey =
+  | 'parts' | 'administration' | 'construction' | 'forwarding'
+  | 'inspection' | 'marketing' | 'packaging' | 'other'
+
+export interface RolesUpdate {
+  /** 'none' clears a status; only the fields sent change */
+  customer_status?: PartyStatus | 'none'
+  supplier_status?: PartyStatus | 'none'
+  supplier_category?: SupplierCategoryKey
+}
+
+export interface SupplierRequest {
+  org_ext_id?: string
+  supplier_name?: string
+  category: SupplierCategoryKey
+  tax_id?: string
+  country?: string
+  phone?: string
+  chosen_org_ext_id?: string
+  create_new?: boolean
+  card_external_id?: string
+  include_person?: boolean
+}
+
+export interface SupplierProposal {
+  supplier_mode: 'existing' | 'new'
+  org_ext_id?: string | null
+  supplier_name: string
+  tax_id?: string | null
+  category: SupplierCategoryKey
+  category_folder: string
+  supplier_code?: string | null
+  suggested_supplier_code?: string | null
+  needs_choice: boolean
+  candidates: IssueCandidate[]
+  actions: string[]
+  warnings: string[]
+}
 
 export interface OrgInfo {
   id: number
@@ -301,6 +343,11 @@ export interface OrgInfo {
   customer_code?: string | null
   drive_url?: string | null
   legacy_codes?: string | null
+  customer_status?: PartyStatus | null
+  supplier_status?: PartyStatus | null
+  supplier_code?: string | null
+  supplier_category?: SupplierCategoryKey | null
+  supplier_drive_url?: string | null
 }
 
 export interface OrgListItem {
@@ -309,6 +356,9 @@ export interface OrgListItem {
   primary_name?: string | null
   is_nxt_customer: boolean
   customer_code?: string | null
+  customer_status?: PartyStatus | null
+  supplier_status?: PartyStatus | null
+  supplier_code?: string | null
 }
 
 export interface IssueRequest {
@@ -358,6 +408,9 @@ export interface IssueProposal {
 
 export interface IssueRun {
   run_id: string
+  kind?: 'project' | 'supplier'
+  supplier_code?: string | null
+  supplier_drive_url?: string | null
   status: 'done' | 'failed' | 'running'
   failed_step?: string | null
   error?: string | null

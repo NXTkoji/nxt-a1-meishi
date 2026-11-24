@@ -1,11 +1,13 @@
 /**
- * NxtCustomerPanel — "NXT customer" switch and project-code issuing for one organization.
+ * RelationshipPanel — an organization's customer and supplier relationship.
  *
- * Shown inside an organization section of PersonEditor. With the switch off the panel is
- * just the switch; everything else appears only for NXT customers.
+ * Shown inside an organization section of PersonEditor. Each role has a status
+ * (none / potential / active / inactive). Potential, inactive and none need no code and are
+ * set directly. Active needs a code, so it is issued by propose, then approve: "Review"
+ * creates nothing, "Approve and issue" does the work. A run that stops part-way can be retried.
  *
- * Issuing is propose, then approve: "Review" calls /projects/propose (creates nothing),
- * "Approve and issue" calls /projects/commit. A run that stops part-way can be retried.
+ * This file holds the panel and the customer side (project codes); SupplierSection holds
+ * the supplier side.
  */
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -15,50 +17,16 @@ import {
   listIssuedOrganizations,
   proposeProject,
   retryIssueRun,
-  setNxtCustomer,
+  setRoles as saveRoles,
 } from '../api'
 import { useLang } from '../LangContext'
 import { useToast } from './Toast'
+import { SupplierSection } from './SupplierSection'
+import { Field, FolderLink, StatusSelect, type StatusValue } from './partyShared'
+import { btnGhost, btnPrimary, errorText, inputCls } from './partyUi'
 import type { IssueProposal, IssueRequest, IssueRun } from '../types'
 
-/** The API reports errors as "422 Unprocessable Entity: {"detail": "..."}"; show only the detail. */
-function errorText(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err)
-  const start = raw.indexOf('{')
-  if (start >= 0) {
-    try {
-      const detail = JSON.parse(raw.slice(start)).detail
-      if (typeof detail === 'string') return detail
-      if (Array.isArray(detail)) return detail.map(d => d.msg ?? String(d)).join('; ')
-    } catch { /* fall through to the raw text */ }
-  }
-  return raw
-}
-
-const inputCls = 'w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none'
-const btnPrimary = 'rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-50'
-const btnGhost = 'rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50'
-
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-xs text-gray-500 mb-0.5">{label}</span>
-      {children}
-      {hint && <span className="block text-xs text-gray-400 mt-0.5">{hint}</span>}
-    </label>
-  )
-}
-
-function FolderLink({ url, label }: { url?: string | null; label: string }) {
-  if (!url) return null
-  return (
-    <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
-      {label}
-    </a>
-  )
-}
-
-export function NxtCustomerPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
+export function RelationshipPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
   orgExtId: string
   orgName: string
   /** Card whose person is exported under the company on approval; absent = no person step */
@@ -108,11 +76,12 @@ export function NxtCustomerPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
     qc.invalidateQueries({ queryKey: ['orgs-issued'] })
   }
 
-  const toggle = async (enabled: boolean) => {
+  // Statuses that need no code. Active goes through the review below, never through here.
+  const changeStatus = async (next: StatusValue) => {
     try {
-      await setNxtCustomer(orgExtId, enabled)
+      await saveRoles(orgExtId, { customer_status: next === '' ? 'none' : next })
       refreshOrg()
-      if (!enabled) closeForm()
+      if (next === '') closeForm()
     } catch (err) {
       showToast(errorText(err), 'error')
     }
@@ -187,25 +156,25 @@ export function NxtCustomerPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
   }
 
   const canApprove = proposal && (!proposal.needs_choice || choice !== '')
-  const issued = Boolean(org.customer_code)
+  const status: StatusValue = org.customer_status ?? ''
+  const hasCode = Boolean(org.customer_code)
+  // Choosing Active without a code opens the form even while the status is still none
+  const showBody = status !== '' || formOpen
 
   return (
-    <div className="mt-2 rounded border border-gray-200 bg-gray-50 px-3 py-2 space-y-2">
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-medium text-gray-600">{t.nxtSection}</span>
-        <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-700">
-          <input
-            type="checkbox"
-            checked={org.is_nxt_customer}
-            disabled={issued}
-            title={issued ? t.nxtSwitchLocked : undefined}
-            onChange={e => toggle(e.target.checked)}
-          />
-          {t.nxtSwitchLabel}
-        </label>
-      </div>
+    <div className="mt-2 rounded border border-gray-200 bg-gray-50 px-3 py-2 space-y-3">
+      <p className="text-xs font-medium text-gray-600">{t.nxtSection}</p>
 
-      {org.is_nxt_customer && (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-gray-700">{t.relCustomer}</span>
+          <span className="ml-auto">
+            <StatusSelect t={t} value={status} hasCode={hasCode}
+              onChange={changeStatus} onNeedsApproval={() => setFormOpen(true)} />
+          </span>
+        </div>
+
+      {showBody && (
         <>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
             {org.customer_code && (<><dt className="text-gray-500">{t.nxtCustomerId}</dt><dd className="font-mono">{org.customer_code}</dd></>)}
@@ -372,6 +341,16 @@ export function NxtCustomerPanel({ orgExtId, orgName, cardExtId, cardTaxId }: {
           )}
         </>
       )}
+      </div>
+
+      <SupplierSection
+        org={org}
+        orgExtId={orgExtId}
+        orgName={orgName}
+        cardExtId={cardExtId}
+        cardTaxId={cardTaxId}
+        onChanged={refreshOrg}
+      />
     </div>
   )
 }
