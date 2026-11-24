@@ -271,3 +271,18 @@ def test_report_round_trip_keeps_decisions(w, tmp_path):
     path.write_text(text.replace(",confirm,", ",maybe,"), encoding="utf-8-sig")
     with pytest.raises(ValueError):
         bf.read_decisions(str(path))
+
+
+def test_coded_folders_inside_a_not_in_use_folder_are_inactive(w):
+    parts = w.category("Parts Suppliers")
+    idle = w.folder("not in use", parts)
+    w.folder("S050 停用供應商", idle)
+    pid = w.partner("停用供應商", company_registry="S050")
+    w.folder("S051 沒有公司", idle)
+    plan = w.plan()
+    assert w.row(plan, partner_id=pid).status == "inactive"
+    assert w.row(plan, code="S051").status == "inactive"
+    bf.apply_plan(w.codes, plan)
+    assert w.odoo.data["res.partner"][pid]["x_supplier_status"] == "inactive"
+    assert {p["x_supplier_status"] for p in w.odoo.rows("res.partner")} == {"inactive"}
+    assert w.plan().rows == []                                  # settled: nothing left to do

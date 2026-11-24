@@ -76,7 +76,7 @@ Update this table in each PR. Mark a task done only when its tests pass.
 | 6 Propose and commit | done (`supplier_flow.py`) |
 | 7 API routes | done (`routers/v2/suppliers.py`; retry dispatches on kind; customer flow and card export keep statuses) |
 | 8 UI | done (`RelationshipPanel.tsx`, `SupplierSection.tsx`, shared `partyShared.tsx`/`partyUi.ts`; checked in headless Chrome at 900 and 360 px in ja, en, zh-TW with mocked API; not yet clicked through against the real backend) |
-| 9 Backfill script | not started |
+| 9 Backfill script | done, not yet run for real (`app/services/supplier_backfill.py`, `scripts/backfill_suppliers.py`). Found in Drive on 2026-11-24: the regional folders under Construction Suppliers (台中, 台北新北, 台南, 嘉義, 高雄) are containers of coded folders (e.g. `SC077 金斗雲工程行 台中`), so the walker descends into any uncoded folder that holds coded ones; those inside "not in use" / "inactive" folders become inactive. Only code matches are automatic; name matches and everything uncoded outside the Potential locations are `confirm` rows |
 | 10 Live verification | not started |
 
 Facts from the 2026-11-24 audit (for whoever builds the backfill):

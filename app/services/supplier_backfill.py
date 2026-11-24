@@ -30,6 +30,7 @@ from app.services.project_codes import normalize_org_name
 logger = logging.getLogger(__name__)
 
 LEGACY_FOLDER = "Japan Suppliers"       # kept for the existing Japanese suppliers; no category
+_INACTIVE_FOLDER = re.compile(r"not in use|inactive", re.I)   # coded folders inside these are inactive
 _CODE_AT_START = re.compile(r"^(S[ACFIMP]?\d{3,})(?!\d)", re.I)
 
 # Decisions
@@ -112,6 +113,7 @@ class FolderEntry:
     category: Optional[str]       # category key; None for Japan Suppliers and Potential Suppliers
     code: Optional[str]
     place: str                    # coded, potential (a prospect location), uncoded, in_container
+    status: str = "active"        # a coded folder inside a "not in use" / "inactive" folder is inactive
 
     @property
     def url(self) -> str:
@@ -133,9 +135,10 @@ def _clean_name(folder_name: str) -> str:
     return text[len(code):].strip(" -_") if code else text
 
 
-def _entry(ref: FolderRef, path: Iterable[str], category: Optional[str], uncoded_place: str) -> FolderEntry:
+def _entry(ref: FolderRef, path: Iterable[str], category: Optional[str], uncoded_place: str,
+           status: str = "active") -> FolderEntry:
     code = code_of(ref.name)
-    return FolderEntry(ref.id, ref.name, tuple(path), category, code, "coded" if code else uncoded_place)
+    return FolderEntry(ref.id, ref.name, tuple(path), category, code, "coded" if code else uncoded_place, status)
 
 
 async def scan_drive(drive: DriveFolders, root_id: str) -> List[FolderEntry]:
@@ -158,7 +161,9 @@ async def scan_drive(drive: DriveFolders, root_id: str) -> List[FolderEntry]:
                 if child.name == supplier_codes.POTENTIAL_SUBFOLDER:
                     entries.extend(_entry(g, [top.name, child.name], key, "potential") for g in grandchildren)
                 elif any(code_of(g.name) for g in grandchildren):     # a regional container
-                    entries.extend(_entry(g, [top.name, child.name], key, "in_container") for g in grandchildren)
+                    status = "inactive" if _INACTIVE_FOLDER.search(child.name) else "active"
+                    entries.extend(_entry(g, [top.name, child.name], key, "in_container", status)
+                                   for g in grandchildren)
                 else:
                     entries.append(_entry(child, [top.name], key, "uncoded"))
     return entries
@@ -274,7 +279,7 @@ def plan_rows(partners: List[dict], other_company_count: int, entries: List[Fold
             elif _is_customer(p) and _registry_code(p):
                 decision, note = CONFIRM, "Customer whose Company ID looks like a supplier code"
             plan.add(Row(rule="1", action="set_supplier", decision=decision, name=p["name"], code=code,
-                         category=category, status="active", partner_id=p["id"],
+                         category=category, status=e.status, partner_id=p["id"],
                          registry=p.get(CUSTOMER_ID_FIELD) or "", folder_id=e.id,
                          folder_path="/".join(e.path + (e.name,)), folder_url=e.url, note=note))
             continue
@@ -283,14 +288,14 @@ def plan_rows(partners: List[dict], other_company_count: int, entries: List[Fold
             for p in candidates:
                 handled_partner_ids.add(p["id"])
                 plan.add(Row(rule="1", action="link_name_match", decision=CONFIRM, name=p["name"], code=code,
-                             category=category, status="active", partner_id=p["id"],
+                             category=category, status=e.status, partner_id=p["id"],
                              registry=p.get(CUSTOMER_ID_FIELD) or "", folder_id=e.id,
                              folder_path="/".join(e.path + (e.name,)), folder_url=e.url,
                              note="Name match only. Set decision to apply to link, create for a new company, "
                                   "skip to leave"))
         else:
             plan.add(Row(rule="2", action="create_company", decision=APPLY, name=e.clean_name, code=code,
-                         category=category, status="active", folder_id=e.id,
+                         category=category, status=e.status, folder_id=e.id,
                          folder_path="/".join(e.path + (e.name,)), folder_url=e.url,
                          note="Coded folder with no Odoo company"))
 
@@ -365,8 +370,9 @@ def _apply_set_supplier(odoo: OdooCodes, row: Row) -> str:
     vals: dict = {}
     if not held:
         vals["x_supplier_code"] = row.code
-    if current.get("x_supplier_status") != "active":
-        vals["x_supplier_status"] = "active"
+    wanted = row.status or "active"
+    if current.get("x_supplier_status") != wanted:
+        vals["x_supplier_status"] = wanted
     if row.folder_url and not current.get("x_supplier_drive_url"):
         vals["x_supplier_drive_url"] = row.folder_url
     if _registry_code(current) == row.code:
