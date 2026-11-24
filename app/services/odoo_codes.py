@@ -9,13 +9,19 @@ people are child contacts (`parent_id`), created by the card export. Projects ar
 
 All calls here are blocking XML-RPC. Async callers should run them with
 asyncio.to_thread. Tests pass a fake `obj` exposing `execute_kw`.
+
+The Odoo database is multi-company. When `company_id` is set (ODOO_COMPANY_ID), every
+call passes `allowed_company_ids`, partner searches see only that company's partners
+plus shared ones (no company), and partners created here belong to that company.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Iterable, List, Optional
 
+from app.config import settings
 from app.services import odoo_sync
+from app.services.supplier_codes import RESERVED_SUPPLIER_CODES, is_supplier_code
 from app.services.project_codes import (
     CUSTOMER_CODE_RE,
     normalize_org_name,
@@ -26,6 +32,7 @@ from app.services.project_codes import (
 logger = logging.getLogger(__name__)
 
 SEQUENCE_CODE = "nxt.customer"
+SUPPLIER_SEQUENCE_CODE = "nxt.supplier"
 TAG_CUSTOMER = "NXT Customer"
 TAG_RESELLER = "NXT Reseller"
 TAG_END_USER = "NXT End User"
@@ -42,15 +49,33 @@ def customer_id_of(record: dict) -> Optional[str]:
     return value if CUSTOMER_CODE_RE.match(value) else None
 
 
+def supplier_code_in_company_id(record: dict) -> Optional[str]:
+    """A supplier-shaped code (S059, SA002) sitting in the Company ID field, else None."""
+    value = (record.get(CUSTOMER_ID_FIELD) or "").strip().upper()
+    return value if is_supplier_code(value) else None
+
+
 def old_code_of(record: dict) -> Optional[str]:
-    """An older identifier in the Company ID field (DS127, SA028, JFE), else None."""
+    """An older identifier in the Company ID field (DS127, P030, JFE), else None.
+    A supplier code there (S059) is not an old customer code and is ignored here."""
     value = (record.get(CUSTOMER_ID_FIELD) or "").strip()
-    return value if value and not CUSTOMER_CODE_RE.match(value) else None
+    if not value or CUSTOMER_CODE_RE.match(value) or is_supplier_code(value):
+        return None
+    return value
+
+
+def supplier_code_of(record: dict) -> Optional[str]:
+    """The record's Supplier code (`x_supplier_code`), or None when empty or not a supplier code."""
+    value = (record.get("x_supplier_code") or "").strip().upper()
+    return value if is_supplier_code(value) else None
 
 # Company details filled from the card's work contacts (see company_details.py);
 # read back so an existing company only gets the ones still empty in Odoo
 DETAIL_FIELDS = ["x_studio_name_2nd_language", "street", "country_id", "phone", "x_fax", "website"]
-COMPANY_FIELDS = ["name", CUSTOMER_ID_FIELD, "vat", "x_drive_url", "x_legacy_codes", "category_id"] + DETAIL_FIELDS
+# Supplier role fields, created in Odoo on 2026-11-24 (plan task 1)
+SUPPLIER_FIELDS = ["x_supplier_code", "x_supplier_drive_url", "x_customer_status", "x_supplier_status"]
+COMPANY_FIELDS = (["name", CUSTOMER_ID_FIELD, "vat", "x_drive_url", "x_legacy_codes", "category_id"]
+                  + SUPPLIER_FIELDS + DETAIL_FIELDS)
 
 
 class OdooSetupError(RuntimeError):
@@ -62,30 +87,54 @@ class OdooDataError(RuntimeError):
 
 
 class OdooCodes:
-    def __init__(self, obj, uid: int):
+    def __init__(self, obj, uid: int, company_id: Optional[int] = None):
         self.obj = obj
         self.uid = uid
+        # res.company id this client works for; None or 0 means no company scoping
+        self.company_id = company_id or None
 
     @classmethod
     def connect(cls) -> "OdooCodes":
         _, obj, uid = odoo_sync._get_odoo_clients()
-        return cls(obj, uid)
+        return cls(obj, uid, settings.odoo_company_id)
 
-    def _call(self, model: str, method: str, *args, **kwargs):
-        return odoo_sync._call(self.obj, self.uid, model, method, *args, **kwargs)
+    def _call(self, model: str, method: str, *args):
+        """execute_kw with the company context added to the keyword arguments."""
+        args = list(args)
+        if self.company_id:
+            kw = dict(args[1]) if len(args) > 1 else {}
+            ctx = dict(kw.get("context") or {})
+            ctx.setdefault("allowed_company_ids", [self.company_id])
+            kw["context"] = ctx
+            args = [args[0], kw]
+        return odoo_sync._call(self.obj, self.uid, model, method, *args)
+
+    def _partner_scope(self) -> list:
+        """Domain leaves limiting a partner search to this company plus shared partners."""
+        return [["company_id", "in", [self.company_id, False]]] if self.company_id else []
+
+    def _sequence_scope(self, code: str) -> list:
+        return [["code", "=", code]] + (
+            [["company_id", "in", [self.company_id, False]]] if self.company_id else [])
 
     # -- customer ids -------------------------------------------------------
 
     def peek_next_customer_id(self) -> str:
         """The Customer ID the sequence would hand out next, WITHOUT consuming it.
         A preview only: the real number is drawn on approval and can differ."""
-        rows = self._call("ir.sequence", "search_read",
-                          [[["code", "=", SEQUENCE_CODE]]],
+        return self._peek_sequence(SEQUENCE_CODE)
+
+    def _peek_sequence(self, code: str, skip_reserved: bool = False) -> str:
+        rows = self._call("ir.sequence", "search_read", [self._sequence_scope(code)],
                           {"fields": ["prefix", "padding", "number_next_actual"], "limit": 1})
         if not rows:
-            raise OdooSetupError(f"Odoo sequence {SEQUENCE_CODE!r} does not exist")
+            raise OdooSetupError(f"Odoo sequence {code!r} does not exist")
         row = rows[0]
-        return f"{row['prefix'] or ''}{int(row['number_next_actual']):0{int(row['padding'])}d}"
+        number, padding = int(row["number_next_actual"]), int(row["padding"])
+        value = f"{row['prefix'] or ''}{number:0{padding}d}"
+        if skip_reserved and value in RESERVED_SUPPLIER_CODES:
+            value = f"{row['prefix'] or ''}{number + 1:0{padding}d}"
+        return value
 
     def draw_customer_id(self) -> str:
         """Consume and return the next Customer ID (atomic inside Odoo)."""
@@ -94,24 +143,47 @@ class OdooCodes:
             raise OdooSetupError(f"Odoo sequence {SEQUENCE_CODE!r} did not return a value")
         return str(value)
 
+    # -- supplier codes -----------------------------------------------------
+
+    def peek_next_supplier_code(self) -> str:
+        """The supplier code the sequence would hand out next, WITHOUT consuming it
+        (a preview; S999 is never issued, so it is skipped). Needs the `nxt.supplier` sequence."""
+        return self._peek_sequence(SUPPLIER_SEQUENCE_CODE, skip_reserved=True)
+
+    def draw_supplier_code(self) -> str:
+        """Consume and return the next supplier code. S999 is the "Others" folder, not a
+        supplier: if the sequence reaches it, it is drawn and skipped."""
+        for _ in range(2):
+            value = self._call("ir.sequence", "next_by_code", [SUPPLIER_SEQUENCE_CODE])
+            if not value:
+                raise OdooSetupError(f"Odoo sequence {SUPPLIER_SEQUENCE_CODE!r} did not return a value")
+            value = str(value)
+            if value not in RESERVED_SUPPLIER_CODES:
+                return value
+        raise OdooSetupError(f"Odoo sequence {SUPPLIER_SEQUENCE_CODE!r} keeps returning a reserved code")
+
     # -- company partners ---------------------------------------------------
 
     def find_company(self, *, customer_id: Optional[str] = None,
-                     vat: Optional[str] = None) -> Optional[dict]:
-        """Find the company partner by Customer ID first, then by 統編. None if absent."""
+                     vat: Optional[str] = None,
+                     supplier_code: Optional[str] = None) -> Optional[dict]:
+        """Find the company partner by Customer ID, then Supplier code, then 統編.
+        None if absent. Only this company's partners and shared ones are searched."""
         attempts = []
         if customer_id:
             attempts.append((CUSTOMER_ID_FIELD, "=", customer_id))
+        if supplier_code:
+            attempts.append(("x_supplier_code", "=", supplier_code.strip().upper()))
         if vat:
             # Odoo may hold the 統編 with or without a "TW" prefix
             attempts.append(("vat", "in", [vat, f"TW{vat}"]))
         for field, op, value in attempts:
             rows = self._call("res.partner", "search_read",
-                              [[["is_company", "=", True], [field, op, value]]],
+                              [self._partner_scope() + [["is_company", "=", True], [field, op, value]]],
                               {"fields": COMPANY_FIELDS, "limit": 2,
                                "context": {"active_test": False}})
             if len(rows) > 1:
-                label = "Company ID" if field == CUSTOMER_ID_FIELD else "統編"
+                label = {CUSTOMER_ID_FIELD: "Company ID", "x_supplier_code": "Supplier code"}.get(field, "統編")
                 raise OdooDataError(f"More than one Odoo company has {label} {value!r}")
             if rows:
                 return rows[0]
@@ -123,7 +195,8 @@ class OdooCodes:
         instead of creating a second one."""
         core = strip_legal_forms(name) or name
         ids = self._call("res.partner", "search", [
-            ["&", ["is_company", "=", True], "|", ["name", "=", name], ["name", "ilike", core]]
+            self._partner_scope()
+            + ["&", ["is_company", "=", True], "|", ["name", "=", name], ["name", "ilike", core]]
         ])
         if not ids:
             return []
@@ -147,6 +220,8 @@ class OdooCodes:
 
     def create_company(self, vals: dict, tag_names: Iterable[str] = ()) -> int:
         vals = dict(vals, is_company=True)
+        if self.company_id:
+            vals.setdefault("company_id", self.company_id)
         tags = self.ensure_tag_ids(tag_names)
         if tags:
             vals["category_id"] = [(6, 0, tags)]

@@ -21,7 +21,7 @@ import {
 import { useLang } from '../LangContext'
 import { useToast } from './Toast'
 import { BirthdayField } from './BirthdayField'
-import { NxtCustomerPanel } from './NxtCustomerPanel'
+import { RelationshipPanel } from './RelationshipPanel'
 import { startDragAutoScroll } from '../lib/dragAutoScroll'
 import { isSubmitEnter } from '../lib/keyboard'
 import type { Country, Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
@@ -672,9 +672,9 @@ export function PersonEditor({
               onSave={v => saveOrgMemo(pos, v)}
             />
 
-            {/* NXT customer switch and project-code issuing (hidden detail unless switched on) */}
+            {/* Customer and supplier relationship: statuses, project codes, supplier codes */}
             {pos.org_ext_id && (
-              <NxtCustomerPanel
+              <RelationshipPanel
                 orgExtId={pos.org_ext_id}
                 orgName={pos.org_names[0]?.name ?? ''}
                 cardExtId={cardExtId}

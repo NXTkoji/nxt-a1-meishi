@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     odoo_db: str = ""
     odoo_username: str = ""
     odoo_password: str = ""
+    # The Odoo company (res.company id) this app works for. The Odoo database is
+    # multi-company: searches see only this company's partners plus shared ones, and
+    # records the app creates belong to this company. 0 turns scoping off.
+    odoo_company_id: int = 1
 
     # Google People API
     google_client_id: str = ""
@@ -29,6 +33,9 @@ class Settings(BaseSettings):
     # Folder id of "NXT Customers" on the NXT Google Drive; customer folders are
     # created inside it when a project code is issued.
     google_drive_customers_folder_id: str = ""
+    # Folder id of "NXT Suppliers" on the NXT Google Drive; supplier folders are created
+    # inside its category folders when a supplier code is issued.
+    google_drive_suppliers_folder_id: str = ""
 
     # Microsoft Graph (OneDrive)
     ms_client_id: str = ""

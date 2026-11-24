@@ -295,6 +295,12 @@ class OrgOut(BaseModel):
     customer_code: Optional[str] = None
     drive_url: Optional[str] = None
     legacy_codes: Optional[str] = None
+    # Party roles: status is None (none), potential, active or inactive
+    customer_status: Optional[str] = None
+    supplier_status: Optional[str] = None
+    supplier_code: Optional[str] = None
+    supplier_category: Optional[str] = None
+    supplier_drive_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -306,6 +312,10 @@ class OrgListItem(BaseModel):
     created_at: datetime
     is_nxt_customer: bool = False
     customer_code: Optional[str] = None
+    customer_status: Optional[str] = None
+    supplier_status: Optional[str] = None
+    supplier_code: Optional[str] = None
+    supplier_category: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -470,6 +480,7 @@ class CandidateOut(BaseModel):
     org_ext_id: str
     name: str
     customer_code: Optional[str] = None
+    supplier_code: Optional[str] = None
     tax_id: Optional[str] = None
     reason: str
     confidence: float
@@ -496,16 +507,50 @@ class ProposalOut(BaseModel):
 
 class IssueRunOut(BaseModel):
     run_id: str
+    kind: str = "project"                    # "project" or "supplier"
     status: str                              # done or failed
     failed_step: Optional[str] = None
     error: Optional[str] = None
     steps: dict = Field(default_factory=dict)
+    supplier_code: Optional[str] = None      # supplier runs
+    supplier_drive_url: Optional[str] = None
     customer_code: Optional[str] = None
     project_code: Optional[str] = None
     customer_drive_url: Optional[str] = None
     project_drive_url: Optional[str] = None
     odoo_partner_id: Optional[int] = None
     odoo_project_id: Optional[int] = None
+
+
+class SupplierIssueRequest(BaseModel):
+    """Make an organization an active supplier: issue (or reuse) its supplier code."""
+    # An organization already in the app (for example the one on the card being reviewed).
+    # Leave empty to issue for a supplier typed in by hand.
+    org_ext_id: Optional[str] = None
+    supplier_name: Optional[str] = None      # required when org_ext_id is empty
+    category: str                            # parts, administration, construction, ...
+    tax_id: Optional[str] = None             # checked by the country rule; optional
+    country: Optional[str] = None            # TW, JP, ... (decides how tax_id is checked)
+    phone: Optional[str] = None              # match key when there is no tax id
+    chosen_org_ext_id: Optional[str] = None  # the user's pick among candidates
+    create_new: bool = False                 # user rejected every candidate
+    card_external_id: Optional[str] = None   # also export this card's person under the company
+    include_person: bool = True
+
+
+class SupplierProposalOut(BaseModel):
+    supplier_mode: str                       # "existing" (has a code) or "new"
+    org_ext_id: Optional[str] = None
+    supplier_name: str
+    tax_id: Optional[str] = None
+    category: str
+    category_folder: str
+    supplier_code: Optional[str] = None            # existing suppliers
+    suggested_supplier_code: Optional[str] = None  # new suppliers; a preview only
+    needs_choice: bool = False
+    candidates: List[CandidateOut] = Field(default_factory=list)
+    actions: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
 
 
 class ResolveRequest(BaseModel):
@@ -522,3 +567,12 @@ class ResolveOut(BaseModel):
 
 class NxtCustomerToggle(BaseModel):
     enabled: bool
+
+
+class RolesUpdate(BaseModel):
+    """Change the customer / supplier statuses that need no code. Send only the fields to
+    change; "none" or an empty string clears a status. Becoming active goes through the
+    issue flows, not this route."""
+    customer_status: Optional[str] = None
+    supplier_status: Optional[str] = None
+    supplier_category: Optional[str] = None

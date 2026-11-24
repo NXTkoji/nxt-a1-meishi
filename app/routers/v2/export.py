@@ -67,6 +67,18 @@ async def _load_full_card(db: AsyncSession, card_ext_id: str) -> Card | None:
     )
 
 
+def _roles_for_odoo(org) -> dict | None:
+    """The organization's role statuses and supplier category tag, for its Odoo company."""
+    from app.services import supplier_codes
+    status = {"x_customer_status": org.customer_status, "x_supplier_status": org.supplier_status}
+    tag = None
+    if org.supplier_category and org.supplier_status in ("potential", "active", "inactive"):
+        tag = supplier_codes.category(org.supplier_category).odoo_tag
+    if not any(status.values()) and not tag:
+        return None
+    return {"status": status, "tag": tag}
+
+
 async def _export_one(
     db: AsyncSession,
     card: Card,
@@ -95,7 +107,8 @@ async def _export_one(
             existing_odoo_id = card.odoo_partner_id
             if company_partner_id is None and positions:
                 company_partner_id = positions[0].organization.odoo_partner_id
-            odoo_id = await sync_to_odoo(legacy, existing_odoo_id, company_partner_id)
+            roles = _roles_for_odoo(positions[0].organization) if positions else None
+            odoo_id = await sync_to_odoo(legacy, existing_odoo_id, company_partner_id, roles)
             if odoo_id:
                 result = "updated" if existing_odoo_id else "created"
                 card.odoo_partner_id = odoo_id

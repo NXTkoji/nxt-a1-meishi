@@ -53,7 +53,7 @@ from app.schemas.api import (
     SessionOut,
 )
 from app.schemas.parsed_card import ParsedCard
-from app.services import card_detector, contact_matcher, correction_store, image_store
+from app.services import card_detector, contact_matcher, correction_store, image_store, party_roles
 from app.services.claude_parser import stream_parse_card_sides
 from app.services.contact_sync import auto_sync_card
 from app.services.work_contact_labels import WORK_CONTACT_TYPES, pos_index, relabel
@@ -687,7 +687,7 @@ async def _confirm_one_card(
             continue
         org = await _find_or_create_org(db, parsed_pos.org_names)
         if parsed_pos.is_nxt_customer:
-            org.is_nxt_customer = True
+            party_roles.ensure_customer_potential(org)
 
         # Find or create position
         pos = await db.scalar(

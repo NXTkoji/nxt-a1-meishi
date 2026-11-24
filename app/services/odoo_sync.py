@@ -30,6 +30,19 @@ def _call(obj, uid, model: str, method: str, *args, **kwargs):
     )
 
 
+def _company_filter() -> list:
+    """Domain leaves limiting a res.partner search to the app's Odoo company plus shared
+    partners (no company). Empty when scoping is off (ODOO_COMPANY_ID=0)."""
+    cid = settings.odoo_company_id
+    return [["company_id", "in", [cid, False]]] if cid else []
+
+
+def _with_company(vals: dict) -> dict:
+    """Vals for a partner the app creates: it belongs to the app's Odoo company."""
+    cid = settings.odoo_company_id
+    return dict(vals, company_id=cid) if cid and "company_id" not in vals else vals
+
+
 def _is_customer_id(value) -> bool:
     from app.services.project_codes import CUSTOMER_CODE_RE
     return bool(value) and bool(CUSTOMER_CODE_RE.match(str(value).strip()))
@@ -52,8 +65,8 @@ def _find_or_create_company(obj, uid, company_name: str) -> int | None:
     # in normalized form below.
     core = strip_legal_forms(company_name) or company_name
     ids = _call(obj, uid, "res.partner", "search", [
-        ["&", ["is_company", "=", True],
-         "|", ["name", "=", company_name], ["name", "ilike", core]]
+        _company_filter() + ["&", ["is_company", "=", True],
+                             "|", ["name", "=", company_name], ["name", "ilike", core]]
     ])
     if ids:
         rows = _call(obj, uid, "res.partner", "read", [ids], {"fields": ["name", "company_registry"]})
@@ -63,10 +76,33 @@ def _find_or_create_company(obj, uid, company_name: str) -> int | None:
             same.sort(key=lambda r: (not _is_customer_id(r.get("company_registry")), r["id"]))
             return same[0]["id"]
 
-    return _call(obj, uid, "res.partner", "create", [{
+    return _call(obj, uid, "res.partner", "create", [_with_company({
         "name": company_name,
         "is_company": True,
-    }])
+    })])
+
+
+def _fill_company_roles(obj, uid, company_id: int, roles: dict) -> None:
+    """Write the organization's role statuses and supplier category tag to its Odoo company.
+    A status is written only where Odoo has none (changes go through the roles route and the
+    issue flows); a status never carries a code, so potential parties stay uncoded. Failure
+    here (for example an Odoo without these fields) never fails the card export."""
+    try:
+        current = _call(obj, uid, "res.partner", "read", [[company_id]],
+                        {"fields": ["x_customer_status", "x_supplier_status"]})[0]
+        vals: dict = {k: v for k, v in (roles.get("status") or {}).items()
+                      if v and not current.get(k)}
+        tag = roles.get("tag")
+        if tag:
+            found = _call(obj, uid, "res.partner.category", "search", [[["name", "=", tag]]],
+                          {"limit": 1})
+            if found:
+                vals["category_id"] = [(4, found[0])]
+        if vals:
+            _call(obj, uid, "res.partner", "write", [[company_id], vals])
+            logger.info("Filled Odoo company %d roles: %s", company_id, ", ".join(sorted(vals)))
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not write role statuses to Odoo company %s", company_id, exc_info=True)
 
 
 def _resolve_country(obj, uid, country_code: str) -> int | None:
@@ -111,12 +147,17 @@ async def sync_to_odoo(
     card: Card,
     existing_id: int | None = None,
     company_partner_id: int | None = None,
+    roles: dict | None = None,
 ) -> int:
     """Create or update an Odoo res.partner from card data. Returns partner ID.
 
     company_partner_id: when given, the person is placed under that company
     partner instead of looking the company up by the name on the card (used when
     the company is a known NXT customer).
+
+    roles: the first organization's customer/supplier statuses and supplier category tag
+    ({"status": {"x_customer_status": ..., "x_supplier_status": ...}, "tag": ...}); written
+    to its Odoo company where Odoo has none.
     """
     _, obj, uid = _get_odoo_clients()
     person = card.person
@@ -146,6 +187,9 @@ async def sync_to_odoo(
         source = pos
     if company_id and source:
         _fill_company_contact(obj, uid, company_id, source)
+    if company_id and roles and not company_partner_id:
+        # only the company found or created by name is the first organization's own
+        _fill_company_roles(obj, uid, company_id, roles)
 
     # Phones
     work_phone = ""
@@ -199,7 +243,7 @@ async def sync_to_odoo(
         partner_id = existing_id
         logger.info("Updated Odoo partner %d", partner_id)
     else:
-        partner_id = _call(obj, uid, "res.partner", "create", [vals])
+        partner_id = _call(obj, uid, "res.partner", "create", [_with_company(vals)])
         logger.info("Created Odoo partner %d", partner_id)
 
     return partner_id
@@ -249,7 +293,7 @@ async def search_odoo_contacts(query: str) -> list[dict]:
     """Search Odoo contacts by name, email, or phone."""
     _, obj, uid = _get_odoo_clients()
 
-    domain = [
+    domain = _company_filter() + [
         "|", "|",
         ["name", "ilike", query],
         ["email", "ilike", query],

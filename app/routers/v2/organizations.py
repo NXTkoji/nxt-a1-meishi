@@ -56,7 +56,9 @@ async def list_organizations(
         items.append(OrgListItem(
             id=org.id, external_id=org.external_id, primary_name=primary,
             created_at=org.created_at, is_nxt_customer=org.is_nxt_customer,
-            customer_code=org.customer_code,
+            customer_code=org.customer_code, customer_status=org.customer_status,
+            supplier_status=org.supplier_status, supplier_code=org.supplier_code,
+            supplier_category=org.supplier_category,
         ))
     return items
 
@@ -80,4 +82,9 @@ async def get_organization(org_ext_id: str, db: AsyncSession = Depends(get_db)):
         customer_code=org.customer_code,
         drive_url=org.drive_url,
         legacy_codes=org.legacy_codes,
+        customer_status=org.customer_status,
+        supplier_status=org.supplier_status,
+        supplier_code=org.supplier_code,
+        supplier_category=org.supplier_category,
+        supplier_drive_url=org.supplier_drive_url,
     )

@@ -218,6 +218,16 @@ export const listIssuedOrganizations = () =>
 export const setNxtCustomer = (orgExtId: string, enabled: boolean) =>
   put<import('../types').OrgInfo>(`/api/v2/organizations/${orgExtId}/nxt-customer`, { enabled })
 
+/** Statuses that need no code (none / potential / inactive) and the supplier category. */
+export const setRoles = (orgExtId: string, body: import('../types').RolesUpdate) =>
+  put<import('../types').OrgInfo>(`/api/v2/organizations/${orgExtId}/roles`, body)
+
+export const proposeSupplier = (body: import('../types').SupplierRequest) =>
+  post<import('../types').SupplierProposal>('/api/v2/suppliers/propose', body)
+
+export const commitSupplier = (body: import('../types').SupplierRequest) =>
+  post<import('../types').IssueRun>('/api/v2/suppliers/commit', body)
+
 export const proposeProject = (body: import('../types').IssueRequest) =>
   post<import('../types').IssueProposal>('/api/v2/projects/propose', body)
 
