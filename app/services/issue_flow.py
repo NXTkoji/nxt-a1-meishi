@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import IssueRun, Organization, OrganizationName, Project
 from app.schemas.api import CandidateOut, IssueRequest, IssueRunOut, ProposalOut
-from app.services import company_details
+from app.services import company_details, party_roles
 from app.services import project_codes as pc
 from app.services.drive_folders import (
     CUSTOMER_SUBFOLDERS, PROJECT_SUBFOLDERS, DriveError, DriveFolders,
@@ -353,7 +353,7 @@ async def _step_local_org(c: _Ctx) -> dict:
             org_id=org.id, language="zh" if _contains_cjk(c.name) else "en",
             name=c.name, source="issue"))
     await _check_tax_id_conflicts(db, org, c.tax_id)
-    org.is_nxt_customer = True
+    party_roles.ensure_customer_potential(org)
     if c.tax_id and not org.tax_id:
         org.tax_id = c.tax_id
     c.run.org_id = org.id
@@ -369,6 +369,8 @@ async def _step_local_org(c: _Ctx) -> dict:
 async def _step_customer_id(c: _Ctx) -> dict:
     org = c.org
     if org.customer_code:
+        party_roles.set_customer_active(org)
+        await c.db.commit()
         return {"customer_code": org.customer_code, "reused": True}
     # A company already in Odoo with this 統編 may carry a Customer ID from before
     found = await _in_thread(c.odoo.find_company, vat=org.tax_id) if org.tax_id else None
@@ -377,6 +379,7 @@ async def _step_customer_id(c: _Ctx) -> dict:
     else:
         code, source = await _in_thread(c.odoo.draw_customer_id), "drawn"
     org.customer_code = code
+    party_roles.set_customer_active(org)
     await c.db.commit()   # persist before anything else, so a retry never draws again
     return {"customer_code": code, "source": source}
 
@@ -401,7 +404,8 @@ async def _step_odoo_company(c: _Ctx) -> dict:
     detail_vals = details.odoo_vals(await _in_thread(odoo.country_id, details.country_code))
 
     if company is None:
-        vals = {"name": c.name, "company_registry": code, **detail_vals}
+        vals = {"name": c.name, "company_registry": code, "x_customer_status": "active",
+                **detail_vals}
         if org.tax_id:
             vals["vat"] = org.tax_id
         partner_id = await _in_thread(odoo.create_company, vals, tags)
@@ -411,7 +415,7 @@ async def _step_odoo_company(c: _Ctx) -> dict:
         if existing_code and existing_code != code:
             raise IssueError(f"Odoo company {company['name']!r} already has Customer ID "
                              f"{existing_code}, not {code}")
-        vals = {}
+        vals = {"x_customer_status": "active"}
         if not existing_code:
             # An old code in "Company ID" (DS127, JFE) moves to Legacy Codes
             old = old_code_of(company)

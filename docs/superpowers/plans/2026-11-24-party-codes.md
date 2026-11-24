@@ -72,9 +72,9 @@ Update this table in each PR. Mark a task done only when its tests pass.
 | 2 Migration and models | done (revision `d0e1f2a3b4c5`) |
 | 3 Validation and matching | done (`supplier_codes.py`; `match_organization` takes `supplier_code`; Odoo-side matching comes with task 4) |
 | 4 Odoo client additions and customer-flow guard | done (`ODOO_COMPANY_ID` setting, default 1; scoping in `OdooCodes` and card export; supplier sequence/fields; S059-becomes-customer guard) |
-| 5 Drive supplier folders | not started |
-| 6 Propose and commit | not started |
-| 7 API routes | not started |
+| 5 Drive supplier folders | done (`ensure_supplier_folder`, `GOOGLE_DRIVE_SUPPLIERS_FOLDER_ID`; the id must be set in `.env` before first use) |
+| 6 Propose and commit | done (`supplier_flow.py`) |
+| 7 API routes | done (`routers/v2/suppliers.py`; retry dispatches on kind; customer flow and card export keep statuses) |
 | 8 UI | not started |
 | 9 Backfill script | not started |
 | 10 Live verification | not started |

@@ -295,6 +295,12 @@ class OrgOut(BaseModel):
     customer_code: Optional[str] = None
     drive_url: Optional[str] = None
     legacy_codes: Optional[str] = None
+    # Party roles: status is None (none), potential, active or inactive
+    customer_status: Optional[str] = None
+    supplier_status: Optional[str] = None
+    supplier_code: Optional[str] = None
+    supplier_category: Optional[str] = None
+    supplier_drive_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -306,6 +312,10 @@ class OrgListItem(BaseModel):
     created_at: datetime
     is_nxt_customer: bool = False
     customer_code: Optional[str] = None
+    customer_status: Optional[str] = None
+    supplier_status: Optional[str] = None
+    supplier_code: Optional[str] = None
+    supplier_category: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -557,3 +567,12 @@ class ResolveOut(BaseModel):
 
 class NxtCustomerToggle(BaseModel):
     enabled: bool
+
+
+class RolesUpdate(BaseModel):
+    """Change the customer / supplier statuses that need no code. Send only the fields to
+    change; "none" or an empty string clears a status. Becoming active goes through the
+    issue flows, not this route."""
+    customer_status: Optional[str] = None
+    supplier_status: Optional[str] = None
+    supplier_category: Optional[str] = None

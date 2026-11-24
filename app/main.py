@@ -23,6 +23,7 @@ from app.routers.v2 import (
     settings as v2_settings,
     export as v2_export,
     projects as v2_projects,
+    suppliers as v2_suppliers,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -82,6 +83,7 @@ app.include_router(v2_corrections.router)
 app.include_router(v2_settings.router)
 app.include_router(v2_export.router)
 app.include_router(v2_projects.router)
+app.include_router(v2_suppliers.router)
 
 
 @app.exception_handler(IntegrityError)

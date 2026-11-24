@@ -6,7 +6,9 @@ POST /api/v2/projects/propose                  preview codes and actions; create
 POST /api/v2/projects/commit                   approve: create everything, resumable
 POST /api/v2/projects/runs/{run_id}/retry      resume a failed run
 GET  /api/v2/projects                          list issued projects
-PUT  /api/v2/organizations/{org}/nxt-customer  turn the NXT customer switch on or off
+PUT  /api/v2/organizations/{org}/nxt-customer  turn the customer switch on or off (potential customer)
+
+Suppliers and the roles route live in suppliers.py; the retry route here handles both kinds.
 """
 from __future__ import annotations
 
@@ -20,13 +22,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import verify_api_key
 from app.config import settings
-from app.db.models import Organization, OrganizationName, Project
+from app.db.models import IssueRun, Organization, OrganizationName, Project
 from app.db.session import get_db
 from app.schemas.api import (
     CandidateOut, IssueRequest, IssueRunOut, NxtCustomerToggle, OrgListItem,
     ProposalOut, ResolveOut, ResolveRequest,
 )
-from app.services import issue_flow
+from app.services import issue_flow, party_roles, supplier_flow
 from app.services import project_codes as pc
 from app.services.drive_folders import DriveError, DriveFolders
 from app.services.odoo_codes import OdooCodes, OdooDataError, OdooSetupError, customer_id_of
@@ -158,6 +160,9 @@ async def retry_run(
     drive: DriveFolders = Depends(get_drive),
 ):
     try:
+        run = await db.scalar(select(IssueRun).where(IssueRun.external_id == run_id))
+        if run is not None and run.kind == "supplier":
+            return await supplier_flow.retry_supplier(db, odoo, drive, run)
         return await issue_flow.retry(db, odoo, drive, run_id)
     except (pc.ValidationError, OdooSetupError, OdooDataError) as exc:
         raise _as_http(exc)
@@ -196,7 +201,11 @@ async def set_nxt_customer(
         raise HTTPException(404, "Organization not found")
     if not body.enabled and org.customer_code:
         raise HTTPException(409, f"{org.customer_code} was already issued; it cannot be switched off")
-    org.is_nxt_customer = body.enabled
+    if body.enabled:
+        party_roles.ensure_customer_potential(org)
+    else:
+        org.customer_status = None
+        party_roles.sync_customer_switch(org)
     primary = await db.scalar(
         select(OrganizationName.name)
         .where(OrganizationName.org_id == org.id, OrganizationName.is_current == True)  # noqa: E712
@@ -205,4 +214,6 @@ async def set_nxt_customer(
     return OrgListItem(
         id=org.id, external_id=org.external_id, primary_name=primary, created_at=org.created_at,
         is_nxt_customer=org.is_nxt_customer, customer_code=org.customer_code,
+        customer_status=org.customer_status, supplier_status=org.supplier_status,
+        supplier_code=org.supplier_code, supplier_category=org.supplier_category,
     )

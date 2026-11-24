@@ -196,3 +196,48 @@ def test_export_reuses_a_shared_partner():
     fake = FakeOdoo()
     shared = fake.add("res.partner", name="允將餐飲", is_company=True)
     assert odoo_sync._find_or_create_company(fake, 1, "允將餐飲") == shared
+
+
+# ── Card export writes the role statuses ─────────────────────────────────────
+
+def test_export_fills_empty_role_statuses_and_adds_the_category_tag():
+    fake = FakeOdoo()
+    tag = fake.add("res.partner.category", name="Supplier: Parts")
+    pid = fake.add("res.partner", name="甲", is_company=True, company_id=NXT)
+    odoo_sync._fill_company_roles(fake, 1, pid, {
+        "status": {"x_customer_status": "potential", "x_supplier_status": "potential"},
+        "tag": "Supplier: Parts"})
+    co = fake.data["res.partner"][pid]
+    assert co["x_customer_status"] == "potential" and co["x_supplier_status"] == "potential"
+    assert co["category_id"] == [tag]
+    assert "x_supplier_code" not in co and "company_registry" not in co     # never a code
+
+
+def test_export_keeps_a_status_odoo_already_has():
+    fake = FakeOdoo()
+    pid = fake.add("res.partner", name="甲", is_company=True, company_id=NXT, x_supplier_status="active")
+    odoo_sync._fill_company_roles(fake, 1, pid, {"status": {"x_supplier_status": "potential",
+                                                            "x_customer_status": None}})
+    assert fake.data["res.partner"][pid]["x_supplier_status"] == "active"
+    assert "x_customer_status" not in fake.data["res.partner"][pid]
+
+
+def test_export_survives_an_odoo_without_the_fields():
+    class Broken(FakeOdoo):
+        def execute_kw(self, *a, **kw):
+            raise RuntimeError("Invalid field 'x_supplier_status'")
+    odoo_sync._fill_company_roles(Broken(), 1, 5, {"status": {"x_supplier_status": "potential"}})
+
+
+def test_roles_for_odoo_from_an_organization():
+    from types import SimpleNamespace
+    from app.routers.v2.export import _roles_for_odoo
+    org = SimpleNamespace(customer_status=None, supplier_status="potential", supplier_category="parts")
+    assert _roles_for_odoo(org) == {
+        "status": {"x_customer_status": None, "x_supplier_status": "potential"},
+        "tag": "Supplier: Parts"}
+    assert _roles_for_odoo(SimpleNamespace(
+        customer_status=None, supplier_status=None, supplier_category=None)) is None
+    # a category without a supplier status adds no tag
+    assert _roles_for_odoo(SimpleNamespace(
+        customer_status="potential", supplier_status=None, supplier_category="parts"))["tag"] is None
