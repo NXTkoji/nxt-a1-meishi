@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Folder id of "NXT Customers" on the NXT Google Drive; customer folders are
     # created inside it when a project code is issued.
     google_drive_customers_folder_id: str = ""
+    # Folder id of "NXT Suppliers" on the NXT Google Drive; supplier folders are created
+    # inside its category folders when a supplier code is issued.
+    google_drive_suppliers_folder_id: str = ""
 
     # Microsoft Graph (OneDrive)
     ms_client_id: str = ""

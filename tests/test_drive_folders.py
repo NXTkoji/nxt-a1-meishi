@@ -49,6 +49,9 @@ class FakeDrive:
             f = next(f for f in self.files if f["id"] == request.url.path.rsplit("/", 1)[1])
             remove = [x for x in params.get("removeParents", "").split(",") if x]
             f["parents"] = [x for x in f["parents"] if x not in remove] + [params["addParents"]]
+            body = json.loads(request.content or b"{}")
+            if "name" in body:
+                f["name"] = body["name"]
             return httpx.Response(200, json={"id": f["id"], "parents": f["parents"]})
         body = json.loads(request.content)
         assert body["mimeType"] == df.FOLDER_MIME
@@ -256,3 +259,146 @@ def test_old_folders_of_another_account_are_ignored(drive):
     status, folder = run(d.peek_legacy_folder("DS999"))
     assert status == "movable" and folder.id == mine
     assert other not in [f.id for f in run(d.find_folders_by_code("DS999"))]
+
+
+# ── Supplier folders ─────────────────────────────────────────────────────────
+
+def _suppliers_tree(fake):
+    """A small NXT Suppliers tree: category folders, Potential Suppliers, one coded folder."""
+    ids = {"root": "SROOT"}
+    for key in ("Parts Suppliers", "Administration Suppliers", "S999 Others"):
+        ids[key] = fake.add(key, "SROOT")
+    ids["Potential Suppliers"] = fake.add("Potential Suppliers", "SROOT")
+    return ids
+
+
+def test_new_supplier_folder_is_created_under_its_category(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    res = run(d.ensure_supplier_folder("parts", "S100", "新零件供應商"))
+    assert res.status == "created" and res.warnings == []
+    assert res.folder.name == "S100 新零件供應商"
+    assert names_in(fake, ids["Parts Suppliers"]) == ["S100 新零件供應商"]
+    assert names_in(fake, res.folder.id) == []      # created empty
+
+
+def test_missing_category_folder_is_created(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    res = run(d.ensure_supplier_folder("marketing", "S101", "某廣告"))
+    assert names_in(fake, "SROOT") == ["Marketing Suppliers"]
+    assert res.folder.name == "S101 某廣告"
+
+
+def test_other_category_goes_to_the_s999_folder(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    run(d.ensure_supplier_folder("other", "S102", "雜項"))
+    assert names_in(fake, ids["S999 Others"]) == ["S102 雜項"]
+
+
+def test_running_twice_creates_nothing_new(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    _suppliers_tree(fake)
+    first = run(d.ensure_supplier_folder("parts", "S100", "新零件供應商"))
+    count = len(fake.files)
+    second = run(d.ensure_supplier_folder("parts", "S100", "新零件供應商"))
+    assert second.folder.id == first.folder.id and second.status == "existing"
+    assert len(fake.files) == count
+
+
+def test_a_prospect_folder_is_moved_and_prefixed(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    prospect = fake.add("新零件供應商有限公司", ids["Potential Suppliers"])   # legal form differs
+    res = run(d.ensure_supplier_folder("parts", "S100", "新零件供應商"))
+    assert res.status == "promoted" and res.folder.id == prospect
+    assert res.folder.name == "S100 新零件供應商有限公司"
+    assert names_in(fake, ids["Parts Suppliers"]) == ["S100 新零件供應商有限公司"]
+    assert names_in(fake, ids["Potential Suppliers"]) == []
+
+
+def test_a_prospect_in_a_category_potential_subfolder_is_found(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    pot = fake.add("Potential", ids["Administration Suppliers"])
+    prospect = fake.add("某會計師事務所", pot)
+    res = run(d.ensure_supplier_folder("administration", "S103", "某會計師事務所"))
+    assert res.status == "promoted" and res.folder.id == prospect
+    assert names_in(fake, ids["Administration Suppliers"]) == ["Potential", "S103 某會計師事務所"]
+
+
+def test_a_promoted_folder_is_found_again_on_retry(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    fake.add("新零件供應商", ids["Potential Suppliers"])
+    first = run(d.ensure_supplier_folder("parts", "S100", "新零件供應商"))
+    second = run(d.ensure_supplier_folder("parts", "S100", "新零件供應商"))
+    assert second.status == "existing" and second.folder.id == first.folder.id
+
+
+def test_several_matching_prospects_move_nothing(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    pot = fake.add("Potential", ids["Parts Suppliers"])
+    fake.add("甲供應商", ids["Potential Suppliers"])
+    fake.add("甲供應商有限公司", pot)
+    res = run(d.ensure_supplier_folder("parts", "S100", "甲供應商"))
+    assert res.status == "created" and len(res.warnings) == 1 and "none was moved" in res.warnings[0]
+    assert names_in(fake, ids["Potential Suppliers"]) == ["甲供應商"]
+    assert names_in(fake, pot) == ["甲供應商有限公司"]
+
+
+def test_coded_folders_are_never_prospects(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    fake.add("S059 甲供應商", ids["Potential Suppliers"])   # coded: not a prospect
+    res = run(d.ensure_supplier_folder("parts", "S100", "甲供應商"))
+    assert res.status == "created"
+    assert names_in(fake, ids["Potential Suppliers"]) == ["S059 甲供應商"]
+
+
+def test_an_existing_coded_folder_is_reused_untouched(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    old = fake.add("SA002 某事務所", ids["Administration Suppliers"])
+    res = run(d.ensure_supplier_folder("parts", "SA002", "某事務所新名"))   # other category, new name
+    assert res.status == "existing" and res.folder.id == old and res.folder.name == "SA002 某事務所"
+    assert names_in(fake, ids["Administration Suppliers"]) == ["SA002 某事務所"]
+
+
+def test_two_folders_with_the_same_code_are_an_error(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    fake.add("S058 上億國際", ids["Parts Suppliers"])
+    fake.add("S058 エスポ化学", ids["Parts Suppliers"])
+    with pytest.raises(DriveError, match="More than one folder matches S058"):
+        run(d.ensure_supplier_folder("parts", "S058", "上億國際"))
+
+
+def test_unknown_category_and_missing_root(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    with pytest.raises(Exception, match="Category must be one of"):
+        run(d.ensure_supplier_folder("japan", "S100", "X"))
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "")
+    with pytest.raises(DriveError, match="GOOGLE_DRIVE_SUPPLIERS_FOLDER_ID"):
+        run(d.ensure_supplier_folder("parts", "S100", "X"))
+
+
+def test_names_with_chinese_and_ampersand_are_kept(drive, monkeypatch):
+    fake, d = drive
+    monkeypatch.setattr(settings, "google_drive_suppliers_folder_id", "SROOT")
+    ids = _suppliers_tree(fake)
+    res = run(d.ensure_supplier_folder("parts", "S104", "R&D 研發/測試"))
+    assert res.folder.name == "S104 R&D 研發_測試"      # "/" is replaced, "&" and 中文 kept
