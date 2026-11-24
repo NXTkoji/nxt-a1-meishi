@@ -31,7 +31,7 @@ from app.services.drive_folders import (
     CUSTOMER_SUBFOLDERS, PROJECT_SUBFOLDERS, DriveError, DriveFolders,
 )
 from app.services.odoo_codes import (
-    ROLE_TAGS, TAG_CUSTOMER, OdooCodes, customer_id_of, old_code_of,
+    ROLE_TAGS, TAG_CUSTOMER, OdooCodes, customer_id_of, old_code_of, supplier_code_in_company_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -412,10 +412,15 @@ async def _step_odoo_company(c: _Ctx) -> dict:
                              f"{existing_code}, not {code}")
         vals = {}
         if not existing_code:
-            # An old code in "Company ID" (DS127, SA028, JFE) moves to Legacy Codes
+            # An old code in "Company ID" (DS127, JFE) moves to Legacy Codes
             old = old_code_of(company)
             if old:
                 vals["x_legacy_codes"] = pc.merge_code_text(company.get("x_legacy_codes"), [old])
+            # A supplier code there (S059, SA028) is not an old customer code: it moves to
+            # Supplier code, so a supplier that becomes a customer keeps it
+            supplier = supplier_code_in_company_id(company)
+            if supplier and not company.get("x_supplier_code"):
+                vals["x_supplier_code"] = supplier
             vals["company_registry"] = code
         if org.tax_id and not company.get("vat"):
             vals["vat"] = org.tax_id

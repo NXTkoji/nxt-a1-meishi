@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     odoo_db: str = ""
     odoo_username: str = ""
     odoo_password: str = ""
+    # The Odoo company (res.company id) this app works for. The Odoo database is
+    # multi-company: searches see only this company's partners plus shared ones, and
+    # records the app creates belong to this company. 0 turns scoping off.
+    odoo_company_id: int = 1
 
     # Google People API
     google_client_id: str = ""

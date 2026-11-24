@@ -627,12 +627,34 @@ def test_company_found_by_name_with_a_short_name_is_adopted(env):
 
 def test_other_old_identifiers_are_kept_as_text_only(env):
     existing = env.odoo.add("res.partner", name="甜蜜蜜台北店", is_company=True, vat=TAX,
-                            company_registry="SA028", x_legacy_codes="P030")
+                            company_registry="JFE", x_legacy_codes="P030")
     run = env.commit()
     assert run.status == "done", run.error
     co = env.odoo.data["res.partner"][existing]
-    assert co["company_registry"] == "C0200" and co["x_legacy_codes"] == "P030, SA028"
+    assert co["company_registry"] == "C0200" and co["x_legacy_codes"] == "P030, JFE"
     assert run.steps["legacy"] == {"skipped": True}
+
+
+@pytest.mark.parametrize("supplier_code", ["S059", "SA028", "SC070"])
+def test_a_supplier_that_becomes_a_customer_keeps_its_supplier_code(env, supplier_code):
+    existing = env.odoo.add("res.partner", name="甜蜜蜜台北店", is_company=True, vat=TAX,
+                            company_registry=supplier_code, x_legacy_codes="P030")
+    run = env.commit()
+    assert run.status == "done", run.error
+    co = env.odoo.data["res.partner"][existing]
+    assert co["company_registry"] == "C0200"
+    assert co["x_supplier_code"] == supplier_code
+    assert co["x_legacy_codes"] == "P030"          # the supplier code is not an old customer code
+    assert run.steps["odoo_company"]["old_code"] is None
+    assert run.steps["legacy"] == {"skipped": True}   # and no folder is looked for
+
+
+def test_an_existing_supplier_code_field_is_not_overwritten(env):
+    existing = env.odoo.add("res.partner", name="甜蜜蜜台北店", is_company=True, vat=TAX,
+                            company_registry="S059", x_supplier_code="S061")
+    run = env.commit()
+    assert run.status == "done", run.error
+    assert env.odoo.data["res.partner"][existing]["x_supplier_code"] == "S061"
 
 
 def test_review_says_the_old_code_moves_to_legacy_codes(env):

@@ -71,7 +71,7 @@ Update this table in each PR. Mark a task done only when its tests pass.
 | 1 Odoo setup | done 2026-11-24 (sequence id 78, fields, tags ids 12 to 19; sequence draw and field write are tested in task 10) |
 | 2 Migration and models | done (revision `d0e1f2a3b4c5`) |
 | 3 Validation and matching | done (`supplier_codes.py`; `match_organization` takes `supplier_code`; Odoo-side matching comes with task 4) |
-| 4 Odoo client additions and customer-flow guard | not started |
+| 4 Odoo client additions and customer-flow guard | done (`ODOO_COMPANY_ID` setting, default 1; scoping in `OdooCodes` and card export; supplier sequence/fields; S059-becomes-customer guard) |
 | 5 Drive supplier folders | not started |
 | 6 Propose and commit | not started |
 | 7 API routes | not started |

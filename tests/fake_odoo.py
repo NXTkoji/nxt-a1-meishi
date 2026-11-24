@@ -13,7 +13,7 @@ def _like_to_regex(pattern: str) -> re.Pattern:
 
 def _match_leaf(rec: dict, leaf) -> bool:
     field, op, value = leaf
-    have = rec.get(field)
+    have = rec.get(field, False)   # an unset field is False in Odoo, so company_id in [1, False] works
     if op == "=":
         return have == value
     if op == "!=":
@@ -57,9 +57,14 @@ class FakeOdoo:
         }
         self._next_id = {m: 1 for m in self.data}
         self.calls: list[tuple] = []
+        self.contexts: list = []   # the `context` of each call, parallel to `calls`
         self.data["ir.sequence"][77] = {
             "id": 77, "code": "nxt.customer", "prefix": "C", "padding": 4,
-            "number_next_actual": 200,
+            "number_next_actual": 200, "company_id": 1,
+        }
+        self.data["ir.sequence"][78] = {
+            "id": 78, "code": "nxt.supplier", "prefix": "S", "padding": 3,
+            "number_next_actual": 100, "company_id": 1,
         }
 
     # test helpers
@@ -76,9 +81,13 @@ class FakeOdoo:
     def execute_kw(self, db, uid, password, model, method, args=(), kwargs=None):
         kwargs = kwargs or {}
         self.calls.append((model, method))
+        self.contexts.append(kwargs.get("context"))
         table = self.data[model]
         if method == "next_by_code":
-            seq = next((r for r in table.values() if r["code"] == args[0]), None)
+            # like Odoo, only a sequence of an allowed company (or a shared one) is used
+            allowed = (kwargs.get("context") or {}).get("allowed_company_ids")
+            seq = next((r for r in table.values() if r["code"] == args[0]
+                        and (not allowed or r.get("company_id", False) in [*allowed, False])), None)
             if not seq:
                 return False
             n = seq["number_next_actual"]

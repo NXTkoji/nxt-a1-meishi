@@ -30,6 +30,19 @@ def _call(obj, uid, model: str, method: str, *args, **kwargs):
     )
 
 
+def _company_filter() -> list:
+    """Domain leaves limiting a res.partner search to the app's Odoo company plus shared
+    partners (no company). Empty when scoping is off (ODOO_COMPANY_ID=0)."""
+    cid = settings.odoo_company_id
+    return [["company_id", "in", [cid, False]]] if cid else []
+
+
+def _with_company(vals: dict) -> dict:
+    """Vals for a partner the app creates: it belongs to the app's Odoo company."""
+    cid = settings.odoo_company_id
+    return dict(vals, company_id=cid) if cid and "company_id" not in vals else vals
+
+
 def _is_customer_id(value) -> bool:
     from app.services.project_codes import CUSTOMER_CODE_RE
     return bool(value) and bool(CUSTOMER_CODE_RE.match(str(value).strip()))
@@ -52,8 +65,8 @@ def _find_or_create_company(obj, uid, company_name: str) -> int | None:
     # in normalized form below.
     core = strip_legal_forms(company_name) or company_name
     ids = _call(obj, uid, "res.partner", "search", [
-        ["&", ["is_company", "=", True],
-         "|", ["name", "=", company_name], ["name", "ilike", core]]
+        _company_filter() + ["&", ["is_company", "=", True],
+                             "|", ["name", "=", company_name], ["name", "ilike", core]]
     ])
     if ids:
         rows = _call(obj, uid, "res.partner", "read", [ids], {"fields": ["name", "company_registry"]})
@@ -63,10 +76,10 @@ def _find_or_create_company(obj, uid, company_name: str) -> int | None:
             same.sort(key=lambda r: (not _is_customer_id(r.get("company_registry")), r["id"]))
             return same[0]["id"]
 
-    return _call(obj, uid, "res.partner", "create", [{
+    return _call(obj, uid, "res.partner", "create", [_with_company({
         "name": company_name,
         "is_company": True,
-    }])
+    })])
 
 
 def _resolve_country(obj, uid, country_code: str) -> int | None:
@@ -199,7 +212,7 @@ async def sync_to_odoo(
         partner_id = existing_id
         logger.info("Updated Odoo partner %d", partner_id)
     else:
-        partner_id = _call(obj, uid, "res.partner", "create", [vals])
+        partner_id = _call(obj, uid, "res.partner", "create", [_with_company(vals)])
         logger.info("Created Odoo partner %d", partner_id)
 
     return partner_id
@@ -249,7 +262,7 @@ async def search_odoo_contacts(query: str) -> list[dict]:
     """Search Odoo contacts by name, email, or phone."""
     _, obj, uid = _get_odoo_clients()
 
-    domain = [
+    domain = _company_filter() + [
         "|", "|",
         ["name", "ilike", query],
         ["email", "ilike", query],
