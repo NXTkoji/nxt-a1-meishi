@@ -99,6 +99,7 @@ async def _sold_via(db: AsyncSession, req: IssueRequest) -> Optional[Organizatio
 def _candidate_out(c: pc.OrgCandidate, ext_ids: dict[int, str]) -> CandidateOut:
     return CandidateOut(
         org_ext_id=ext_ids[c.org_id], name=c.name, customer_code=c.customer_code,
+        supplier_code=c.supplier_code,
         tax_id=c.tax_id, reason=c.reason, confidence=round(c.confidence, 2), auto=c.auto,
     )
 
