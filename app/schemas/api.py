@@ -390,6 +390,18 @@ class CorrectionOut(BaseModel):
 # My Companies
 # ---------------------------------------------------------------------------
 
+class AppSettingsOut(BaseModel):
+    """User preferences from the Settings page (see app/services/app_settings.py)."""
+    auto_export_destinations: List[str]
+    project_management_enabled: bool
+
+
+class AppSettingsUpdate(BaseModel):
+    """Partial update: only the fields sent are changed."""
+    auto_export_destinations: Optional[List[str]] = None
+    project_management_enabled: Optional[bool] = None
+
+
 class MyCompanyOut(BaseModel):
     id: int
     name: str
