@@ -23,6 +23,7 @@ Customers and suppliers were split into two code schemes only because QuickBooks
 5. **Scope of the first build:** the supplier role and the status model for both roles in the app and Odoo, plus the backfill of existing suppliers. The customer issue flow is unchanged except for the two guards listed under "Changes to the customer flow".
 6. **Existing unique supplier codes are kept as they are** (`S059`, `SA002`, `SC070`), so folder name and code stay equal and nothing printed changes. Only new suppliers draw from `S100`. (The alternative, re-issuing every old code as `S1xx`, was rejected.)
 7. **Only NXT is in scope.** The Odoo database holds several companies (see "Odoo companies"); records of the other companies are never read, coded or changed by this work.
+8. **The Settings module switch covers the whole Relationship panel** (decided 2026-11-27). The "Modules → Project Management" switch added on 2026-11-27 hides the per-organization panel. Once that panel becomes the Relationship panel (customer and supplier roles), the same switch hides all of it: off means no customer, supplier or code controls anywhere, so the app is a plain card manager. The switch is renamed to match ("Customers & suppliers" / 顧客・仕入先 / 客戶與供應商); the stored setting key `project_management_enabled` stays. (Rejected: hiding only project codes, or separate switches per role.)
 
 ## Odoo companies
 
@@ -161,6 +162,7 @@ The per-organization panel (today "NXT customer" with a switch) becomes a **Rela
 
 - Customer: status selector (none / potential / active / inactive). Choosing active, or the existing "Issue project code" action, runs the customer flow as today.
 - Supplier: status selector, category selector, and an "Activate supplier" action that opens the review card (code, folder, what will be created) with Approve and Retry, like the customer review card.
+- The whole panel is shown only while the module switch is on (decision 8).
 - All strings neutral (`Customer`, `Supplier`, `Potential`, `Active`, `Inactive`); ja, en and zh-TW in `frontend/src/i18n.ts`. Existing `nxt*` strings keep their keys but their visible text drops "NXT".
 
 ## Routes

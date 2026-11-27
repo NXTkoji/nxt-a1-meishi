@@ -43,7 +43,9 @@ Do this only after the spec PR is merged. Create, checking each exists first:
 
 ## Task 8 — UI
 - Replace the NXT customer switch with a Relationship panel (spec, UI): customer status, supplier status + category, "Activate supplier" with review card, Approve, Retry, folder link.
-- Neutral strings in `frontend/src/i18n.ts` for ja, en, zh-TW (keep `nxt*` keys, drop "NXT" from visible text). Check in the browser on the Mac: all three languages, narrow width.
+- Neutral strings in `frontend/src/i18n.ts` for ja, en, zh-TW (keep `nxt*` keys, drop "NXT" from visible text).
+  - Already done on 2026-11-27 for the customer strings ("Add to Project Management"); the supplier strings are still to add.
+- Module switch (spec decision 8): gate the whole Relationship panel on `project_management_enabled` (hook `useProjectManagementEnabled`), in both the scan review and the person page, and rename the Settings label (`pmModuleLabel`, `pmModuleHint`) to "Customers & suppliers" in all three languages. Keep the setting key. Check in the browser on the Mac: all three languages, narrow width.
 
 ## Task 9 — Backfill script
 - `scripts/backfill_suppliers.py`: dry-run CSV report by default, `--apply` to write; rules and conflict handling as in the spec. Idempotent.
