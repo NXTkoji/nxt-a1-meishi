@@ -146,7 +146,9 @@ def test_auto_sync_card_records_error_history_when_legacy_card_build_fails(clien
     def _boom(*args, **kwargs):
         raise RuntimeError("unexpected shape surprise")
 
-    monkeypatch.setattr(contact_sync, "build_legacy_card", _boom)
+    # The automatic export goes through the export router's _export_one
+    from app.routers.v2 import export as export_router
+    monkeypatch.setattr(export_router, "build_legacy_card", _boom)
 
     from app.db.models import Card, CardSyncHistory, Person
     from sqlalchemy import select

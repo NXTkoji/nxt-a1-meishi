@@ -71,6 +71,20 @@ class MyCompany(Base):
 
 
 # ---------------------------------------------------------------------------
+# App settings  (user preferences from the Settings page; JSON values by key)
+# ---------------------------------------------------------------------------
+
+class AppSetting(Base):
+    """One user preference. Read and written only through app/services/app_settings.py,
+    which owns the keys, their defaults and validation."""
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+
+# ---------------------------------------------------------------------------
 # Persons
 # ---------------------------------------------------------------------------
 

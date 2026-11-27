@@ -22,6 +22,7 @@ import { useLang } from '../LangContext'
 import { useToast } from './Toast'
 import { BirthdayField } from './BirthdayField'
 import { NxtCustomerPanel } from './NxtCustomerPanel'
+import { useProjectManagementEnabled } from '../hooks/useAppSettings'
 import { startDragAutoScroll } from '../lib/dragAutoScroll'
 import { isSubmitEnter } from '../lib/keyboard'
 import type { Country, Person, PersonName, ContactDetail, PositionDetail, OrgName } from '../types'
@@ -473,6 +474,7 @@ export function PersonEditor({
 }) {
   const { t } = useLang()
   const { showToast } = useToast()
+  const pmEnabled = useProjectManagementEnabled()
 
   const run = async (fn: () => Promise<unknown>) => {
     try { await fn(); onUpdated() }
@@ -672,8 +674,8 @@ export function PersonEditor({
               onSave={v => saveOrgMemo(pos, v)}
             />
 
-            {/* NXT customer switch and project-code issuing (hidden detail unless switched on) */}
-            {pos.org_ext_id && (
+            {/* Project Management switch and project-code issuing (Settings → Modules) */}
+            {pmEnabled && pos.org_ext_id && (
               <NxtCustomerPanel
                 orgExtId={pos.org_ext_id}
                 orgName={pos.org_names[0]?.name ?? ''}

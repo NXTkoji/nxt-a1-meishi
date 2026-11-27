@@ -15,6 +15,7 @@ import { BirthdayField } from './BirthdayField'
 import { startDragAutoScroll } from '../lib/dragAutoScroll'
 import { isSubmitEnter } from '../lib/keyboard'
 import { useLang } from '../LangContext'
+import { useProjectManagementEnabled } from '../hooks/useAppSettings'
 import type { ParsedCard, ParsedContactDetail, ParsedName, ParsedPosition } from '../types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -319,6 +320,7 @@ interface Props {
 
 export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
   const { t } = useLang()
+  const pmEnabled = useProjectManagementEnabled()
 
   // ── helpers ──
 
@@ -583,22 +585,25 @@ export function ParsedCardEditor({ parsed, onChange, onCorrection }: Props) {
         <section key={pi} className="rounded-lg border border-gray-200">
           <div className="bg-gray-50 px-3 py-1.5 flex items-center gap-2">
             <span className="font-medium text-xs text-gray-600">{t.orgSection(pi + 1)}</span>
-            {/* Saved with the card; the project code is issued later from the card page */}
-            <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-700">
-              <input
-                type="checkbox"
-                checked={pos.is_nxt_customer ?? false}
-                onChange={e => setNxtCustomer(pi, e.target.checked)}
-              />
-              {t.nxtSwitchLabel}
-            </label>
+            {/* Project Management switch (Settings → Modules). Saved with the card; the
+                project code is issued later from the card page */}
+            {pmEnabled && (
+              <label className="ml-auto flex items-center gap-1.5 text-xs text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={pos.is_nxt_customer ?? false}
+                  onChange={e => setNxtCustomer(pi, e.target.checked)}
+                />
+                {t.nxtSwitchLabel}
+              </label>
+            )}
             {parsed.positions.length > 1 && (
-              <button className="text-xs text-red-400 hover:text-red-600" onClick={() => deleteOrg(pi)}>
+              <button className={`${pmEnabled ? '' : 'ml-auto '}text-xs text-red-400 hover:text-red-600`} onClick={() => deleteOrg(pi)}>
                 {t.removeLabel}
               </button>
             )}
           </div>
-          {pos.is_nxt_customer && (
+          {pmEnabled && pos.is_nxt_customer && (
             <p className="px-3 pt-1.5 text-xs text-blue-700">{t.nxtIssueAfterSave}</p>
           )}
           <div className="px-3 pt-1">

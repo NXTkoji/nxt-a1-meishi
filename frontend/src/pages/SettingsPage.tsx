@@ -4,12 +4,14 @@ import {
   listMyCompanies, createMyCompany, updateMyCompany, deleteMyCompany,
   listOccasions, createOccasion, updateOccasion, deleteOccasion,
   listCountries, createCountry, updateCountry, deleteCountry,
+  updateAppSettings,
 } from '../api'
 import { useToast } from '../components/Toast'
 import { useLang } from '../LangContext'
 import { groupOccasionsByMonth } from '../lib/occasionGrouping'
 import { isSubmitEnter } from '../lib/keyboard'
-import type { Country, MyCompany, Occasion } from '../types'
+import type { AppSettings, AutoExportDestination, Country, MyCompany, Occasion } from '../types'
+import { APP_SETTINGS_KEY, useAppSettings } from '../hooks/useAppSettings'
 
 
 // ─── Company row ──────────────────────────────────────────────────────────────
@@ -255,6 +257,116 @@ function CountryRow({ country }: { country: Country }) {
   )
 }
 
+// ─── Automatic export + modules ───────────────────────────────────────────────
+
+const AUTO_EXPORT_OPTIONS: AutoExportDestination[] = ['odoo', 'google_contacts']
+
+/** Preferences that change app behaviour: where cards are exported automatically,
+ *  and which optional modules are shown. Each change saves immediately. */
+function PreferencesSections() {
+  const { t } = useLang()
+  const { showToast } = useToast()
+  const qc = useQueryClient()
+  const { data: prefs } = useAppSettings()
+
+  const save = useMutation({
+    mutationFn: (body: Partial<AppSettings>) => updateAppSettings(body),
+    onSuccess: data => {
+      qc.setQueryData(APP_SETTINGS_KEY, data)
+      showToast(t.savedChanges)
+    },
+    onError: () => showToast(t.saveError, 'error'),
+  })
+
+  if (!prefs) return null
+
+  const destLabel: Record<AutoExportDestination, string> = {
+    odoo: t.destOdoo,
+    google_contacts: t.destGoogleContacts,
+  }
+
+  const toggleDest = (dest: AutoExportDestination, on: boolean) => {
+    const current = prefs.auto_export_destinations
+    save.mutate({ auto_export_destinations: on ? [...current, dest] : current.filter(d => d !== dest) })
+  }
+
+  return (
+    <>
+      <section>
+        <h2 className="text-sm font-medium text-gray-700 mb-1">{t.autoExportTitle}</h2>
+        <p className="text-xs text-gray-500 mb-3">{t.autoExportHint}</p>
+        <div className="space-y-2">
+          {AUTO_EXPORT_OPTIONS.map(dest => (
+            <label key={dest} className="flex items-center gap-2 text-sm text-gray-800">
+              <input
+                type="checkbox"
+                checked={prefs.auto_export_destinations.includes(dest)}
+                disabled={save.isPending}
+                onChange={e => toggleDest(dest, e.target.checked)}
+              />
+              {destLabel[dest]}
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-medium text-gray-700 mb-3">{t.modulesTitle}</h2>
+        <label className="flex items-start gap-2 text-sm text-gray-800">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={prefs.project_management_enabled}
+            disabled={save.isPending}
+            onChange={e => save.mutate({ project_management_enabled: e.target.checked })}
+          />
+          <span>
+            {t.pmModuleLabel}
+            <span className="block text-xs text-gray-500">{t.pmModuleHint}</span>
+          </span>
+        </label>
+      </section>
+    </>
+  )
+}
+
+// ─── Foldable list ────────────────────────────────────────────────────────────
+
+/** A Settings list behind a clickable heading. Folded by default so long lists
+ *  (occasions grow every month) don't push the rest of the page down; the open or
+ *  folded state is remembered per list in localStorage. Only the list folds: the
+ *  "add" row below it stays visible, so adding never needs an unfold. */
+function FoldableList({ storageKey, title, count, children }: {
+  storageKey: string
+  title: string
+  count: number
+  children: React.ReactNode
+}) {
+  const lsKey = `settings-fold:${storageKey}`
+  const [open, setOpen] = useState(() => localStorage.getItem(lsKey) === 'open')
+
+  const toggle = () =>
+    setOpen(prev => {
+      localStorage.setItem(lsKey, prev ? 'folded' : 'open')
+      return !prev
+    })
+
+  return (
+    <>
+      <button
+        className="w-full flex items-center gap-2 text-sm font-medium text-gray-700 mb-3 hover:text-blue-600 text-left"
+        onClick={toggle}
+        aria-expanded={open}
+      >
+        <span className="text-xs text-gray-400 w-3">{open ? '▼' : '▶'}</span>
+        <span>{title}</span>
+        <span className="text-xs text-gray-400">({count})</span>
+      </button>
+      {open && children}
+    </>
+  )
+}
+
 // ─── Settings page ────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
@@ -340,15 +452,18 @@ export function SettingsPage() {
     <div className="max-w-2xl mx-auto py-8 px-4 space-y-8">
       <h1 className="text-lg font-semibold text-gray-900">{t.settingsTitle}</h1>
 
+      <PreferencesSections />
+
       {/* Received As */}
       <section>
-        <h2 className="text-sm font-medium text-gray-700 mb-3">{t.myCompaniesTitle}</h2>
-        <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-          {companies.map(c => <CompanyRow key={c.id} company={c} />)}
-          {companies.length === 0 && (
-            <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
-          )}
-        </div>
+        <FoldableList storageKey="my-companies" title={t.myCompaniesTitle} count={companies.length}>
+          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+            {companies.map(c => <CompanyRow key={c.id} company={c} />)}
+            {companies.length === 0 && (
+              <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
+            )}
+          </div>
+        </FoldableList>
         <div className="flex gap-2 mt-3">
           <input
             type="text"
@@ -368,36 +483,37 @@ export function SettingsPage() {
 
       {/* Occasions */}
       <section>
-        <h2 className="text-sm font-medium text-gray-700 mb-3">{t.occasionsTitle}</h2>
-        <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-          {occasionYears.map(({ year, months }) => {
-            const collapsed = isOccYearCollapsed(year)
-            const yearCount = months.reduce((n, m) => n + m.occasions.length, 0)
-            return (
-              <div key={year}>
-                <button
-                  className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 px-4 py-2 bg-gray-50 border-b border-gray-100 hover:text-blue-600 text-left"
-                  onClick={() => toggleOccYear(year)}
-                >
-                  <span className="text-xs text-gray-400">{collapsed ? '▶' : '▼'}</span>
-                  <span>{year === 0 ? t.occasionUndated : year}</span>
-                  <span className="text-xs text-gray-400">({yearCount})</span>
-                </button>
-                {!collapsed && months.map(({ month, occasions: os }) => (
-                  <div key={`${year}-${month}`}>
-                    <p className="text-xs font-medium text-gray-500 px-4 py-1 bg-gray-50/50">
-                      {year === 0 ? t.occasionUndated : t.monthLabel(year, month)}
-                    </p>
-                    {os.map(o => <OccasionRow key={o.id} occasion={o} />)}
-                  </div>
-                ))}
-              </div>
-            )
-          })}
-          {occasions.length === 0 && (
-            <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
-          )}
-        </div>
+        <FoldableList storageKey="occasions" title={t.occasionsTitle} count={occasions.length}>
+          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+            {occasionYears.map(({ year, months }) => {
+              const collapsed = isOccYearCollapsed(year)
+              const yearCount = months.reduce((n, m) => n + m.occasions.length, 0)
+              return (
+                <div key={year}>
+                  <button
+                    className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 px-4 py-2 bg-gray-50 border-b border-gray-100 hover:text-blue-600 text-left"
+                    onClick={() => toggleOccYear(year)}
+                  >
+                    <span className="text-xs text-gray-400">{collapsed ? '▶' : '▼'}</span>
+                    <span>{year === 0 ? t.occasionUndated : year}</span>
+                    <span className="text-xs text-gray-400">({yearCount})</span>
+                  </button>
+                  {!collapsed && months.map(({ month, occasions: os }) => (
+                    <div key={`${year}-${month}`}>
+                      <p className="text-xs font-medium text-gray-500 px-4 py-1 bg-gray-50/50">
+                        {year === 0 ? t.occasionUndated : t.monthLabel(year, month)}
+                      </p>
+                      {os.map(o => <OccasionRow key={o.id} occasion={o} />)}
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+            {occasions.length === 0 && (
+              <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
+            )}
+          </div>
+        </FoldableList>
         <div className="flex gap-2 mt-3">
           <input
             type="text"
@@ -417,13 +533,14 @@ export function SettingsPage() {
 
       {/* Countries */}
       <section>
-        <h2 className="text-sm font-medium text-gray-700 mb-3">{t.countriesTitle}</h2>
-        <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-          {countries.map(c => <CountryRow key={c.id} country={c} />)}
-          {countries.length === 0 && (
-            <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
-          )}
-        </div>
+        <FoldableList storageKey="countries" title={t.countriesTitle} count={countries.length}>
+          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+            {countries.map(c => <CountryRow key={c.id} country={c} />)}
+            {countries.length === 0 && (
+              <p className="text-sm text-gray-400 italic px-4 py-3">—</p>
+            )}
+          </div>
+        </FoldableList>
         <div className="flex gap-2 mt-3">
           <input
             type="text"

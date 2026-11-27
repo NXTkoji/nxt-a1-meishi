@@ -1,5 +1,5 @@
 """
-Settings router — My Companies CRUD + read-only relationship types.
+Settings router — app preferences, My Companies CRUD + read-only relationship types.
 """
 from __future__ import annotations
 
@@ -12,13 +12,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import verify_api_key
 from app.db.models import MyCompany, RelationshipType
 from app.db.session import get_db
-from app.schemas.api import MyCompanyCreate, MyCompanyOut, MyCompanyUpdate
+from app.schemas.api import (
+    AppSettingsOut,
+    AppSettingsUpdate,
+    MyCompanyCreate,
+    MyCompanyOut,
+    MyCompanyUpdate,
+)
+from app.services import app_settings
 
 router = APIRouter(
     prefix="/api/v2/settings",
     tags=["settings"],
     dependencies=[Depends(verify_api_key)],
 )
+
+
+# ── App preferences ───────────────────────────────────────────────────────────
+
+@router.get("/app", response_model=AppSettingsOut)
+async def get_app_settings(db: AsyncSession = Depends(get_db)):
+    return await app_settings.get_all(db)
+
+
+@router.patch("/app", response_model=AppSettingsOut)
+async def update_app_settings(body: AppSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    try:
+        return await app_settings.update(db, body.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
 
 
 # ── My Companies ──────────────────────────────────────────────────────────────

@@ -195,6 +195,13 @@ export const updateMyCompany = (id: number, body: { name?: string; notes?: strin
 export const deleteMyCompany = (id: number) =>
   del(`/api/v2/settings/my-companies/${id}`)
 
+/** User preferences: automatic export destinations and optional modules. */
+export const getAppSettings = () =>
+  get<import('../types').AppSettings>('/api/v2/settings/app')
+
+export const updateAppSettings = (body: Partial<import('../types').AppSettings>) =>
+  patch<import('../types').AppSettings>('/api/v2/settings/app', body)
+
 export const listRelationshipTypes = () =>
   get<RelationshipType[]>('/api/v2/settings/relationship-types')
 

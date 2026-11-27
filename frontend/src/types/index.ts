@@ -367,3 +367,14 @@ export interface IssueRun {
   customer_drive_url?: string | null
   project_drive_url?: string | null
 }
+
+// ─── App settings ─────────────────────────────────────────────────────────────
+
+/** Destinations a card can be exported to automatically. */
+export type AutoExportDestination = 'odoo' | 'google_contacts'
+
+/** User preferences from the Settings page (GET/PATCH /api/v2/settings/app). */
+export interface AppSettings {
+  auto_export_destinations: AutoExportDestination[]
+  project_management_enabled: boolean
+}

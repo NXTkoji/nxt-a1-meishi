@@ -1,6 +1,8 @@
-"""Orchestrates pushing one card to Google Contacts and recording the
-result. Used both by the manual /api/v2/export endpoint and by the
-automatic background-task triggers on card create/update and person edits.
+"""Orchestrates pushing cards to external destinations and recording the
+result. sync_card_to_google_contacts is used by the manual /api/v2/export
+endpoint; auto_sync_card / auto_sync_person are the background-task triggers
+on card create/update and person edits, and push to the destinations chosen
+under "Automatic export" on the Settings page.
 """
 from __future__ import annotations
 
@@ -22,8 +24,8 @@ from app.db.models import (
     PersonRelationship,
     Position,
 )
+from app.services import app_settings
 from app.services.google_contacts import delete_contact, sync_to_google
-from app.services.legacy_card import build_legacy_card
 
 logger = logging.getLogger(__name__)
 
@@ -106,32 +108,43 @@ async def auto_sync_person(person_id: int) -> None:
 
 
 async def auto_sync_card(card_id: int) -> None:
-    """Background-task entry point: push one card to Google Contacts.
+    """Background-task entry point: push one card to every destination chosen
+    under "Automatic export" on the Settings page (none = do nothing).
 
     Serialized per person (see _person_locks), so the card's person id is
     looked up first, then the actual sync runs under that person's lock.
     """
     try:
         async with AsyncSessionLocal() as db:
+            destinations = await app_settings.get(db, app_settings.AUTO_EXPORT_KEY)
             person_id = await db.scalar(select(Card.person_id).where(Card.id == card_id))
     except Exception:
         # Background task — must never raise.
         logger.exception("auto_sync_card: failed to look up card id=%s", card_id)
         return
+    if not destinations:
+        logger.info("auto_sync_card: automatic export is off, skipping card id=%s", card_id)
+        return
     if person_id is None:
         logger.warning("auto_sync_card: card id=%s not found", card_id)
         return
     async with _person_lock(person_id):
-        await _sync_card_and_record(card_id)
+        await _sync_card_and_record(card_id, destinations)
 
 
-async def _sync_card_and_record(card_id: int) -> None:
-    """Push one card to Google Contacts and record a CardSyncHistory row.
+async def _sync_card_and_record(card_id: int, destinations: list[str]) -> None:
+    """Push one card to each destination and record a CardSyncHistory row per
+    destination (done by the export router's _export_one, which also catches
+    per-destination errors so one failing destination never blocks the next).
 
     Opens its own DB session — this runs after the request that scheduled
     it has already returned its response, so the request's session may
     already be closed by then.
     """
+    # Imported here: the export router imports this module lazily too, and the
+    # routers package pulls in FastAPI app wiring we don't want at import time.
+    from app.routers.v2.export import _export_one
+
     async with AsyncSessionLocal() as db:
         card = None
         try:
@@ -159,15 +172,8 @@ async def _sync_card_and_record(card_id: int) -> None:
                 logger.warning("auto_sync_card: card id=%s not found or deleted", card_id)
                 return
 
-            legacy = build_legacy_card(card, card.person, card.person.contact_details, card.person.positions)
-            result, error_message = await sync_card_to_google_contacts(db, card, legacy)
-
-            db.add(CardSyncHistory(
-                card_id=card.id,
-                destination="google_contacts",
-                result=result,
-                error_message=error_message,
-            ))
+            for destination in destinations:
+                await _export_one(db, card, destination)
             await db.commit()
         except Exception as exc:
             logger.exception("auto_sync_card: unexpected error syncing card id=%s", card_id)
@@ -187,12 +193,13 @@ async def _sync_card_and_record(card_id: int) -> None:
             # background task must never raise.
             try:
                 await db.rollback()
-                db.add(CardSyncHistory(
-                    card_id=card_id,
-                    destination="google_contacts",
-                    result="error",
-                    error_message=str(exc),
-                ))
+                for destination in destinations:
+                    db.add(CardSyncHistory(
+                        card_id=card_id,
+                        destination=destination,
+                        result="error",
+                        error_message=str(exc),
+                    ))
                 await db.commit()
             except Exception:
                 logger.exception(

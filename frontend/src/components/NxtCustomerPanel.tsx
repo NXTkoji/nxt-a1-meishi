@@ -1,8 +1,9 @@
 /**
- * NxtCustomerPanel — "NXT customer" switch and project-code issuing for one organization.
+ * NxtCustomerPanel — "Add to Project Management" switch and project-code issuing for one
+ * organization (the Project Management module; on/off under Settings → Modules).
  *
  * Shown inside an organization section of PersonEditor. With the switch off the panel is
- * just the switch; everything else appears only for NXT customers.
+ * just the switch; everything else appears only for organizations under Project Management.
  *
  * Issuing is propose, then approve: "Review" calls /projects/propose (creates nothing),
  * "Approve and issue" calls /projects/commit. A run that stops part-way can be retried.

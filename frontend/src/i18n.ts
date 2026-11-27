@@ -144,10 +144,10 @@ const translations = {
     memoPlaceholder: 'メモを追加…',
     orgMemoLabel: '組織メモ',
     orgMemoHint: 'この組織に所属する全員で共有されます',
-    // NXT customer / project codes
-    nxtSection: 'NXT顧客',
-    nxtSwitchLabel: 'NXT顧客として管理',
-    nxtIssueAfterSave: '保存すると NXT 顧客として登録されます。プロジェクトコードは保存後に名刺ページから発行してください。',
+    // Project Management module (customer IDs / project codes)
+    nxtSection: 'プロジェクト管理',
+    nxtSwitchLabel: 'プロジェクト管理に追加',
+    nxtIssueAfterSave: '保存するとプロジェクト管理に追加されます。プロジェクトコードは保存後に名刺ページから発行してください。',
     nxtSwitchLocked: '顧客ID発行済みのためオフにできません',
     nxtCustomerId: '顧客ID',
     nxtDriveFolder: 'Driveフォルダ',
@@ -221,6 +221,14 @@ const translations = {
     addOccasionPlaceholder: '場面名を入力…',
 
     countriesTitle: '国一覧',
+    // Settings: automatic export and optional modules
+    autoExportTitle: '自動エクスポート',
+    autoExportHint: '名刺の保存時や人物の編集時に、選んだ先へ自動で送ります。何も選ばなければ手動エクスポートのみになります。',
+    destOdoo: 'Odoo',
+    destGoogleContacts: 'Google 連絡先',
+    modulesTitle: 'モジュール',
+    pmModuleLabel: 'プロジェクト管理',
+    pmModuleHint: '組織ごとの「プロジェクト管理に追加」と、顧客ID・プロジェクトコードの発行を表示します。オフにしても発行済みのデータは残ります。',
     addCountryCodePlaceholder: 'JP',
     addCountryNamePlaceholder: '国名を入力…',
     countryUnset: '国を選択…',
@@ -482,10 +490,10 @@ const translations = {
     memoPlaceholder: 'Add a memo…',
     orgMemoLabel: 'Organization memo',
     orgMemoHint: 'shared with everyone at this organization',
-    // NXT customer / project codes
-    nxtSection: 'NXT customer',
-    nxtSwitchLabel: 'Manage as NXT customer',
-    nxtIssueAfterSave: 'Saved as an NXT customer. Issue the project code from the card page after saving.',
+    // Project Management module (customer IDs / project codes)
+    nxtSection: 'Project Management',
+    nxtSwitchLabel: 'Add to Project Management',
+    nxtIssueAfterSave: 'Saving adds this organization to Project Management. Issue the project code from the card page after saving.',
     nxtSwitchLocked: 'Cannot be turned off once a Customer ID is issued',
     nxtCustomerId: 'Customer ID',
     nxtDriveFolder: 'Drive folder',
@@ -559,6 +567,14 @@ const translations = {
     addOccasionPlaceholder: 'Occasion name…',
 
     countriesTitle: 'Countries',
+    // Settings: automatic export and optional modules
+    autoExportTitle: 'Automatic export',
+    autoExportHint: 'Cards are sent to the destinations you tick whenever a card is saved or a person is edited. Tick none to export manually only.',
+    destOdoo: 'Odoo',
+    destGoogleContacts: 'Google Contacts',
+    modulesTitle: 'Modules',
+    pmModuleLabel: 'Project Management',
+    pmModuleHint: 'Shows "Add to Project Management" on each organization, and Customer ID / project-code issuing. Turning it off keeps everything already issued.',
     addCountryCodePlaceholder: 'JP',
     addCountryNamePlaceholder: 'Country name…',
     countryUnset: 'set country…',
@@ -819,10 +835,10 @@ const translations = {
     memoPlaceholder: '新增備忘錄…',
     orgMemoLabel: '組織備忘錄',
     orgMemoHint: '此組織的所有人共用',
-    // NXT customer / project codes
-    nxtSection: 'NXT 客戶',
-    nxtSwitchLabel: '設為 NXT 客戶',
-    nxtIssueAfterSave: '儲存後即設為 NXT 客戶。請於儲存後在名片頁面核發專案編號。',
+    // Project Management module (customer IDs / project codes)
+    nxtSection: '專案管理',
+    nxtSwitchLabel: '加入專案管理',
+    nxtIssueAfterSave: '儲存後即加入專案管理。請於儲存後在名片頁面核發專案編號。',
     nxtSwitchLocked: '已核發客戶編號，無法關閉',
     nxtCustomerId: '客戶編號',
     nxtDriveFolder: 'Drive 資料夾',
@@ -896,6 +912,14 @@ const translations = {
     addOccasionPlaceholder: '輸入場合名稱…',
 
     countriesTitle: '國家列表',
+    // Settings: automatic export and optional modules
+    autoExportTitle: '自動匯出',
+    autoExportHint: '儲存名片或編輯人物時，自動傳送到勾選的目的地。全部不勾選則只能手動匯出。',
+    destOdoo: 'Odoo',
+    destGoogleContacts: 'Google 聯絡人',
+    modulesTitle: '模組',
+    pmModuleLabel: '專案管理',
+    pmModuleHint: '在每個組織顯示「加入專案管理」，以及客戶編號與專案編號的核發。關閉後已核發的資料仍會保留。',
     addCountryCodePlaceholder: 'JP',
     addCountryNamePlaceholder: '輸入國家名稱…',
     countryUnset: '選擇國家…',
